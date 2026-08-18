@@ -23,13 +23,13 @@ function clear(): void {
 }
 
 function markerContent(item: MapMarkerItem): HTMLElement {
-  const root = document.createElement('div')
-  root.style.cssText = 'display:flex;align-items:center;gap:6px;transform:translate(-50%,-100%);white-space:nowrap;'
-  const dot = document.createElement('span')
   const dotSize = item.selected ? 20 : 16
-  dot.style.cssText = `display:block;width:${dotSize}px;height:${dotSize}px;border:${item.selected ? 4 : 3}px solid white;border-radius:50%;background:${item.color ?? '#2563eb'};box-shadow:0 2px 8px rgba(15,23,42,.35);transition:width .2s,height .2s;`
+  const root = document.createElement('div')
+  root.style.cssText = `position:relative;width:${dotSize}px;height:${dotSize}px;white-space:nowrap;`
+  const dot = document.createElement('span')
+  dot.style.cssText = `position:absolute;inset:0;display:block;width:${dotSize}px;height:${dotSize}px;border:${item.selected ? 4 : 3}px solid white;border-radius:50%;background:${item.color ?? '#2563eb'};box-shadow:0 2px 8px rgba(15,23,42,.35);transition:width .2s,height .2s;`
   const label = document.createElement('span')
-  label.style.cssText = `padding:4px 7px;border-radius:6px;background:${item.selected ? item.color ?? '#2563eb' : 'rgba(15,23,42,.88)'};color:white;font-size:12px;font-weight:${item.selected ? 600 : 400};box-shadow:0 2px 8px rgba(15,23,42,.22);`
+  label.style.cssText = `position:absolute;left:calc(100% + 6px);top:50%;transform:translateY(-50%);padding:4px 7px;border-radius:6px;background:${item.selected ? item.color ?? '#2563eb' : 'rgba(15,23,42,.88)'};color:white;font-size:12px;font-weight:${item.selected ? 600 : 400};box-shadow:0 2px 8px rgba(15,23,42,.22);`
   label.textContent = item.description ? `${item.label} · ${item.description}` : item.label
   root.append(dot, label)
   return root
@@ -42,8 +42,8 @@ function render(): void {
     const marker = new runtime.value.Marker({
       position: toLngLatTuple(item.point),
       content: markerContent(item),
-      anchor: 'bottom-center',
-      offset: [0, -2],
+      anchor: 'center',
+      offset: [0, 0],
       zIndex: item.selected ? 70 : 50,
     })
     const handleSelect = () => emit('select', item.id)
