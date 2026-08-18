@@ -236,6 +236,17 @@ export class LocalTicketGateRelationService implements TicketGateRelationService
     this.write(envelope)
   }
 
+  async cleanupParkingLot(parkingLotId: string): Promise<void> {
+    const envelope = this.read()
+    const relations = envelope.parkingRelations.filter((item) => item.parkingLotId === parkingLotId)
+    if (!relations.length) return
+    envelope.parkingRelations = envelope.parkingRelations.filter((item) => item.parkingLotId !== parkingLotId)
+    for (const relation of relations) {
+      this.audit(envelope, relation.gateId, 'unbind-parking', parkingLotId)
+    }
+    this.write(envelope)
+  }
+
   async reconcile(parkingLotIds: readonly string[], shuttleStationKeys: readonly string[]): Promise<void> {
     const envelope = this.read()
     const parkingSet = new Set(parkingLotIds)

@@ -1,53 +1,61 @@
+import type {
+  ParkingLot,
+  ParkingLotCreateInput,
+  ParkingLotQuery,
+  ParkingLotService,
+  ParkingLotUpdateInput,
+  ParkingLotUpdateOptions,
+  ParkingLotValidationResult,
+} from '../types'
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
   parkingLotService,
-  sanitizeParkingLotInput,
-  sortParkingLotsByUpdatedAt,
-  validateParkingLotInput,
+  sanitizeParkingLotBaseInput,
+  sanitizeParkingLotCreateInput,
+  sortParkingLots,
+  validateParkingLotBaseInput,
+  validateParkingLotCreateInput,
 } from '../services/parking-lot-service'
-import type {
-  ParkingLot,
-  ParkingLotQuery,
-  ParkingLotService,
-  ParkingLotStatusFilter,
-  ParkingLotValidationResult,
-  ParkingLotWriteInput,
-} from '../types'
 
-export const DEFAULT_PARKING_LOT_PAGE_SIZE = 10
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请稍后重试'
+const DEFAULT_QUERY: ParkingLotQuery = {
+  keyword: '',
+  feeType: 'all',
+  openStatus: 'all',
+  enabled: 'all',
 }
 
-function includesNormalized(source: string, keyword: string): boolean {
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
+}
+
+function includes(source: string, keyword: string): boolean {
   return source.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword)
 }
 
 export function createParkingLotStore(service: ParkingLotService, storeId = 'parking-lot') {
   return defineStore(storeId, () => {
     const records = ref<ParkingLot[]>([])
-    const query = reactive<ParkingLotQuery>({ name: '', code: '', status: 'all' })
+    const query = reactive<ParkingLotQuery>({ ...DEFAULT_QUERY })
     const page = ref(1)
-    const pageSize = ref(DEFAULT_PARKING_LOT_PAGE_SIZE)
+    const pageSize = ref(20)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const updatingAvailabilityId = ref<string | null>(null)
     const deletingId = ref<string | null>(null)
     const error = ref<string | null>(null)
 
     const filteredRecords = computed(() => {
-      const nameKeyword = query.name.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
-      const codeKeyword = query.code.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
-      return records.value.filter((record) => {
-        if (nameKeyword && !includesNormalized(record.name, nameKeyword)) return false
-        if (codeKeyword && !includesNormalized(record.code, codeKeyword)) return false
-        if (query.status === 'enabled' && !record.enabled) return false
-        if (query.status === 'disabled' && record.enabled) return false
+      const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
+      return sortParkingLots(records.value.filter((record) => {
+        if (keyword && ![record.code, record.name].some((value) => includes(value, keyword))) return false
+        if (query.feeType !== 'all' && record.feeType !== query.feeType) return false
+        if (query.openStatus !== 'all' && record.openStatus !== query.openStatus) return false
+        if (query.enabled === 'enabled' && !record.enabled) return false
+        if (query.enabled === 'disabled' && record.enabled) return false
         return true
-      })
+      }))
     })
-
     const total = computed(() => filteredRecords.value.length)
     const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
     const currentPage = computed(() => Math.min(Math.max(page.value, 1), pageCount.value))
@@ -57,97 +65,112 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
     })
 
     function setQuery(patch: Partial<ParkingLotQuery>): void {
-      if (patch.name !== undefined) query.name = patch.name
-      if (patch.code !== undefined) query.code = patch.code
-      if (patch.status !== undefined) query.status = patch.status
+      Object.assign(query, patch)
       page.value = 1
     }
 
     function resetQuery(): void {
-      query.name = ''
-      query.code = ''
-      query.status = 'all'
+      Object.assign(query, DEFAULT_QUERY)
       page.value = 1
     }
 
-    function setPage(nextPage: number): void {
-      if (!Number.isFinite(nextPage)) return
-      page.value = Math.min(Math.max(Math.trunc(nextPage), 1), pageCount.value)
+    function setPage(value: number): void {
+      if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
     }
 
-    function setPageSize(nextPageSize: number): void {
-      if (!Number.isInteger(nextPageSize) || nextPageSize <= 0) return
-      pageSize.value = nextPageSize
+    function setPageSize(value: number): void {
+      if (value !== 20) return
+      pageSize.value = 20
       page.value = 1
     }
 
-    function validate(
-      input: ParkingLotWriteInput,
-      excludedId?: string,
-    ): ParkingLotValidationResult {
-      return validateParkingLotInput(input, records.value, excludedId)
+    function validateCreate(input: ParkingLotCreateInput): ParkingLotValidationResult {
+      return validateParkingLotCreateInput(input, records.value)
+    }
+
+    function validateUpdate(input: ParkingLotUpdateInput): ParkingLotValidationResult {
+      return validateParkingLotBaseInput(input)
     }
 
     async function load(): Promise<boolean> {
       isLoading.value = true
       error.value = null
       try {
-        records.value = await service.list()
+        records.value = sortParkingLots(await service.list())
         page.value = Math.min(page.value, pageCount.value)
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return false
-      } finally {
+      }
+      finally {
         isLoading.value = false
       }
     }
 
-    async function create(input: ParkingLotWriteInput): Promise<ParkingLot | null> {
-      const validation = validate(input)
+    async function create(input: ParkingLotCreateInput): Promise<ParkingLot | null> {
+      const validation = validateCreate(input)
       if (!validation.valid) {
-        error.value = validation.issues[0]?.message ?? '请完善停车场信息'
+        error.value = validation.issues[0]!.message
         return null
       }
-
       isSaving.value = true
       error.value = null
       try {
-        const created = await service.create(sanitizeParkingLotInput(input))
-        records.value = sortParkingLotsByUpdatedAt([
-          ...records.value.filter((record) => record.id !== created.id),
-          created,
-        ])
-        return created
-      } catch (cause) {
+        const record = await service.create(sanitizeParkingLotCreateInput(input))
+        records.value = sortParkingLots([...records.value, record])
+        return record
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
       }
     }
 
-    async function update(id: string, input: ParkingLotWriteInput): Promise<ParkingLot | null> {
-      const validation = validate(input, id)
+    async function update(
+      id: string,
+      input: ParkingLotUpdateInput,
+      options?: ParkingLotUpdateOptions,
+    ): Promise<ParkingLot | null> {
+      const validation = validateUpdate(input)
       if (!validation.valid) {
-        error.value = validation.issues[0]?.message ?? '请完善停车场信息'
+        error.value = validation.issues[0]!.message
         return null
       }
-
       isSaving.value = true
       error.value = null
       try {
-        const updated = await service.update(id, sanitizeParkingLotInput(input))
-        records.value = sortParkingLotsByUpdatedAt([
-          ...records.value.filter((record) => record.id !== updated.id),
-          updated,
-        ])
-        return updated
-      } catch (cause) {
+        const record = await service.update(id, sanitizeParkingLotBaseInput(input), options)
+        records.value = sortParkingLots([...records.value.filter((item) => item.id !== id), record])
+        return record
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
+      }
+    }
+
+    async function updateAvailability(id: string, availableSpaces: number): Promise<ParkingLot | null> {
+      updatingAvailabilityId.value = id
+      error.value = null
+      try {
+        const record = await service.updateAvailability(id, availableSpaces)
+        records.value = sortParkingLots([...records.value.filter((item) => item.id !== id), record])
+        return record
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        updatingAvailabilityId.value = null
       }
     }
 
@@ -159,10 +182,12 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
         records.value = records.value.filter((record) => record.id !== id)
         page.value = Math.min(page.value, pageCount.value)
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return false
-      } finally {
+      }
+      finally {
         deletingId.value = null
       }
     }
@@ -178,6 +203,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       pageSize,
       isLoading,
       isSaving,
+      updatingAvailabilityId,
       deletingId,
       error,
       filteredRecords,
@@ -189,10 +215,12 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       resetQuery,
       setPage,
       setPageSize,
-      validate,
+      validateCreate,
+      validateUpdate,
       load,
       create,
       update,
+      updateAvailability,
       remove,
       resetError,
     }
@@ -200,5 +228,3 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
 }
 
 export const useParkingLotStore = createParkingLotStore(parkingLotService)
-
-export type { ParkingLotStatusFilter }

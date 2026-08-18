@@ -56,6 +56,7 @@ class StubRelationService implements TicketGateRelationService {
   async bindShuttle(): Promise<GateShuttleRelation> { throw new Error('not used') }
   async unbindShuttle(): Promise<void> {}
   async cleanupGate(gateId: string): Promise<void> { this.cleanedGateId = gateId }
+  async cleanupParkingLot(): Promise<void> {}
   async reconcile(): Promise<void> {}
 }
 

@@ -137,5 +137,6 @@ export interface TicketGateRelationService {
   bindShuttle(input: GateShuttleRelationInput): Promise<GateShuttleRelation>
   unbindShuttle(id: string): Promise<void>
   cleanupGate(gateId: string): Promise<void>
+  cleanupParkingLot(parkingLotId: string): Promise<void>
   reconcile(parkingLotIds: readonly string[], shuttleStationKeys: readonly string[]): Promise<void>
 }

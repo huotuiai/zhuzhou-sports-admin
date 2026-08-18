@@ -55,6 +55,14 @@ describe('LocalTicketGateRelationService', () => {
     expect((await service.listRelations('gate-1')).parkingRelations).toEqual([])
   })
 
+  it('cleans only relations for the deleted parking lot', async () => {
+    const service = new LocalTicketGateRelationService({ storage: new MemoryStorage() })
+    await service.bindParking({ gateId: 'gate-1', parkingLotId: 'parking-1', walkingMinutes: 5 })
+    await service.bindParking({ gateId: 'gate-1', parkingLotId: 'parking-2', walkingMinutes: 8 })
+    await service.cleanupParkingLot('parking-1')
+    expect((await service.listRelations('gate-1')).parkingRelations.map((item) => item.parkingLotId)).toEqual(['parking-2'])
+  })
+
   it('estimates walking time using 80 metres per minute', () => {
     expect(estimateWalkingMinutes(null, { lng: 113, lat: 27 })).toBeNull()
     const minutes = estimateWalkingMinutes({ lng: 113.1462, lat: 27.8165 }, { lng: 113.147, lat: 27.8165 })

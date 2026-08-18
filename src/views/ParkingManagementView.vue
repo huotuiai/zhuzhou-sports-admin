@@ -1,19 +1,20 @@
 <script setup lang="ts">
-import type {
-  CrudDialogCloseRequest,
-  CrudDialogMode,
-  DataTableColumn,
-} from '@/components/common'
+import type { CrudDialogCloseRequest, CrudDialogMode, DataTableColumn } from '@/components/common'
 import type {
   ParkingLot,
+  ParkingLotFormValue,
+  ParkingLotQuery,
   ParkingLotValidationIssue,
-  ParkingLotWriteInput,
 } from '@/modules/parking-management/types'
 import {
   AlertTriangle,
+  CircleDollarSign,
+  List,
+  Map as MapIcon,
+  MapPinOff,
   PencilLine,
   Plus,
-  RotateCcw,
+  RefreshCw,
   SquareParking,
   Trash2,
 } from '@lucide/vue'
@@ -21,12 +22,7 @@ import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { toast } from 'vue-sonner'
-import {
-  CrudDialog,
-  DataTable,
-  PaginationBar,
-  QueryPanel,
-} from '@/components/common'
+import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,81 +33,106 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import ParkingAvailabilityBadge from '@/modules/parking-management/components/ParkingAvailabilityBadge.vue'
 import ParkingLotForm from '@/modules/parking-management/components/ParkingLotForm.vue'
+import ParkingLotMapView from '@/modules/parking-management/components/ParkingLotMapView.vue'
+import ParkingOpenStatusBadge from '@/modules/parking-management/components/ParkingOpenStatusBadge.vue'
 import ParkingLotStatusBadge from '@/modules/parking-management/components/ParkingLotStatusBadge.vue'
+import { formatParkingFee } from '@/modules/parking-management/lib/map-items'
+import {
+  parkingLotFormToCreateInput,
+  parkingLotFormToUpdateInput,
+  parkingLotToFormValue,
+} from '@/modules/parking-management/lib/form-value'
 import { useParkingLotStore } from '@/modules/parking-management/stores/parking-lot-store'
+import { PARKING_FEE_TYPES, PARKING_OPEN_STATUSES } from '@/modules/parking-management/types'
+import { ticketGateRelationService } from '@/modules/ticket-gate-management/services/ticket-gate-relation-service'
+import { useThemeStore } from '@/stores/theme'
 
-interface ParkingLotFormHandle {
-  validateAndFocus(): boolean
-}
-
-const EMPTY_FORM: ParkingLotWriteInput = {
-  name: '',
-  code: '',
-  address: '',
-  totalSpaces: Number.NaN,
-  enabled: true,
-  remark: '',
-}
+type ViewMode = 'list' | 'map'
 
 const columns: readonly DataTableColumn<ParkingLot>[] = [
-  { key: 'index', label: '序号', width: '72px', align: 'center' },
-  { key: 'name', label: '停车场名称', accessor: 'name', minWidth: '180px' },
-  { key: 'code', label: '停车场编码', accessor: 'code', minWidth: '150px' },
-  { key: 'address', label: '地址', accessor: 'address', minWidth: '220px' },
-  { key: 'totalSpaces', label: '车位总数', accessor: 'totalSpaces', width: '120px', align: 'right' },
-  { key: 'enabled', label: '状态', accessor: 'enabled', width: '110px', align: 'center' },
-  { key: 'updatedAt', label: '更新时间', accessor: 'updatedAt', minWidth: '170px' },
-  { key: 'actions', label: '操作', width: '164px', align: 'right' },
+  { key: 'code', label: '停车场编号', width: '118px' },
+  { key: 'name', label: '名称 / 位置', minWidth: '220px' },
+  { key: 'spaces', label: '空余 / 总车位', minWidth: '210px' },
+  { key: 'fee', label: '收费', minWidth: '126px' },
+  { key: 'openStatus', label: '开放状态', width: '108px', align: 'center' },
+  { key: 'enabled', label: '启用状态', width: '108px', align: 'center' },
+  { key: 'recommendationWeight', label: '推荐权重', width: '96px', align: 'center' },
+  { key: 'sortOrder', label: '排序', width: '76px', align: 'center' },
+  { key: 'availabilityUpdatedAt', label: '余位更新时间', minWidth: '168px' },
+  { key: 'actions', label: '操作', width: '256px', align: 'right' },
 ]
 
-const parkingLotStore = useParkingLotStore()
-const queryDraft = ref({ ...parkingLotStore.query })
-const dialogOpen = ref(false)
-const dialogMode = ref<CrudDialogMode>('create')
+const store = useParkingLotStore()
+const themeStore = useThemeStore()
+const viewMode = ref<ViewMode>('list')
+const queryDraft = ref<ParkingLotQuery>({ ...store.query })
+const sheetOpen = ref(false)
+const sheetMode = ref<CrudDialogMode>('create')
 const editingId = ref<string | null>(null)
-const formValue = ref<ParkingLotWriteInput>({ ...EMPTY_FORM })
-const initialFormValue = ref<ParkingLotWriteInput>({ ...EMPTY_FORM })
+const formValue = ref<ParkingLotFormValue>(emptyForm())
+const initialFormValue = ref<ParkingLotFormValue>(emptyForm())
 const formIssues = ref<readonly ParkingLotValidationIssue[]>([])
-const formRef = ref<ParkingLotFormHandle | null>(null)
+const formRef = ref<{ validateAndFocus(): boolean } | null>(null)
 const discardConfirmOpen = ref(false)
+const capacityConfirmOpen = ref(false)
 const deleteTarget = ref<ParkingLot | null>(null)
+const availabilityOpen = ref(false)
+const availabilityTarget = ref<ParkingLot | null>(null)
+const availabilityValue = ref('')
+const availabilityInitial = ref('')
+const availabilityError = ref('')
+const availabilityDiscardConfirmOpen = ref(false)
 const loadError = ref('')
-const UNSAVED_MESSAGE = '当前有未保存的停车场信息，确定放弃吗？'
 
-const hasActiveQuery = computed(() =>
-  Boolean(parkingLotStore.query.name || parkingLotStore.query.code || parkingLotStore.query.status !== 'all'),
-)
-const dialogDirty = computed(() =>
-  JSON.stringify(formValue.value) !== JSON.stringify(initialFormValue.value),
-)
-const emptyText = computed(() =>
-  hasActiveQuery.value ? '当前查询条件下暂无停车场' : '尚未新增停车场',
-)
+const formDirty = computed(() => JSON.stringify(formValue.value) !== JSON.stringify(initialFormValue.value))
+const availabilityDirty = computed(() => availabilityOpen.value && availabilityValue.value !== availabilityInitial.value)
+const hasQuery = computed(() => Boolean(
+  store.query.keyword ||
+  store.query.feeType !== 'all' ||
+  store.query.openStatus !== 'all' ||
+  store.query.enabled !== 'all',
+))
+const emptyText = computed(() => hasQuery.value ? '当前查询条件下暂无停车场' : '尚未新增停车场')
 
-function cloneWriteInput(input: ParkingLotWriteInput): ParkingLotWriteInput {
-  return { ...input }
+function emptyForm(): ParkingLotFormValue {
+  return {
+    code: '',
+    name: '',
+    locationDescription: '',
+    coordinateInput: '',
+    navigationAddress: '',
+    totalSpaces: Number.NaN,
+    feeType: 'free',
+    hourlyRateYuan: null,
+    openStatus: 'open',
+    enabled: true,
+    recommendationWeight: 50,
+    sortOrder: 0,
+    remark: '',
+  }
 }
 
-function recordToWriteInput(record: ParkingLot): ParkingLotWriteInput {
-  return {
-    name: record.name,
-    code: record.code,
-    address: record.address,
-    totalSpaces: record.totalSpaces,
-    enabled: record.enabled,
-    remark: record.remark,
-  }
+function cloneForm(value: ParkingLotFormValue): ParkingLotFormValue {
+  return { ...value }
+}
+
+function nextSortOrder(): number {
+  return store.records.reduce((maximum, record) => Math.max(maximum, record.sortOrder), 0) + 1
 }
 
 function formatDateTime(value: string): string {
@@ -127,169 +148,261 @@ function formatDateTime(value: string): string {
   }).format(date)
 }
 
-function applyQuery(): void {
-  parkingLotStore.setQuery({ ...queryDraft.value })
-}
-
-function resetQuery(): void {
-  parkingLotStore.resetQuery()
-  queryDraft.value = { ...parkingLotStore.query }
-}
-
-function openCreateDialog(): void {
-  parkingLotStore.resetError()
-  dialogMode.value = 'create'
+function openCreate(): void {
+  store.resetError()
+  sheetMode.value = 'create'
   editingId.value = null
-  formValue.value = { ...EMPTY_FORM }
-  initialFormValue.value = { ...EMPTY_FORM }
+  const value = { ...emptyForm(), sortOrder: nextSortOrder() }
+  formValue.value = cloneForm(value)
+  initialFormValue.value = cloneForm(value)
   formIssues.value = []
-  dialogOpen.value = true
+  sheetOpen.value = true
 }
 
-function openEditDialog(record: ParkingLot): void {
-  parkingLotStore.resetError()
-  const value = recordToWriteInput(record)
-  dialogMode.value = 'edit'
+function openEdit(record: ParkingLot): void {
+  store.resetError()
+  sheetMode.value = 'edit'
   editingId.value = record.id
-  formValue.value = cloneWriteInput(value)
-  initialFormValue.value = cloneWriteInput(value)
+  const value = parkingLotToFormValue(record)
+  formValue.value = cloneForm(value)
+  initialFormValue.value = cloneForm(value)
   formIssues.value = []
-  dialogOpen.value = true
+  sheetOpen.value = true
 }
 
-function closeDialog(): void {
-  dialogOpen.value = false
-  discardConfirmOpen.value = false
-  formIssues.value = []
-  editingId.value = null
-}
-
-function requestDialogClose(request: CrudDialogCloseRequest): void {
-  if (request.dirty) {
-    discardConfirmOpen.value = true
-    return
-  }
-  closeDialog()
-}
-
-function confirmDiscardChanges(): boolean {
-  return !dialogOpen.value || !dialogDirty.value || window.confirm(UNSAVED_MESSAGE)
-}
-
-function handleBeforeUnload(event: BeforeUnloadEvent): void {
-  if (!dialogOpen.value || !dialogDirty.value) return
-  event.preventDefault()
-  event.returnValue = ''
-}
-
-function updateFormValue(value: ParkingLotWriteInput): void {
+function updateForm(value: ParkingLotFormValue): void {
   formValue.value = value
   formIssues.value = []
-  parkingLotStore.resetError()
+  store.resetError()
 }
 
-async function saveParkingLot(): Promise<void> {
-  const completedMode = dialogMode.value
-  formIssues.value = parkingLotStore.validate(formValue.value, editingId.value ?? undefined).issues
-  await nextTick()
-  if (!formRef.value?.validateAndFocus() || formIssues.value.length > 0) return
+function closeSheet(): void {
+  sheetOpen.value = false
+  editingId.value = null
+  formIssues.value = []
+  discardConfirmOpen.value = false
+  capacityConfirmOpen.value = false
+}
 
-  const saved = dialogMode.value === 'create'
-    ? await parkingLotStore.create(formValue.value)
+function requestSheetClose(request: CrudDialogCloseRequest): void {
+  if (request.dirty) discardConfirmOpen.value = true
+  else closeSheet()
+}
+
+function parsedFormInput(): ReturnType<typeof parkingLotFormToCreateInput> | null {
+  try {
+    return parkingLotFormToCreateInput(formValue.value)
+  }
+  catch (error) {
+    formIssues.value = [{
+      field: 'point',
+      code: 'invalid',
+      message: error instanceof Error ? error.message : '请输入合法的经度,纬度',
+    }]
+    return null
+  }
+}
+
+async function persistForm(clampAvailableSpaces = false): Promise<void> {
+  const created = sheetMode.value === 'create'
+  const saved = created
+    ? await store.create(parkingLotFormToCreateInput(formValue.value))
     : editingId.value
-      ? await parkingLotStore.update(editingId.value, formValue.value)
+      ? await store.update(editingId.value, parkingLotFormToUpdateInput(formValue.value), { clampAvailableSpaces })
       : null
-
   if (!saved) {
-    toast.error(parkingLotStore.error ?? '停车场保存失败，当前填写内容已保留。')
-    parkingLotStore.resetError()
+    toast.error(store.error ?? '停车场保存失败，当前填写内容已保留。')
     return
   }
+  closeSheet()
+  toast.success(created ? '停车场已新增。' : clampAvailableSpaces ? '停车场已更新，空余车位已同步下调。' : '停车场信息已更新。')
+}
 
-  closeDialog()
-  toast.success(completedMode === 'create' ? '停车场已新增。' : '停车场信息已更新。')
+async function saveForm(): Promise<void> {
+  const parsed = parsedFormInput()
+  if (!parsed) {
+    await nextTick()
+    formRef.value?.validateAndFocus()
+    return
+  }
+  formIssues.value = sheetMode.value === 'create'
+    ? store.validateCreate(parsed).issues
+    : store.validateUpdate(parkingLotFormToUpdateInput(formValue.value)).issues
+  await nextTick()
+  if (!formRef.value?.validateAndFocus() || formIssues.value.length) return
+
+  const current = editingId.value ? store.records.find((record) => record.id === editingId.value) : null
+  if (current && parsed.totalSpaces < current.availableSpaces) {
+    capacityConfirmOpen.value = true
+    return
+  }
+  await persistForm()
+}
+
+async function confirmCapacityClamp(): Promise<void> {
+  capacityConfirmOpen.value = false
+  await persistForm(true)
+}
+
+function openAvailability(record: ParkingLot): void {
+  store.resetError()
+  availabilityTarget.value = record
+  availabilityValue.value = String(record.availableSpaces)
+  availabilityInitial.value = String(record.availableSpaces)
+  availabilityError.value = ''
+  availabilityOpen.value = true
+}
+
+function closeAvailability(): void {
+  availabilityOpen.value = false
+  availabilityTarget.value = null
+  availabilityValue.value = ''
+  availabilityInitial.value = ''
+  availabilityError.value = ''
+  availabilityDiscardConfirmOpen.value = false
+}
+
+function requestAvailabilityClose(): void {
+  if (availabilityDirty.value) availabilityDiscardConfirmOpen.value = true
+  else closeAvailability()
+}
+
+function handleAvailabilityOpenChange(open: boolean): void {
+  if (open) availabilityOpen.value = true
+  else requestAvailabilityClose()
+}
+
+async function saveAvailability(): Promise<void> {
+  const target = availabilityTarget.value
+  if (!target) return
+  const source = availabilityValue.value.trim()
+  const value = Number(source)
+  if (!source || !Number.isInteger(value) || value < 0 || value > target.totalSpaces) {
+    availabilityError.value = `请输入 0–${target.totalSpaces} 的整数`
+    return
+  }
+  const updated = await store.updateAvailability(target.id, value)
+  if (!updated) {
+    availabilityError.value = store.error ?? '余位更新失败'
+    toast.error(availabilityError.value)
+    return
+  }
+  closeAvailability()
+  toast.success(value === 0 ? '空余车位已更新为已满。' : `空余车位已更新为 ${value} 个。`)
 }
 
 async function removeParkingLot(): Promise<void> {
   const target = deleteTarget.value
   if (!target) return
-  const removed = await parkingLotStore.remove(target.id)
+  const removed = await store.remove(target.id)
   if (!removed) {
-    toast.error(parkingLotStore.error ?? '停车场删除失败。')
-    parkingLotStore.resetError()
+    toast.error(store.error ?? '停车场删除失败。')
     return
   }
+  try {
+    await ticketGateRelationService.cleanupParkingLot(target.id)
+    toast.success('停车场及其检票口关联已删除。')
+  }
+  catch {
+    toast.warning('停车场已删除，关联数据将在下次打开检票口配置时自动清理。')
+  }
   deleteTarget.value = null
-  toast.success('停车场已删除。')
+}
+
+function applyQuery(): void {
+  store.setQuery({ ...queryDraft.value })
+}
+
+function resetQuery(): void {
+  store.resetQuery()
+  queryDraft.value = { ...store.query }
+}
+
+function confirmLeave(): boolean {
+  const unsaved = (sheetOpen.value && formDirty.value) || availabilityDirty.value
+  return !unsaved || window.confirm('当前有未保存的停车场修改，确定放弃吗？')
+}
+
+function beforeUnload(event: BeforeUnloadEvent): void {
+  if (!((sheetOpen.value && formDirty.value) || availabilityDirty.value)) return
+  event.preventDefault()
+  event.returnValue = ''
 }
 
 async function loadParkingLots(): Promise<void> {
   loadError.value = ''
-  const loaded = await parkingLotStore.load()
-  if (!loaded) {
-    loadError.value = parkingLotStore.error ?? '停车场数据加载失败。'
+  if (!await store.load()) {
+    loadError.value = store.error ?? '停车场数据加载失败。'
     toast.error(loadError.value)
   }
 }
 
 onMounted(loadParkingLots)
-onBeforeRouteLeave(() => confirmDiscardChanges())
-useEventListener(window, 'beforeunload', handleBeforeUnload)
+onBeforeRouteLeave(confirmLeave)
+useEventListener(window, 'beforeunload', beforeUnload)
 </script>
 
 <template>
   <section class="tech-grid min-h-[calc(100svh-4rem)] p-6" aria-labelledby="parking-management-title">
     <div class="mx-auto flex w-full max-w-[1680px] flex-col gap-4">
-      <header class="flex items-center justify-between gap-4">
-        <div>
-          <div class="flex items-center gap-3">
-            <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
-              <SquareParking class="size-5" aria-hidden="true" />
-            </span>
-            <div>
-              <h1 id="parking-management-title" class="text-2xl font-semibold tracking-tight">
-                停车区管理
-              </h1>
-              <p class="mt-1 text-sm text-muted-foreground">维护停车区基础档案与车位容量</p>
-            </div>
+      <header class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
+            <SquareParking class="size-5" aria-hidden="true" />
+          </span>
+          <div>
+            <h1 id="parking-management-title" class="text-2xl font-semibold tracking-tight">停车区管理</h1>
+            <p class="mt-1 text-sm text-muted-foreground">维护停车场档案、实时余位、收费信息与地图点位</p>
           </div>
         </div>
 
-        <Button size="lg" class="h-11 px-4" @click="openCreateDialog">
-          <Plus aria-hidden="true" />
-          新增停车场
-        </Button>
+        <div class="flex items-center gap-2">
+          <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
+            <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">
+              <List aria-hidden="true" />列表
+            </Button>
+            <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" :aria-pressed="viewMode === 'map'" @click="viewMode = 'map'">
+              <MapIcon aria-hidden="true" />地图
+            </Button>
+          </div>
+          <Button size="lg" class="h-11 px-4" @click="openCreate">
+            <Plus aria-hidden="true" />
+            新增停车场
+          </Button>
+        </div>
       </header>
 
       <QueryPanel @query="applyQuery" @reset="resetQuery">
         <div class="space-y-2">
-          <Label for="parking-query-name">停车场名称</Label>
-          <Input
-            id="parking-query-name"
-            v-model="queryDraft.name"
-            class="h-11"
-            placeholder="请输入停车场名称"
-            autocomplete="off"
-          />
+          <Label for="parking-query-keyword">编号 / 名称</Label>
+          <Input id="parking-query-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="请输入关键字" autocomplete="off" />
         </div>
         <div class="space-y-2">
-          <Label for="parking-query-code">停车场编码</Label>
-          <Input
-            id="parking-query-code"
-            v-model="queryDraft.code"
-            class="h-11 font-mono"
-            placeholder="请输入停车场编码"
-            autocomplete="off"
-          />
-        </div>
-        <div class="space-y-2">
-          <Label for="parking-query-status">启用状态</Label>
-          <Select v-model="queryDraft.status">
-            <SelectTrigger id="parking-query-status" class="h-11 w-full bg-background">
-              <SelectValue placeholder="请选择启用状态" />
-            </SelectTrigger>
+          <Label for="parking-query-fee">收费类型</Label>
+          <Select v-model="queryDraft.feeType">
+            <SelectTrigger id="parking-query-fee" class="h-11 w-full bg-background"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部状态</SelectItem>
+              <SelectItem value="all">全部收费类型</SelectItem>
+              <SelectItem v-for="item in PARKING_FEE_TYPES" :key="item.value" :value="item.value">{{ item.label }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="space-y-2">
+          <Label for="parking-query-open">开放状态</Label>
+          <Select v-model="queryDraft.openStatus">
+            <SelectTrigger id="parking-query-open" class="h-11 w-full bg-background"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部开放状态</SelectItem>
+              <SelectItem v-for="item in PARKING_OPEN_STATUSES" :key="item.value" :value="item.value">{{ item.label }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="space-y-2">
+          <Label for="parking-query-enabled">启用状态</Label>
+          <Select v-model="queryDraft.enabled">
+            <SelectTrigger id="parking-query-enabled" class="h-11 w-full bg-background"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部启用状态</SelectItem>
               <SelectItem value="enabled">启用</SelectItem>
               <SelectItem value="disabled">停用</SelectItem>
             </SelectContent>
@@ -297,109 +410,153 @@ useEventListener(window, 'beforeunload', handleBeforeUnload)
         </div>
       </QueryPanel>
 
-      <div v-if="loadError && !parkingLotStore.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert">
+      <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert">
         <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" />
         <p class="flex-1 text-sm text-destructive">{{ loadError }}</p>
-        <Button variant="outline" size="lg" class="h-11" @click="loadParkingLots">
-          <RotateCcw aria-hidden="true" />
-          重新加载
-        </Button>
+        <Button variant="outline" size="lg" class="h-11" @click="loadParkingLots"><RefreshCw aria-hidden="true" />重新加载</Button>
       </div>
 
-      <DataTable
-        :columns="columns"
-        :rows="parkingLotStore.paginatedRecords"
-        row-key="id"
-        :loading="parkingLotStore.isLoading"
-        :empty-text="emptyText"
-        caption="停车场基础档案列表"
-      >
-        <template #cell-index="{ rowIndex }">
-          <span class="tabular-nums text-muted-foreground">
-            {{ (parkingLotStore.currentPage - 1) * parkingLotStore.pageSize + rowIndex + 1 }}
-          </span>
-        </template>
-        <template #cell-name="{ row }">
-          <div class="min-w-0">
-            <p class="font-medium text-foreground">{{ row.name }}</p>
-            <p v-if="row.remark" class="mt-1 max-w-56 truncate text-xs text-muted-foreground">{{ row.remark }}</p>
-          </div>
-        </template>
-        <template #cell-code="{ row }">
-          <span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs">{{ row.code }}</span>
-        </template>
-        <template #cell-address="{ row }">
-          <span class="block max-w-72 truncate text-muted-foreground" :title="row.address || undefined">
-            {{ row.address || '—' }}
-          </span>
-        </template>
-        <template #cell-totalSpaces="{ row }">
-          <span class="font-semibold tabular-nums">{{ row.totalSpaces.toLocaleString('zh-CN') }}</span>
-        </template>
-        <template #cell-enabled="{ row }">
-          <ParkingLotStatusBadge :enabled="row.enabled" />
-        </template>
-        <template #cell-updatedAt="{ row }">
-          <time class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.updatedAt">
-            {{ formatDateTime(row.updatedAt) }}
-          </time>
-        </template>
-        <template #cell-actions="{ row }">
-          <div class="flex justify-end gap-1">
-            <Button variant="ghost" size="lg" class="h-11 px-3" :aria-label="`编辑${row.name}`" @click="openEditDialog(row)">
-              <PencilLine aria-hidden="true" />
-              编辑
-            </Button>
-            <Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :aria-label="`删除${row.name}`" @click="deleteTarget = row">
-              <Trash2 aria-hidden="true" />
-            </Button>
-          </div>
-        </template>
-      </DataTable>
+      <template v-if="viewMode === 'list'">
+        <DataTable :columns="columns" :rows="store.paginatedRecords" row-key="id" :loading="store.isLoading" :empty-text="emptyText" caption="停车场车位与收费信息列表">
+          <template #empty>
+            <div class="flex flex-col items-center text-muted-foreground" role="status">
+              <span class="grid size-11 place-items-center rounded-xl border bg-muted/40"><SquareParking class="size-5" aria-hidden="true" /></span>
+              <span class="mt-3 text-sm">{{ emptyText }}</span>
+              <Button v-if="hasQuery" variant="link" class="mt-1 h-9" @click="resetQuery">清空筛选条件</Button>
+            </div>
+          </template>
+          <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs font-semibold">{{ row.code }}</span></template>
+          <template #cell-name="{ row }">
+            <div class="min-w-0">
+              <p class="font-medium text-foreground">{{ row.name }}</p>
+              <p class="mt-1 max-w-64 truncate text-xs text-muted-foreground" :title="row.locationDescription || row.navigationAddress || undefined">{{ row.locationDescription || row.navigationAddress || '未填写位置' }}</p>
+              <span v-if="!row.point" class="mt-1 inline-flex items-center gap-1 text-[11px] text-warning"><MapPinOff class="size-3" aria-hidden="true" />未配置坐标</span>
+            </div>
+          </template>
+          <template #cell-spaces="{ row }">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold tabular-nums">{{ row.availableSpaces.toLocaleString('zh-CN') }} / {{ row.totalSpaces.toLocaleString('zh-CN') }}</span>
+              <ParkingAvailabilityBadge :record="row" />
+            </div>
+          </template>
+          <template #cell-fee="{ row }">
+            <Badge variant="outline" :class="row.feeType === 'free' ? 'border-success/30 bg-success/10 text-success' : 'border-warning/30 bg-warning/10 text-warning'">
+              <CircleDollarSign class="size-3.5" aria-hidden="true" />{{ formatParkingFee(row) }}
+            </Badge>
+          </template>
+          <template #cell-openStatus="{ row }"><ParkingOpenStatusBadge :status="row.openStatus" /></template>
+          <template #cell-enabled="{ row }"><ParkingLotStatusBadge :enabled="row.enabled" /></template>
+          <template #cell-recommendationWeight="{ row }"><span class="font-semibold tabular-nums">{{ row.recommendationWeight }}</span></template>
+          <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
+          <template #cell-availabilityUpdatedAt="{ row }"><time class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.availabilityUpdatedAt">{{ formatDateTime(row.availabilityUpdatedAt) }}</time></template>
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button variant="ghost" size="sm" class="h-9 px-2.5" :aria-label="`更新${row.name}余位`" @click="openAvailability(row)">
+                <RefreshCw aria-hidden="true" />更新余位
+              </Button>
+              <Button variant="ghost" size="sm" class="h-9 px-2.5" :aria-label="`编辑${row.name}`" @click="openEdit(row)">
+                <PencilLine aria-hidden="true" />编辑
+              </Button>
+              <Button variant="ghost" size="icon" class="h-9 w-9 text-destructive hover:text-destructive" :aria-label="`删除${row.name}`" @click="deleteTarget = row">
+                <Trash2 aria-hidden="true" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
 
-      <PaginationBar
-        :page="parkingLotStore.currentPage"
-        :page-size="parkingLotStore.pageSize"
-        :total="parkingLotStore.total"
-        :disabled="parkingLotStore.isLoading"
-        @update:page="parkingLotStore.setPage"
-        @update:page-size="parkingLotStore.setPageSize"
-      />
+        <PaginationBar
+          :page="store.currentPage"
+          :page-size="store.pageSize"
+          :page-sizes="[20]"
+          :total="store.total"
+          :disabled="store.isLoading"
+          @update:page="store.setPage"
+          @update:page-size="store.setPageSize"
+        />
+      </template>
+
+      <ParkingLotMapView v-else :records="store.filteredRecords" :theme="themeStore.mode" />
     </div>
 
-    <CrudDialog
-      :open="dialogOpen"
-      :mode="dialogMode"
-      :title="dialogMode === 'create' ? '新增停车场' : '编辑停车场'"
-      description="维护停车场基础信息，名称、编码和车位总数为必填项。"
-      :saving="parkingLotStore.isSaving"
-      :dirty="dialogDirty"
-      @submit="saveParkingLot"
-      @request-close="requestDialogClose"
+    <CrudSheet
+      :open="sheetOpen"
+      :mode="sheetMode"
+      size="wide"
+      :title="sheetMode === 'create' ? '新增停车场' : `编辑停车场 · ${formValue.code}`"
+      description="维护停车场基础档案、收费和展示状态；空余车位请使用列表中的快捷更新。"
+      :saving="store.isSaving"
+      :dirty="formDirty"
+      @submit="saveForm"
+      @request-close="requestSheetClose"
     >
       <ParkingLotForm
-        :key="`${dialogMode}-${editingId ?? 'new'}`"
+        :key="`${sheetMode}-${editingId ?? 'new'}`"
         ref="formRef"
-        :mode="dialogMode"
+        :mode="sheetMode"
         :value="formValue"
         :issues="formIssues"
-        :saving="parkingLotStore.isSaving"
-        @update:value="updateFormValue"
+        :saving="store.isSaving"
+        @update:value="updateForm"
       />
-    </CrudDialog>
+    </CrudSheet>
+
+    <Dialog :open="availabilityOpen" @update:open="handleAvailabilityOpenChange">
+      <DialogContent class="max-w-[440px] overflow-hidden p-0">
+        <form @submit.prevent="saveAvailability">
+          <DialogHeader class="border-b px-5 py-4 text-left">
+            <DialogTitle>更新空余车位</DialogTitle>
+            <DialogDescription>{{ availabilityTarget?.code }} · {{ availabilityTarget?.name }}</DialogDescription>
+          </DialogHeader>
+          <div class="space-y-4 px-5 py-5">
+            <div class="grid grid-cols-2 gap-3 rounded-xl border bg-muted/25 p-3 text-sm">
+              <div><p class="text-xs text-muted-foreground">总车位</p><p class="mt-1 font-semibold tabular-nums">{{ availabilityTarget?.totalSpaces ?? 0 }}</p></div>
+              <div><p class="text-xs text-muted-foreground">当前空余</p><p class="mt-1 font-semibold tabular-nums">{{ availabilityTarget?.availableSpaces ?? 0 }}</p></div>
+            </div>
+            <div class="space-y-2">
+              <Label for="parking-availability-value">新的空余车位 <span class="text-destructive" aria-hidden="true">*</span></Label>
+              <Input
+                id="parking-availability-value"
+                v-model="availabilityValue"
+                type="number"
+                min="0"
+                :max="availabilityTarget?.totalSpaces"
+                step="1"
+                class="h-11 tabular-nums"
+                autofocus
+                :disabled="Boolean(store.updatingAvailabilityId)"
+                :aria-invalid="Boolean(availabilityError)"
+                @input="availabilityError = ''"
+              />
+              <p v-if="availabilityError" class="flex items-center gap-1.5 text-xs text-destructive" role="alert"><AlertTriangle class="size-3.5" aria-hidden="true" />{{ availabilityError }}</p>
+              <p v-else class="text-xs leading-5 text-muted-foreground">请输入 0–{{ availabilityTarget?.totalSpaces }} 的整数；填 0 后将显示“已满”。</p>
+            </div>
+          </div>
+          <DialogFooter class="flex-row justify-end border-t bg-card/90 px-5 py-4">
+            <Button type="button" variant="outline" class="h-11 min-w-24" :disabled="Boolean(store.updatingAvailabilityId)" @click="requestAvailabilityClose">取消</Button>
+            <Button type="submit" class="h-11 min-w-28" :disabled="Boolean(store.updatingAvailabilityId)"><RefreshCw :class="store.updatingAvailabilityId ? 'animate-spin motion-reduce:animate-none' : ''" aria-hidden="true" />{{ store.updatingAvailabilityId ? '更新中' : '保存余位' }}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
 
     <AlertDialog :open="discardConfirmOpen" @update:open="discardConfirmOpen = $event">
       <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle>
-          <AlertDialogDescription>当前填写内容尚未保存，关闭后将无法恢复。</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel class="h-11" @click="discardConfirmOpen = false">继续编辑</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" class="h-11" @click="closeDialog">
-            放弃修改
-          </AlertDialogAction>
-        </AlertDialogFooter>
+        <AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>当前停车场信息尚未保存，关闭后将无法恢复。</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><AlertDialogAction variant="destructive" class="h-11" @click="closeSheet">放弃修改</AlertDialogAction></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog :open="availabilityDiscardConfirmOpen" @update:open="availabilityDiscardConfirmOpen = $event">
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>放弃余位修改？</AlertDialogTitle><AlertDialogDescription>当前输入的空余车位尚未保存。</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><AlertDialogAction variant="destructive" class="h-11" @click="closeAvailability">放弃修改</AlertDialogAction></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog :open="capacityConfirmOpen" @update:open="capacityConfirmOpen = $event">
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>同步下调空余车位？</AlertDialogTitle><AlertDialogDescription>新的总车位数小于当前空余车位。保存后空余车位将同步调整为 {{ formValue.totalSpaces }} 个，并更新余位时间。</AlertDialogDescription></AlertDialogHeader>
+        <AlertDialogFooter><AlertDialogCancel class="h-11">返回修改</AlertDialogCancel><AlertDialogAction class="h-11" @click="confirmCapacityClamp">确认并保存</AlertDialogAction></AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
 
@@ -407,18 +564,12 @@ useEventListener(window, 'beforeunload', handleBeforeUnload)
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle>
-          <AlertDialogDescription>删除后该停车场基础档案将立即移除，且无法恢复。</AlertDialogDescription>
+          <AlertDialogDescription>删除后该停车场档案将立即移除，并同步清理已有的检票口附近停车场关联，此操作无法恢复。</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="h-11">取消</AlertDialogCancel>
-          <Button
-            variant="destructive"
-            class="h-11"
-            :disabled="Boolean(parkingLotStore.deletingId)"
-            @click="removeParkingLot"
-          >
-            <Trash2 aria-hidden="true" />
-            {{ parkingLotStore.deletingId ? '删除中' : '确认删除' }}
+          <Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="removeParkingLot">
+            <Trash2 aria-hidden="true" />{{ store.deletingId ? '删除中' : '确认删除' }}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

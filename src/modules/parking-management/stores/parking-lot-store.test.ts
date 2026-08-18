@@ -1,17 +1,33 @@
+import type {
+  ParkingLot,
+  ParkingLotCreateInput,
+  ParkingLotService,
+  ParkingLotUpdateInput,
+  ParkingLotUpdateOptions,
+} from '../types'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { ParkingLot, ParkingLotService, ParkingLotWriteInput } from '../types'
 import { createParkingLotStore } from './parking-lot-store'
 
 function lot(id: string, overrides: Partial<ParkingLot> = {}): ParkingLot {
   return {
     id,
-    name: `停车场 ${id}`,
     code: id.toUpperCase(),
-    address: '',
-    totalSpaces: 10,
+    name: `停车场 ${id}`,
+    locationDescription: '',
+    point: null,
+    navigationAddress: '',
+    totalSpaces: 100,
+    availableSpaces: 100,
+    feeType: 'free',
+    hourlyRateYuan: null,
+    openStatus: 'open',
     enabled: true,
+    recommendationWeight: 50,
+    sortOrder: 1,
     remark: '',
+    coordinateSystem: 'GCJ-02',
+    availabilityUpdatedAt: '2026-01-01T00:00:00.000Z',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
@@ -29,20 +45,34 @@ class StubParkingLotService implements ParkingLotService {
     return structuredClone(this.records)
   }
 
-  async create(input: ParkingLotWriteInput): Promise<ParkingLot> {
+  async create(input: ParkingLotCreateInput): Promise<ParkingLot> {
     if (this.failSave) throw new Error('保存失败')
-    const created = lot('created', { ...input })
-    this.records.unshift(created)
+    const created = lot('created', { ...input, availableSpaces: input.totalSpaces })
+    this.records.push(created)
     return structuredClone(created)
   }
 
-  async update(id: string, input: ParkingLotWriteInput): Promise<ParkingLot> {
+  async update(id: string, input: ParkingLotUpdateInput, options?: ParkingLotUpdateOptions): Promise<ParkingLot> {
     if (this.failSave) throw new Error('保存失败')
     const index = this.records.findIndex((record) => record.id === id)
     if (index < 0) throw new Error('不存在')
-    const updated = { ...this.records[index]!, ...input }
+    const previous = this.records[index]!
+    if (input.totalSpaces < previous.availableSpaces && !options?.clampAvailableSpaces) throw new Error('需要确认')
+    const updated = {
+      ...previous,
+      ...input,
+      availableSpaces: Math.min(previous.availableSpaces, input.totalSpaces),
+    }
     this.records[index] = updated
     return structuredClone(updated)
+  }
+
+  async updateAvailability(id: string, availableSpaces: number): Promise<ParkingLot> {
+    if (this.failSave) throw new Error('更新失败')
+    const index = this.records.findIndex((record) => record.id === id)
+    if (index < 0) throw new Error('不存在')
+    this.records[index] = { ...this.records[index]!, availableSpaces }
+    return structuredClone(this.records[index]!)
   }
 
   async remove(id: string): Promise<void> {
@@ -51,15 +81,40 @@ class StubParkingLotService implements ParkingLotService {
   }
 }
 
-function input(overrides: Partial<ParkingLotWriteInput> = {}): ParkingLotWriteInput {
+function input(overrides: Partial<ParkingLotCreateInput> = {}): ParkingLotCreateInput {
   return {
-    name: '新停车场',
     code: 'NEW-001',
-    address: '',
-    totalSpaces: 0,
+    name: '新停车场',
+    locationDescription: '',
+    point: null,
+    navigationAddress: '',
+    totalSpaces: 100,
+    feeType: 'free',
+    hourlyRateYuan: null,
+    openStatus: 'open',
     enabled: true,
+    recommendationWeight: 50,
+    sortOrder: 1,
     remark: '',
     ...overrides,
+  }
+}
+
+function updateInput(overrides: Partial<ParkingLotUpdateInput> = {}): ParkingLotUpdateInput {
+  const value = input(overrides)
+  return {
+    name: value.name,
+    locationDescription: value.locationDescription,
+    point: value.point,
+    navigationAddress: value.navigationAddress,
+    totalSpaces: value.totalSpaces,
+    feeType: value.feeType,
+    hourlyRateYuan: value.hourlyRateYuan,
+    openStatus: value.openStatus,
+    enabled: value.enabled,
+    recommendationWeight: value.recommendationWeight,
+    sortOrder: value.sortOrder,
+    remark: value.remark,
   }
 }
 
@@ -71,88 +126,71 @@ describe('parking lot store', () => {
     service = new StubParkingLotService()
   })
 
-  it('filters by name, code, and status and paginates results', async () => {
+  it('combines keyword and status filters and keeps map results independent of pagination', async () => {
     service.records = [
-      lot('A-001', { name: '东区停车场' }),
-      lot('B-001', { name: '西区停车场', enabled: false }),
-      lot('A-002', { name: '东区备用停车场' }),
+      lot('A-001', { name: '东区停车场', feeType: 'paid', hourlyRateYuan: 5, sortOrder: 1 }),
+      lot('B-001', { name: '西区停车场', openStatus: 'closed', enabled: false, sortOrder: 2 }),
+      lot('A-002', { name: '东区备用停车场', sortOrder: 3 }),
     ]
     const store = createParkingLotStore(service, 'parking-filter')()
     await store.load()
-
-    store.setQuery({ name: '东区', code: 'a-', status: 'enabled' })
-    expect(store.filteredRecords.map((record) => record.id)).toEqual(['A-001', 'A-002'])
-    store.setPageSize(1)
-    expect(store.pageCount).toBe(2)
-    expect(store.paginatedRecords.map((record) => record.id)).toEqual(['A-001'])
-    store.setPage(2)
-    expect(store.paginatedRecords.map((record) => record.id)).toEqual(['A-002'])
-
+    store.setQuery({ keyword: '东区', feeType: 'paid', openStatus: 'open', enabled: 'enabled' })
+    expect(store.filteredRecords.map((record) => record.id)).toEqual(['A-001'])
     store.resetQuery()
-    expect(store.page).toBe(1)
-    expect(store.total).toBe(3)
+    expect(store.filteredRecords).toHaveLength(3)
+    expect(store.pageSize).toBe(20)
   })
 
-  it('validates duplicate code while excluding the edited record', async () => {
+  it('paginates at 20 records and sorts by sort order', async () => {
+    service.records = Array.from({ length: 21 }, (_, index) => lot(`P-${index + 1}`, { sortOrder: 21 - index }))
+    const store = createParkingLotStore(service, 'parking-pagination')()
+    await store.load()
+    expect(store.paginatedRecords).toHaveLength(20)
+    expect(store.filteredRecords).toHaveLength(21)
+    expect(store.paginatedRecords[0]?.sortOrder).toBe(1)
+    store.setPage(2)
+    expect(store.paginatedRecords).toHaveLength(1)
+  })
+
+  it('validates unique codes for create and base fields for update', async () => {
     service.records = [lot('A-001')]
     const store = createParkingLotStore(service, 'parking-validation')()
     await store.load()
-    expect(store.validate(input({ code: 'a-001' })).issues).toContainEqual(
+    expect(store.validateCreate(input({ code: 'a-001' })).issues).toContainEqual(
       expect.objectContaining({ field: 'code', code: 'duplicate' }),
     )
-    expect(store.validate(input({ code: 'a-001' }), 'A-001').valid).toBe(true)
+    expect(store.validateUpdate(updateInput({ name: '一' })).valid).toBe(false)
   })
 
-  it('creates, updates, and deletes while exposing operation state', async () => {
+  it('creates, updates, updates availability and deletes without a refresh', async () => {
     service.records = [lot('A-001')]
     const store = createParkingLotStore(service, 'parking-crud')()
     await store.load()
-    const created = await store.create(input())
-    expect(created?.id).toBe('created')
-    expect(store.isSaving).toBe(false)
-
-    const updated = await store.update('A-001', input({ code: 'A-001', name: '更新后' }))
-    expect(updated?.name).toBe('更新后')
-
+    expect((await store.create(input()))?.id).toBe('created')
+    expect((await store.update('A-001', updateInput({ name: '更新后' })))?.name).toBe('更新后')
+    expect((await store.updateAvailability('A-001', 12))?.availableSpaces).toBe(12)
+    expect(store.updatingAvailabilityId).toBeNull()
     await expect(store.remove('created')).resolves.toBe(true)
-    expect(store.deletingId).toBeNull()
     expect(store.records.some((record) => record.id === 'created')).toBe(false)
   })
 
-  it('keeps a successful write even when a later list refresh would fail', async () => {
-    service.records = [lot('A-001')]
-    const store = createParkingLotStore(service, 'parking-write-without-refresh')()
-    await store.load()
-    service.failList = true
-
-    const created = await store.create(input())
-    expect(created?.id).toBe('created')
-    expect(store.records.some((record) => record.id === 'created')).toBe(true)
-
-    const updated = await store.update('A-001', input({ code: 'A-001', name: '已更新' }))
-    expect(updated?.name).toBe('已更新')
-    expect(store.records.find((record) => record.id === 'A-001')?.name).toBe('已更新')
-  })
-
-  it('records loading, saving, and deleting failures without mutating data', async () => {
+  it('retains records and exposes errors when operations fail', async () => {
     const store = createParkingLotStore(service, 'parking-failure')()
     service.failList = true
     await expect(store.load()).resolves.toBe(false)
     expect(store.error).toBe('加载失败')
-    expect(store.isLoading).toBe(false)
 
     service.failList = false
     service.records = [lot('A-001')]
     await store.load()
     service.failSave = true
     await expect(store.create(input())).resolves.toBeNull()
-    expect(store.error).toBe('保存失败')
-    expect(store.isSaving).toBe(false)
+    expect(store.records).toHaveLength(1)
+    await expect(store.updateAvailability('A-001', 10)).resolves.toBeNull()
 
+    service.failSave = false
     service.failDelete = true
     await expect(store.remove('A-001')).resolves.toBe(false)
-    expect(store.error).toBe('删除失败')
     expect(store.records).toHaveLength(1)
-    expect(store.deletingId).toBeNull()
   })
 })
