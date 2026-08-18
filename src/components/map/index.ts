@@ -1,0 +1,7 @@
+export { default as AMapAreaLayer } from './AMapAreaLayer.vue'
+export { default as AMapCanvas } from './AMapCanvas.vue'
+export { default as AMapGeometryEditor } from './AMapGeometryEditor.vue'
+export { default as AMapMarkerLayer } from './AMapMarkerLayer.vue'
+export { default as AMapRouteLayer } from './AMapRouteLayer.vue'
+export * from './geometry'
+export type * from './types'

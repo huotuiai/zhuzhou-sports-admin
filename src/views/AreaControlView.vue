@@ -1,263 +1,287 @@
 <script setup lang="ts">
-import type {
-  AreaControlMapHandle,
-  ControlZoneGeometry,
-  ControlZoneWriteInput,
-  LngLatTuple,
-} from '@/modules/area-control/types'
-import { useEventListener } from '@vueuse/core'
-import { AlertTriangle, DatabaseIcon } from '@lucide/vue'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import type { CrudDialogCloseRequest, CrudDialogMode, DataTableColumn } from '@/components/common'
+import type { TrafficControl, TrafficControlQuery, TrafficControlTimeStatus, TrafficControlValidationIssue, TrafficControlWriteInput } from '@/modules/traffic-control/types'
+import { AlertTriangle, Ellipsis, List, Map as MapIcon, MapPinned, PencilLine, Pin, PinOff, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
+import { useEventListener, useNow } from '@vueuse/core'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { toast } from 'vue-sonner'
-import AreaControlMap from '@/modules/area-control/components/AreaControlMap.vue'
-import ControlZonePanel from '@/modules/area-control/components/ControlZonePanel.vue'
-import ControlZoneToolbar from '@/modules/area-control/components/ControlZoneToolbar.vue'
-import { calculateGeometryAreaSquareMeters, cloneGeometry } from '@/modules/area-control/lib/geometry'
-import { useControlZoneStore } from '@/modules/area-control/stores/control-zone-store'
+import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
+import { cloneGeometry } from '@/components/map/geometry'
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import TrafficControlForm from '@/modules/traffic-control/components/TrafficControlForm.vue'
+import TrafficControlMapView from '@/modules/traffic-control/components/TrafficControlMapView.vue'
+import { deriveTrafficControlTimeStatus, useTrafficControlStore } from '@/modules/traffic-control/stores/traffic-control-store'
+import { TRAFFIC_CONTROL_TYPES, TRAFFIC_TIME_STATUS_LABELS, trafficControlTypeMeta } from '@/modules/traffic-control/types'
 import { useThemeStore } from '@/stores/theme'
 
-type BoundaryRings = readonly (readonly LngLatTuple[])[]
+type ViewMode = 'list' | 'map'
 
-const DISCARD_MESSAGE = '当前有未保存的区域修改，确定放弃吗？'
-const zoneStore = useControlZoneStore()
+const columns: readonly DataTableColumn<TrafficControl>[] = [
+  { key: 'code', label: '编号', width: '110px' },
+  { key: 'title', label: '标题', minWidth: '210px' },
+  { key: 'type', label: '类型', width: '112px', align: 'center' },
+  { key: 'areaName', label: '区域名称', minWidth: '180px' },
+  { key: 'timeRange', label: '时间范围', minWidth: '230px' },
+  { key: 'timeStatus', label: '管制时态', width: '112px', align: 'center' },
+  { key: 'pinned', label: '置顶', width: '80px', align: 'center' },
+  { key: 'updatedAt', label: '更新时间', width: '150px' },
+  { key: 'actions', label: '操作', width: '156px', align: 'right' },
+]
+
+const store = useTrafficControlStore()
 const themeStore = useThemeStore()
-const mapRef = ref<AreaControlMapHandle | null>(null)
-const mapReady = ref(false)
-const mapErrorMessage = ref('')
-const drawingType = ref<ControlZoneGeometry['type'] | null>(null)
-const isDeleting = ref(false)
+const now = useNow({ interval: 30_000 })
+const viewMode = ref<ViewMode>('list')
+const queryDraft = ref<TrafficControlQuery>({ ...store.query })
+const formOpen = ref(false)
+const formMode = ref<CrudDialogMode>('create')
+const editingId = ref<string | null>(null)
+const formValue = ref<TrafficControlWriteInput>(emptyForm())
+const initialValue = ref<TrafficControlWriteInput>(emptyForm())
+const issues = ref<readonly TrafficControlValidationIssue[]>([])
+const formRef = ref<{ validateAndFocus(): boolean } | null>(null)
+const discardOpen = ref(false)
+const deleteTarget = ref<TrafficControl | null>(null)
+const historicalConfirmOpen = ref(false)
+const loadError = ref('')
 
-const mapUnavailable = computed(() => Boolean(mapErrorMessage.value) || !mapReady.value)
-const interactionReadonly = computed(() => mapUnavailable.value)
-const toolbarDisabled = computed(() => !mapReady.value || zoneStore.isLoading || zoneStore.isSaving)
+const formDirty = computed(() => JSON.stringify(formValue.value) !== JSON.stringify(initialValue.value))
+const hasQuery = computed(() => Boolean(store.query.keyword || store.query.type !== 'all' || store.query.timeStatus !== 'all' || store.query.dateStart || store.query.dateEnd))
 
-const formValue = computed<ControlZoneWriteInput | null>(() => {
-  const draft = zoneStore.draft
-  if (!draft?.geometry) return null
+function localDateTime(date: Date): string {
+  const offset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+}
+
+function emptyForm(): TrafficControlWriteInput {
+  const start = new Date(Date.now() + 60 * 60_000)
+  start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0)
+  const end = new Date(start.getTime() + 3 * 60 * 60_000)
+  return { title: '', type: 'road-closure', areaName: '', startAt: localDateTime(start), endAt: localDateTime(end), detourInstructions: '', geometry: null, pinned: false, sortOrder: 50 }
+}
+
+function toWriteInput(item: TrafficControl): TrafficControlWriteInput {
   return {
-    name: draft.name,
-    description: draft.description,
-    enabled: draft.enabled,
-    coordinateSystem: 'GCJ-02',
-    geometry: cloneGeometry(draft.geometry),
-    areaSquareMeters: calculateGeometryAreaSquareMeters(draft.geometry),
-  }
-})
-
-function confirmDiscard(): boolean {
-  return !zoneStore.hasUnsavedChanges || window.confirm(DISCARD_MESSAGE)
-}
-
-function handleBoundariesReady(boundaries: BoundaryRings) {
-  zoneStore.setBoundaries(boundaries)
-  mapReady.value = true
-  mapErrorMessage.value = ''
-}
-
-function handleMapError(message: string) {
-  zoneStore.setBoundaries([])
-  mapReady.value = false
-  mapErrorMessage.value = message
-}
-
-function handleDrawingChange(value: ControlZoneGeometry['type'] | null) {
-  drawingType.value = value
-}
-
-function startCreate(type: ControlZoneGeometry['type']) {
-  if (interactionReadonly.value) return
-  if (!confirmDiscard()) return
-  if (zoneStore.hasUnsavedChanges) {
-    zoneStore.cancel()
-    mapRef.value?.finishEditing(false)
-  }
-  zoneStore.select(null)
-  if (!mapRef.value?.startDrawing(type)) {
-    toast.error('地图尚未准备好，请稍后重试。')
+    title: item.title,
+    type: item.type,
+    areaName: item.areaName,
+    startAt: item.startAt,
+    endAt: item.endAt,
+    detourInstructions: item.detourInstructions,
+    geometry: item.geometry ? cloneGeometry(item.geometry) : null,
+    pinned: item.pinned,
+    sortOrder: item.sortOrder,
   }
 }
 
-function handleDraftCreated(geometry: ControlZoneGeometry) {
-  zoneStore.beginCreate(geometry)
-}
-
-function handleGeometryChange(id: string, geometry: ControlZoneGeometry) {
-  if (zoneStore.mode === 'edit' && zoneStore.draft?.id === id) {
-    zoneStore.updateDraft({ geometry })
+function cloneWriteInput(value: TrafficControlWriteInput): TrafficControlWriteInput {
+  return {
+    ...value,
+    geometry: value.geometry ? cloneGeometry(value.geometry) : null,
   }
 }
 
-function selectZone(id: string) {
-  if (zoneStore.selectedId === id && zoneStore.mode === 'detail') {
-    mapRef.value?.focusZone(id)
+function formatDateTime(value: string): string {
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+}
+
+function timeStatus(item: TrafficControl): TrafficControlTimeStatus {
+  return deriveTrafficControlTimeStatus(item, now.value)
+}
+
+function timeStatusClass(status: TrafficControlTimeStatus): string {
+  if (status === 'active') return 'border-success/30 bg-success/10 text-success'
+  if (status === 'upcoming') return 'border-primary/30 bg-primary/10 text-primary'
+  return 'border-border bg-muted/50 text-muted-foreground'
+}
+
+function openCreate(): void {
+  store.resetError()
+  formMode.value = 'create'
+  editingId.value = null
+  const value = emptyForm()
+  formValue.value = cloneWriteInput(value)
+  initialValue.value = cloneWriteInput(value)
+  issues.value = []
+  formOpen.value = true
+}
+
+function openEdit(item: TrafficControl): void {
+  store.resetError()
+  formMode.value = 'edit'
+  editingId.value = item.id
+  const value = toWriteInput(item)
+  formValue.value = cloneWriteInput(value)
+  initialValue.value = cloneWriteInput(value)
+  issues.value = []
+  formOpen.value = true
+}
+
+function updateForm(value: TrafficControlWriteInput): void {
+  formValue.value = value
+  issues.value = []
+  store.resetError()
+}
+
+function closeForm(): void {
+  formOpen.value = false
+  editingId.value = null
+  issues.value = []
+  discardOpen.value = false
+  historicalConfirmOpen.value = false
+}
+
+function requestFormClose(request: CrudDialogCloseRequest): void {
+  if (request.dirty) discardOpen.value = true
+  else closeForm()
+}
+
+function applyQuery(): void {
+  if (queryDraft.value.dateStart && queryDraft.value.dateEnd && queryDraft.value.dateStart > queryDraft.value.dateEnd) {
+    toast.error('查询开始日期不能晚于结束日期。')
     return
   }
-  if (!confirmDiscard()) return
-  if (zoneStore.hasUnsavedChanges) {
-    zoneStore.cancel()
-    mapRef.value?.finishEditing(false)
-  }
-  zoneStore.select(id)
-  void nextTick(() => mapRef.value?.focusZone(id))
+  store.setQuery({ ...queryDraft.value })
 }
 
-function backToList() {
-  zoneStore.select(null)
+function resetQuery(): void {
+  store.resetQuery()
+  queryDraft.value = { ...store.query }
 }
 
-function beginEdit(id: string) {
-  if (interactionReadonly.value) return
-  if (!zoneStore.beginEdit(id)) {
-    toast.error(zoneStore.error ?? '未能打开区域编辑。')
-    return
-  }
-  void nextTick(() => {
-    if (!mapRef.value?.beginEditing(id)) {
-      zoneStore.cancel()
-      toast.error('地图编辑器启动失败，请重新加载地图后再试。')
-    }
-  })
-}
-
-function updateFormValue(value: ControlZoneWriteInput) {
-  zoneStore.updateDraft({
-    name: value.name,
-    description: value.description,
-    enabled: value.enabled,
-    geometry: value.geometry,
-  })
-}
-
-async function saveZone() {
-  const saved = await zoneStore.save()
+async function persistSave(): Promise<void> {
+  const created = formMode.value === 'create'
+  const saved = created
+    ? await store.create(formValue.value)
+    : editingId.value ? await store.update(editingId.value, formValue.value) : null
   if (!saved) {
-    toast.error(zoneStore.error ?? '保存失败，已保留当前草稿。')
+    toast.error(store.error ?? '交通管制保存失败，当前填写内容已保留。')
     return
   }
-  mapRef.value?.finishEditing(false)
-  toast.success('管制区域已保存。')
+  closeForm()
+  toast.success(created ? '交通管制已新增。' : '交通管制已更新。')
 }
 
-function cancelForm() {
-  if (!confirmDiscard()) return
-  const editedId = zoneStore.draft?.id
-  const originalGeometry = zoneStore.originalDraft?.geometry
-  if (editedId && originalGeometry) {
-    mapRef.value?.finishEditing(false)
-    mapRef.value?.restoreGeometry(editedId, originalGeometry)
-  }
-  else {
-    mapRef.value?.cancelDrawing()
-  }
-  zoneStore.cancel()
-}
-
-async function removeZone(id: string) {
-  if (interactionReadonly.value) return
-  isDeleting.value = true
-  const removed = await zoneStore.remove(id)
-  isDeleting.value = false
-  if (removed) {
-    toast.success('管制区域已删除。')
-  }
-  else {
-    toast.error(zoneStore.error ?? '删除失败，区域已保留。')
-  }
-}
-
-function handleEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape') return
-  if (drawingType.value) {
-    mapRef.value?.cancelDrawing()
+async function save(): Promise<void> {
+  issues.value = store.validate(formValue.value, formMode.value).issues
+  await nextTick()
+  if (!formRef.value?.validateAndFocus() || issues.value.length) return
+  if (formMode.value === 'edit' && Date.parse(formValue.value.endAt) <= Date.now()) {
+    historicalConfirmOpen.value = true
     return
   }
-  if (zoneStore.hasUnsavedChanges) cancelForm()
+  await persistSave()
 }
 
-function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (!zoneStore.hasUnsavedChanges) return
+async function confirmHistoricalSave(): Promise<void> {
+  historicalConfirmOpen.value = false
+  await persistSave()
+}
+
+async function togglePinned(item: TrafficControl): Promise<void> {
+  const updated = await store.togglePinned(item)
+  if (updated) toast.success(updated.pinned ? '已置顶该管制。' : '已取消置顶。')
+  else toast.error(store.error ?? '置顶状态更新失败。')
+}
+
+async function remove(): Promise<void> {
+  if (!deleteTarget.value) return
+  if (await store.remove(deleteTarget.value.id)) {
+    deleteTarget.value = null
+    toast.success('交通管制已删除。')
+  }
+  else toast.error(store.error ?? '删除失败，请稍后重试。')
+}
+
+function confirmLeave(): boolean {
+  return !(formOpen.value && formDirty.value) || window.confirm('当前有未保存的交通管制修改，确定放弃吗？')
+}
+
+function beforeUnload(event: BeforeUnloadEvent): void {
+  if (!formOpen.value || !formDirty.value) return
   event.preventDefault()
   event.returnValue = ''
 }
 
-onBeforeRouteLeave(() => confirmDiscard())
-useEventListener(window, 'keydown', handleEscape)
-useEventListener(window, 'beforeunload', handleBeforeUnload)
+async function load(): Promise<void> {
+  loadError.value = ''
+  if (!await store.load()) {
+    loadError.value = store.error ?? '交通管制数据加载失败'
+    toast.error(loadError.value)
+  }
+}
 
-onMounted(async () => {
-  const loaded = await zoneStore.load()
-  if (!loaded) toast.error(zoneStore.error ?? '本地管制区域加载失败。')
-})
+watch(now, () => store.refreshTime())
+onMounted(load)
+onBeforeRouteLeave(() => confirmLeave())
+useEventListener(window, 'beforeunload', beforeUnload)
 </script>
 
 <template>
-  <section class="relative h-[calc(100svh-4rem)] min-h-[36rem] overflow-hidden bg-background" aria-labelledby="area-control-title">
-    <h1 id="area-control-title" class="sr-only">交通管制</h1>
-
-    <div class="flex size-full min-w-0">
-      <div class="relative min-w-0 flex-1 overflow-hidden">
-        <AreaControlMap
-          ref="mapRef"
-          :zones="zoneStore.records"
-          :selected-id="zoneStore.selectedId"
-          :theme="themeStore.mode"
-          :readonly="interactionReadonly"
-          @ready="handleBoundariesReady"
-          @map-error="handleMapError"
-          @select="selectZone"
-          @draft-created="handleDraftCreated"
-          @geometry-change="handleGeometryChange"
-          @drawing-change="handleDrawingChange"
-        />
-
-        <div class="pointer-events-none absolute left-3 top-3 z-20 sm:left-4 sm:top-4">
-          <div class="pointer-events-auto">
-            <ControlZoneToolbar
-              :readonly="false"
-              :disabled="toolbarDisabled"
-              :has-zones="zoneStore.records.length > 0"
-              :drawing="Boolean(drawingType)"
-              :show-panel-button="false"
-              @create="startCreate"
-              @return-to-zhuzhou="mapRef?.focusZhuzhou()"
-              @fit-all="mapRef?.fitAll()"
-            />
-          </div>
+  <section class="tech-grid min-h-[calc(100svh-4rem)] p-6" aria-labelledby="traffic-control-title">
+    <div class="mx-auto flex w-full max-w-[1680px] flex-col gap-4">
+      <header class="flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><MapPinned class="size-5" aria-hidden="true" /></span>
+          <div><h1 id="traffic-control-title" class="text-2xl font-semibold tracking-tight">交通管制</h1><p class="mt-1 text-sm text-muted-foreground">维护体育中心周边管制时间、区域与绕行说明</p></div>
         </div>
+        <div class="flex items-center gap-2">
+          <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
+            <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表</Button>
+            <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图</Button>
+          </div>
+          <Button size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
+        </div>
+      </header>
 
-      </div>
+      <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
+        <div class="space-y-2"><Label for="traffic-keyword">关键字</Label><Input id="traffic-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="编号、标题或区域" autocomplete="off" /></div>
+        <div class="space-y-2"><Label for="traffic-type">管制类型</Label><Select v-model="queryDraft.type"><SelectTrigger id="traffic-type" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem v-for="item in TRAFFIC_CONTROL_TYPES" :key="item.value" :value="item.value">{{ item.label }}</SelectItem></SelectContent></Select></div>
+        <div class="space-y-2"><Label for="traffic-status">管制时态</Label><Select :model-value="queryDraft.timeStatus" @update:model-value="queryDraft.timeStatus = $event as TrafficControlTimeStatus | 'all'"><SelectTrigger id="traffic-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部时态</SelectItem><SelectItem value="upcoming">即将开始</SelectItem><SelectItem value="active">进行中</SelectItem><SelectItem value="ended">已结束</SelectItem></SelectContent></Select></div>
+        <div class="space-y-2"><Label for="traffic-date-start">查询开始日期</Label><Input id="traffic-date-start" v-model="queryDraft.dateStart" type="date" class="h-11" /></div>
+        <div class="space-y-2"><Label for="traffic-date-end">查询结束日期</Label><Input id="traffic-date-end" v-model="queryDraft.dateEnd" type="date" class="h-11" /></div>
+      </QueryPanel>
 
-      <ControlZonePanel
-        :mode="zoneStore.mode"
-        :zones="zoneStore.records"
-        :selected-zone="zoneStore.selectedZone"
-        :form-value="formValue"
-        :form-errors="zoneStore.validation.issues"
-        :overlap-warnings="zoneStore.overlappingZones"
-        :map-unavailable="mapUnavailable"
-        :map-error-message="mapErrorMessage || '地图与株洲市边界尚未准备完成。'"
-        :saving="zoneStore.isSaving"
-        :deleting="isDeleting"
-        @select="selectZone"
-        @back="backToList"
-        @edit="beginEdit"
-        @remove="removeZone"
-        @update:form-value="updateFormValue"
-        @save="saveZone"
-        @cancel="cancelForm"
-      />
+      <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert"><AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button></div>
+
+      <template v-if="viewMode === 'list'">
+        <DataTable :columns="columns" :rows="store.paginatedRecords" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '当前查询条件下暂无交通管制' : '暂无交通管制，请新增'" caption="交通管制列表">
+          <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs font-semibold">{{ row.code }}</span></template>
+          <template #cell-title="{ row }"><p class="max-w-64 truncate font-medium" :title="row.title">{{ row.title }}</p><p v-if="!row.geometry" class="mt-1 text-xs text-warning">未配置地图区域</p></template>
+          <template #cell-type="{ row }"><Badge variant="outline" :style="{ borderColor: `${trafficControlTypeMeta(row.type).color}66`, color: trafficControlTypeMeta(row.type).color }">{{ trafficControlTypeMeta(row.type).label }}</Badge></template>
+          <template #cell-areaName="{ row }"><p class="max-w-52 truncate" :title="row.areaName">{{ row.areaName }}</p></template>
+          <template #cell-timeRange="{ row }"><div class="whitespace-nowrap text-xs tabular-nums"><time :datetime="row.startAt">{{ formatDateTime(row.startAt) }}</time><span class="mx-1.5 text-muted-foreground">–</span><time :datetime="row.endAt">{{ formatDateTime(row.endAt) }}</time></div></template>
+          <template #cell-timeStatus="{ row }"><Badge variant="outline" :class="timeStatusClass(timeStatus(row))">{{ TRAFFIC_TIME_STATUS_LABELS[timeStatus(row)] }}</Badge></template>
+          <template #cell-pinned="{ row }"><Pin v-if="row.pinned" class="mx-auto size-4 fill-primary text-primary" aria-label="已置顶" /><span v-else class="text-muted-foreground">—</span></template>
+          <template #cell-updatedAt="{ row }"><time class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.updatedAt">{{ formatDateTime(row.updatedAt) }}</time></template>
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button>
+              <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-11 w-11" :aria-label="`${row.title}更多操作`"><Ellipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuItem class="min-h-10 px-3" @select="togglePinned(row)"><PinOff v-if="row.pinned" /><Pin v-else />{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" class="min-h-10 px-3" @select="deleteTarget = row"><Trash2 />删除</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+            </div>
+          </template>
+        </DataTable>
+        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="store.setPage" @update:page-size="store.setPageSize" />
+      </template>
+
+      <TrafficControlMapView v-else-if="!formOpen" :records="store.filteredRecords" :theme="themeStore.mode" />
     </div>
 
-    <div
-      v-if="zoneStore.error && !zoneStore.isSaving"
-      class="sr-only"
-      role="alert"
-      aria-live="assertive"
-    >
-      <AlertTriangle aria-hidden="true" />
-      <DatabaseIcon aria-hidden="true" />
-      {{ zoneStore.error }}
-    </div>
+    <CrudSheet :open="formOpen" :mode="formMode" size="wide" :title="formMode === 'create' ? '新增交通管制' : `编辑交通管制 · ${store.records.find((item) => item.id === editingId)?.code ?? ''}`" description="维护核心信息；地图区域为选填项。" :saving="store.isSaving" :dirty="formDirty" @submit="save" @request-close="requestFormClose">
+      <TrafficControlForm :key="`${formMode}-${editingId ?? 'new'}`" ref="formRef" :mode="formMode" :value="formValue" :issues="issues" :saving="store.isSaving" :theme="themeStore.mode" @update:value="updateForm" />
+    </CrudSheet>
+
+    <AlertDialog :open="discardOpen" @update:open="discardOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>当前交通管制信息尚未保存，关闭后将无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><Button variant="destructive" class="h-11" @click="closeForm"><X />放弃修改</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+
+    <AlertDialog :open="historicalConfirmOpen" @update:open="historicalConfirmOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>保存历史管制时间？</AlertDialogTitle><AlertDialogDescription>该记录的结束时间早于当前时间，保存后将显示为“已结束”。请确认这是在维护历史记录。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">返回检查</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmHistoricalSave">确认保存</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+
+    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.title }}”？</AlertDialogTitle><AlertDialogDescription>删除后该管制的基础信息与地图区域将一并移除，且无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>
 </template>

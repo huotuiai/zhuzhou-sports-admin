@@ -33,7 +33,7 @@ export const DEFAULT_PERMISSIONS: readonly SystemPermission[] = [
   permission('permission-ticket-gate', 'permission-application', '检票口管理', 'ticket-gate', 'page', 30),
   permission('permission-ticket-gate-view', 'permission-ticket-gate', '查看', 'ticket-gate:view', 'action', 10),
   permission('permission-ticket-gate-operate', 'permission-ticket-gate', '操作', 'ticket-gate:operate', 'action', 20),
-  permission('permission-shuttle', 'permission-application', '接驳点管理', 'shuttle', 'page', 40),
+  permission('permission-shuttle', 'permission-application', '接驳线路管理', 'shuttle', 'page', 40),
   permission('permission-shuttle-view', 'permission-shuttle', '查看', 'shuttle:view', 'action', 10),
   permission('permission-shuttle-operate', 'permission-shuttle', '操作', 'shuttle:operate', 'action', 20),
   permission('permission-seat', 'permission-application', '座位规划管理', 'seat', 'page', 50),

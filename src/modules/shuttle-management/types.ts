@@ -1,69 +1,105 @@
-export interface ShuttleVehicle {
-  id: string
-  name: string
-  plateNumber: string
-  capacity: number
-}
+import type { GeoPoint } from '@/components/map/types'
+
+export type ShuttleDirection = 'inbound' | 'outbound'
+export type ShuttleOperatingStatus = 'operating' | 'suspended' | 'partial'
 
 export interface ShuttleStation {
   id: string
   name: string
+  point: GeoPoint | null
+  navigationAddress: string
+  arrivalOffsetMinutes: number | null
 }
 
-export interface ShuttlePoint {
+export interface ShuttleRoute {
   id: string
-  name: string
   code: string
-  address: string
-  contactName: string
-  contactPhone: string
-  routeName: string
-  stations: ShuttleStation[]
-  vehicles: ShuttleVehicle[]
+  name: string
+  direction: ShuttleDirection
+  description: string
   firstDeparture: string
   lastDeparture: string
-  departureInterval: number
+  departureIntervalMinutes: number
+  durationMinutes: number
+  operatingStatus: ShuttleOperatingStatus
+  sortOrder: number
   enabled: boolean
-  remark: string
+  stations: ShuttleStation[]
+  coordinateSystem: 'GCJ-02'
   createdAt: string
   updatedAt: string
 }
 
-export type ShuttlePointWriteInput = Omit<ShuttlePoint, 'id' | 'createdAt' | 'updatedAt'>
+export interface ShuttleRouteBaseInput {
+  name: string
+  direction: ShuttleDirection
+  description: string
+  firstDeparture: string
+  lastDeparture: string
+  departureIntervalMinutes: number
+  durationMinutes: number
+  operatingStatus: ShuttleOperatingStatus
+  sortOrder: number
+  enabled: boolean
+}
 
-export interface ShuttlePointService {
-  list(): Promise<ShuttlePoint[]>
-  create(input: ShuttlePointWriteInput): Promise<ShuttlePoint>
-  update(id: string, input: ShuttlePointWriteInput): Promise<ShuttlePoint>
+export interface ShuttleRouteCreateInput extends ShuttleRouteBaseInput {
+  code: string
+}
+
+export type ShuttleRouteUpdateInput = ShuttleRouteBaseInput
+
+export interface ShuttleRouteService {
+  list(): Promise<ShuttleRoute[]>
+  create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute>
+  update(id: string, input: ShuttleRouteUpdateInput): Promise<ShuttleRoute>
+  replaceStations(id: string, stations: readonly ShuttleStation[]): Promise<ShuttleRoute>
   remove(id: string): Promise<void>
 }
 
-export type ShuttlePointStatusFilter = 'all' | 'enabled' | 'disabled'
-
-export interface ShuttlePointQuery {
+export interface ShuttleRouteQuery {
   keyword: string
-  status: ShuttlePointStatusFilter
+  direction: ShuttleDirection | 'all'
+  operatingStatus: ShuttleOperatingStatus | 'all'
 }
 
-export type ShuttlePointValidationField =
-  | 'name'
-  | 'code'
-  | 'contactPhone'
-  | 'routeName'
-  | 'stations'
-  | 'vehicles'
-  | 'firstDeparture'
-  | 'lastDeparture'
-  | 'departureInterval'
-  | 'remark'
+export type ShuttleRouteValidationField = keyof ShuttleRouteBaseInput | 'code' | 'schedule'
 
-export interface ShuttlePointValidationIssue {
-  field: ShuttlePointValidationField
-  code: 'required' | 'duplicate' | 'invalid' | 'positive_integer' | 'too_long'
+export interface ShuttleRouteValidationIssue {
+  field: ShuttleRouteValidationField
+  code: 'required' | 'duplicate' | 'invalid' | 'range'
   message: string
 }
 
-export interface ShuttlePointValidationResult {
+export type ShuttleStationValidationField = 'stations' | 'name' | 'point' | 'arrivalOffsetMinutes'
+
+export interface ShuttleStationValidationIssue {
+  field: ShuttleStationValidationField
+  stationId?: string
+  code: 'required' | 'invalid' | 'limit'
+  message: string
+}
+
+export interface ValidationResult<TIssue> {
   valid: boolean
-  issues: readonly ShuttlePointValidationIssue[]
+  issues: readonly TIssue[]
+}
+
+export const SHUTTLE_DIRECTIONS: readonly { value: ShuttleDirection, label: string }[] = [
+  { value: 'inbound', label: '进场' },
+  { value: 'outbound', label: '出场' },
+]
+
+export const SHUTTLE_OPERATING_STATUSES: readonly { value: ShuttleOperatingStatus, label: string }[] = [
+  { value: 'operating', label: '运营中' },
+  { value: 'suspended', label: '停运' },
+  { value: 'partial', label: '部分运营' },
+]
+
+export function shuttleDirectionLabel(value: ShuttleDirection): string {
+  return SHUTTLE_DIRECTIONS.find((item) => item.value === value)?.label ?? '未知方向'
+}
+
+export function shuttleOperatingStatusLabel(value: ShuttleOperatingStatus): string {
+  return SHUTTLE_OPERATING_STATUSES.find((item) => item.value === value)?.label ?? '未知状态'
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ParkingLot } from '@/modules/parking-management/types'
-import type { ShuttlePoint } from '@/modules/shuttle-management/types'
+import type { ShuttleRoute } from '@/modules/shuttle-management/types'
 import type { GateRelationDirection, GeoPoint, TicketGate, TicketGateRelationSnapshot } from '../types'
 import { computed, ref, watch } from 'vue'
 import { AlertTriangle, BusFront, Clock3, Link2, LoaderCircle, Plus, SquareParking, Unlink, X } from '@lucide/vue'
@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { parkingLotService } from '@/modules/parking-management/services/parking-lot-service'
-import { shuttlePointService } from '@/modules/shuttle-management/services/shuttle-point-service'
+import { shuttleRouteService } from '@/modules/shuttle-management/services/shuttle-route-service'
 import { estimateWalkingMinutes, ticketGateRelationService } from '../services/ticket-gate-relation-service'
 
 const props = defineProps<{ open: boolean, gate: TicketGate | null }>()
@@ -20,7 +20,7 @@ const emit = defineEmits<{ 'update:open': [open: boolean] }>()
 
 const activeTab = ref<'parking' | 'shuttle'>('parking')
 const parkingLots = ref<ParkingLot[]>([])
-const shuttlePoints = ref<ShuttlePoint[]>([])
+const shuttlePoints = ref<ShuttleRoute[]>([])
 const relations = ref<TicketGateRelationSnapshot>({ parkingRelations: [], shuttleRelations: [] })
 const loading = ref(false)
 const loadError = ref('')
@@ -61,7 +61,7 @@ function directionLabel(direction: GateRelationDirection): string {
 function shuttleRelationName(pointId: string, stationId: string): string {
   const point = shuttleById.value.get(pointId)
   const station = point?.stations.find((item) => item.id === stationId)
-  return `${point?.routeName ?? '未知线路'} · ${station?.name ?? '未知站点'}`
+  return `${point?.name ?? '未知线路'} · ${station?.name ?? '未知站点'}`
 }
 
 function parseMinutes(value: string): number | null | undefined {
@@ -74,9 +74,10 @@ function parseMinutes(value: string): number | null | undefined {
 /** 兼容后续后端为停车场、线路或站点补充 navigationPoint/经纬度字段。 */
 function facilityPoint(value: unknown): GeoPoint | null {
   if (!value || typeof value !== 'object') return null
-  const source = value as { navigationPoint?: unknown, longitude?: unknown, latitude?: unknown, lng?: unknown, lat?: unknown }
-  const point = source.navigationPoint && typeof source.navigationPoint === 'object'
-    ? source.navigationPoint as { lng?: unknown, lat?: unknown }
+  const source = value as { point?: unknown, navigationPoint?: unknown, longitude?: unknown, latitude?: unknown, lng?: unknown, lat?: unknown }
+  const candidate = source.point ?? source.navigationPoint
+  const point = candidate && typeof candidate === 'object'
+    ? candidate as { lng?: unknown, lat?: unknown }
     : source
   const lng = point.lng ?? source.longitude
   const lat = point.lat ?? source.latitude
@@ -110,7 +111,7 @@ async function load(): Promise<void> {
   loadError.value = ''
   resetForms()
   try {
-    const [nextParkingLots, nextShuttlePoints] = await Promise.all([parkingLotService.list(), shuttlePointService.list()])
+    const [nextParkingLots, nextShuttlePoints] = await Promise.all([parkingLotService.list(), shuttleRouteService.list()])
     parkingLots.value = nextParkingLots
     shuttlePoints.value = nextShuttlePoints
     await ticketGateRelationService.reconcile(
@@ -285,10 +286,10 @@ watch(() => [props.open, props.gate?.id] as const, load, { immediate: true })
 
             <section class="mt-6 rounded-xl border border-dashed bg-muted/15 p-4" aria-labelledby="add-shuttle-title">
               <h3 id="add-shuttle-title" class="mb-4 flex items-center gap-2 font-semibold"><Link2 class="size-4 text-primary" />添加接驳站</h3>
-              <p class="mb-3 text-xs leading-5 text-muted-foreground">现有接驳线路按“双向”适配，可用于进场、出场或双向关系。</p>
+              <p class="mb-3 text-xs leading-5 text-muted-foreground">线路自身区分进场、出场方向；此处关系方向继续用于既有 H5 入场方案。</p>
               <div class="grid grid-cols-2 gap-3">
                 <div class="space-y-2"><Label for="nearby-direction">方向</Label><Select v-model="shuttleDirection"><SelectTrigger id="nearby-direction" class="h-11 w-full"><SelectValue placeholder="先选方向" /></SelectTrigger><SelectContent><SelectItem value="entry">进场</SelectItem><SelectItem value="exit">出场</SelectItem><SelectItem value="bidirectional">双向</SelectItem></SelectContent></Select></div>
-                <div class="space-y-2"><Label for="nearby-route">线路</Label><Select :model-value="shuttlePointId" :disabled="!shuttleDirection" @update:model-value="handleShuttlePoint"><SelectTrigger id="nearby-route" class="h-11 w-full"><SelectValue placeholder="再选线路" /></SelectTrigger><SelectContent><SelectItem v-for="point in shuttleOptions" :key="point.id" :value="point.id">{{ point.routeName }}</SelectItem></SelectContent></Select></div>
+                <div class="space-y-2"><Label for="nearby-route">线路</Label><Select :model-value="shuttlePointId" :disabled="!shuttleDirection" @update:model-value="handleShuttlePoint"><SelectTrigger id="nearby-route" class="h-11 w-full"><SelectValue placeholder="再选线路" /></SelectTrigger><SelectContent><SelectItem v-for="point in shuttleOptions" :key="point.id" :value="point.id">{{ point.name }}</SelectItem></SelectContent></Select></div>
                 <div class="space-y-2"><Label for="nearby-station">站点</Label><Select :model-value="shuttleStationId" :disabled="!selectedShuttle" @update:model-value="handleShuttleStation"><SelectTrigger id="nearby-station" class="h-11 w-full"><SelectValue placeholder="再选站点" /></SelectTrigger><SelectContent><SelectItem v-for="station in selectedShuttle?.stations ?? []" :key="station.id" :value="station.id">{{ station.name }}</SelectItem></SelectContent></Select></div>
                 <div class="space-y-2"><Label for="nearby-shuttle-minutes">步行分钟</Label><Input id="nearby-shuttle-minutes" v-model="shuttleMinutes" type="number" min="1" step="1" class="h-11" placeholder="可留空" /></div>
               </div>

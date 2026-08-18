@@ -20,13 +20,13 @@ npm run test
 npm run build
 ```
 
-## 区域管制地图
+## 公共高德地图
 
 1. 复制 `.env.example` 为 `.env.local`，配置高德 Web 端 JS API 2.0 Key。
 2. 开发环境配置 `VITE_AMAP_SECURITY_JS_CODE`；生产环境建议使用 `VITE_AMAP_SERVICE_HOST` 安全代理。
-3. 未配置 Key 时，页面会显示明确的地图错误态，已保存的本地区域仍可只读查看。
+3. 未配置 Key 时，页面会显示明确的地图错误态，交通管制和接驳线路的列表、表单及手动坐标仍可使用。
 
-管制区域以 `GCJ-02` 坐标存入 localStorage，存储 Key 为 `zz-sports-control-zones:v1`。正式投产前，请确认高德技术服务许可、生产域名白名单及公网访问策略。
+交通管制与接驳站点统一以 `GCJ-02` 坐标存入 localStorage。交通管制 Key 为 `zz-sports-traffic-controls:v1`，接驳线路 Key 为 `zz-sports-shuttle-routes:v1`；对应旧 Key 不会读取或删除。正式投产前，请确认高德技术服务许可、生产域名白名单及公网访问策略。
 
 ## 演示账号
 
