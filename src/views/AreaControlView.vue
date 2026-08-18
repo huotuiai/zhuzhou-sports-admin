@@ -193,7 +193,7 @@ onMounted(async () => {
 
 <template>
   <section class="relative h-[calc(100svh-4rem)] min-h-[36rem] overflow-hidden bg-background" aria-labelledby="area-control-title">
-    <h1 id="area-control-title" class="sr-only">管制区域</h1>
+    <h1 id="area-control-title" class="sr-only">交通管制</h1>
 
     <div class="flex size-full min-w-0">
       <div class="relative min-w-0 flex-1 overflow-hidden">

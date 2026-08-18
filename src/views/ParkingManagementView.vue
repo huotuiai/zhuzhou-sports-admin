@@ -248,9 +248,9 @@ useEventListener(window, 'beforeunload', handleBeforeUnload)
             </span>
             <div>
               <h1 id="parking-management-title" class="text-2xl font-semibold tracking-tight">
-                停车场管理
+                停车区管理
               </h1>
-              <p class="mt-1 text-sm text-muted-foreground">维护停车场基础档案</p>
+              <p class="mt-1 text-sm text-muted-foreground">维护停车区基础档案与车位容量</p>
             </div>
           </div>
         </div>

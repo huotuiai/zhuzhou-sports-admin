@@ -1,29 +1,63 @@
 import type {
+  DepartmentTreeNode,
   PermissionTreeNode,
+  RoleKind,
+  RolePermissionSummary,
+  SystemDepartment,
   SystemPermission,
   SystemRole,
   SystemUser,
 } from '../types'
 
-export const DATA_SCOPE_LABELS = {
-  all: '全部数据',
-  department: '本部门数据',
-  'department-and-children': '本部门及下级数据',
-  self: '仅本人数据',
-} as const
+export const ROLE_KIND_LABELS: Record<RoleKind, string> = {
+  'super-admin': '超管',
+  preset: '预置',
+  custom: '自定义',
+}
 
-export const PERMISSION_TYPE_LABELS = {
-  directory: '目录',
-  menu: '菜单',
-  button: '按钮',
-} as const
+export const PERMISSION_TYPE_LABELS: Record<SystemPermission['type'], string> = {
+  group: '分组',
+  page: '页面',
+  action: '功能点',
+}
 
 export function normalizeIdentity(value: string): string {
   return value.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
 }
 
-export function sortByOrderAndName<T extends { sort: number; name: string }>(records: readonly T[]): T[] {
-  return [...records].sort((first, second) => first.sort - second.sort || first.name.localeCompare(second.name, 'zh-CN'))
+export function buildDepartmentTree(
+  departments: readonly SystemDepartment[],
+  parentId: string | null = null,
+  depth = 0,
+): DepartmentTreeNode[] {
+  return departments
+    .filter((item) => item.parentId === parentId)
+    .sort((first, second) => first.sort - second.sort || first.name.localeCompare(second.name, 'zh-CN'))
+    .map((item) => ({
+      ...item,
+      depth,
+      children: buildDepartmentTree(departments, item.id, depth + 1),
+    }))
+}
+
+export function flattenDepartmentTree(nodes: readonly DepartmentTreeNode[]): DepartmentTreeNode[] {
+  return nodes.flatMap((node) => [node, ...flattenDepartmentTree(node.children)])
+}
+
+export function getDepartmentDescendantIds(
+  departmentId: string,
+  departments: readonly SystemDepartment[],
+): string[] {
+  const childIds = departments.filter((item) => item.parentId === departmentId).map((item) => item.id)
+  return childIds.flatMap((id) => [id, ...getDepartmentDescendantIds(id, departments)])
+}
+
+export function departmentNamesForUser(
+  user: SystemUser,
+  departments: readonly SystemDepartment[],
+): string[] {
+  const departmentMap = new Map(departments.map((item) => [item.id, item.name]))
+  return user.departmentIds.map((id) => departmentMap.get(id)).filter((name): name is string => Boolean(name))
 }
 
 export function buildPermissionTree(
@@ -31,11 +65,14 @@ export function buildPermissionTree(
   parentId: string | null = null,
   depth = 0,
 ): PermissionTreeNode[] {
-  return sortByOrderAndName(permissions.filter((item) => item.parentId === parentId)).map((item) => ({
-    ...item,
-    depth,
-    children: buildPermissionTree(permissions, item.id, depth + 1),
-  }))
+  return permissions
+    .filter((item) => item.parentId === parentId)
+    .sort((first, second) => first.sort - second.sort || first.name.localeCompare(second.name, 'zh-CN'))
+    .map((item) => ({
+      ...item,
+      depth,
+      children: buildPermissionTree(permissions, item.id, depth + 1),
+    }))
 }
 
 export function flattenPermissionTree(nodes: readonly PermissionTreeNode[]): PermissionTreeNode[] {
@@ -46,9 +83,7 @@ export function getDescendantPermissionIds(
   permissionId: string,
   permissions: readonly SystemPermission[],
 ): string[] {
-  const childIds = permissions
-    .filter((item) => item.parentId === permissionId)
-    .map((item) => item.id)
+  const childIds = permissions.filter((item) => item.parentId === permissionId).map((item) => item.id)
   return childIds.flatMap((id) => [id, ...getDescendantPermissionIds(id, permissions)])
 }
 
@@ -61,17 +96,33 @@ export function getAncestorPermissionIds(
   return [current.parentId, ...getAncestorPermissionIds(current.parentId, permissions)]
 }
 
+export function normalizePermissionIds(
+  permissionIds: readonly string[],
+  permissions: readonly SystemPermission[],
+): string[] {
+  const validIds = new Set(permissions.map((item) => item.id))
+  const selected = new Set(permissionIds.filter((id) => validIds.has(id)))
+  for (const id of [...selected]) {
+    getAncestorPermissionIds(id, permissions).forEach((ancestorId) => selected.add(ancestorId))
+  }
+  return permissions.map((item) => item.id).filter((id) => selected.has(id))
+}
+
 export function roleNamesForUser(user: SystemUser, roles: readonly SystemRole[]): string[] {
   const roleMap = new Map(roles.map((role) => [role.id, role.name]))
   return user.roleIds.map((id) => roleMap.get(id)).filter((name): name is string => Boolean(name))
 }
 
-export function permissionNamesForRole(
+export function summarizeRolePermissions(
   role: SystemRole,
   permissions: readonly SystemPermission[],
-): string[] {
-  const permissionMap = new Map(permissions.map((permission) => [permission.id, permission.name]))
-  return role.permissionIds
-    .map((id) => permissionMap.get(id))
-    .filter((name): name is string => Boolean(name))
+): RolePermissionSummary {
+  const selected = new Set(role.permissionIds)
+  const pageCount = permissions.filter((item) => item.type === 'page' && selected.has(item.id)).length
+  const actionCount = permissions.filter((item) => item.type === 'action' && selected.has(item.id)).length
+  return {
+    pageCount,
+    actionCount,
+    label: role.kind === 'super-admin' ? '全部页面 / 全部功能点' : `${pageCount} 页面 / ${actionCount} 功能点`,
+  }
 }

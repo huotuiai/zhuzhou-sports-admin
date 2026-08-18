@@ -22,14 +22,15 @@ const emit = defineEmits<{
 }>()
 
 const expandedIds = ref(new Set<string>())
-const enabledPermissions = computed(() => props.permissions.filter((item) => item.enabled))
-const tree = computed(() => buildPermissionTree(enabledPermissions.value))
-const allIds = computed(() => enabledPermissions.value.map((item) => item.id))
+const tree = computed(() => buildPermissionTree(props.permissions))
+const allIds = computed(() => props.permissions.map((item) => item.id))
+const actionIds = computed(() => props.permissions.filter((item) => item.type === 'action').map((item) => item.id))
+const selectedActionCount = computed(() => actionIds.value.filter((id) => props.modelValue.includes(id)).length)
 
 watch(() => props.permissions, (permissions) => {
   const next = new Set(expandedIds.value)
   for (const permission of permissions) {
-    if (permission.type !== 'button') next.add(permission.id)
+    if (permission.type !== 'action') next.add(permission.id)
   }
   expandedIds.value = next
 }, { immediate: true })
@@ -44,6 +45,11 @@ function toggle(node: PermissionTreeNode, checked: boolean | 'indeterminate'): v
   } else {
     next.delete(node.id)
     descendants.forEach((id) => next.delete(id))
+    for (const ancestorId of getAncestorPermissionIds(node.id, props.permissions)) {
+      const hasSelectedDescendant = getDescendantPermissionIds(ancestorId, props.permissions)
+        .some((id) => next.has(id))
+      if (!hasSelectedDescendant) next.delete(ancestorId)
+    }
   }
   emit('update:modelValue', allIds.value.filter((id) => next.has(id)))
 }
@@ -60,7 +66,7 @@ function toggleExpanded(id: string): void {
   <div class="overflow-hidden rounded-xl border bg-muted/10">
     <div class="flex min-h-12 items-center justify-between gap-3 border-b bg-muted/35 px-3">
       <p class="text-xs text-muted-foreground">
-        已选择 <strong class="font-semibold text-foreground">{{ modelValue.length }}</strong> / {{ allIds.length }} 项
+        已选择 <strong class="font-semibold text-foreground">{{ selectedActionCount }}</strong> / {{ actionIds.length }} 个功能点
       </p>
       <div class="flex items-center gap-1">
         <Button type="button" variant="ghost" size="sm" :disabled="disabled" @click="emit('update:modelValue', [...allIds])">全选</Button>

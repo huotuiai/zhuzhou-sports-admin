@@ -2,13 +2,18 @@ import type { Component } from 'vue'
 import type { RouteLocationRaw } from 'vue-router'
 import {
   ArmchairIcon,
+  BookOpenTextIcon,
   BusFrontIcon,
-  HouseIcon,
-  KeyRoundIcon,
-  MapPinnedIcon,
-  ShieldCheckIcon,
-  SquareParkingIcon,
-  TicketCheckIcon,
+  CarFrontIcon,
+  ChartNoAxesCombinedIcon,
+  ChevronRightIcon,
+  CircleDotIcon,
+  FileTextIcon,
+  LayoutDashboardIcon,
+  MessageSquareIcon,
+  ShieldIcon,
+  TrafficConeIcon,
+  UserRoundIcon,
   UsersRoundIcon,
 } from '@lucide/vue'
 
@@ -16,9 +21,8 @@ export interface SidebarNavigationItem {
   id: string
   label: string
   icon: Component
-  to?: RouteLocationRaw
-  disabled?: boolean
-  badge?: string
+  to: RouteLocationRaw
+  trailingIcon?: Component
 }
 
 export interface SidebarNavigationGroup {
@@ -27,56 +31,72 @@ export interface SidebarNavigationGroup {
   items: readonly SidebarNavigationItem[]
 }
 
-/**
- * 侧边栏只负责导航结构。业务模块明确后，将对应路由按组加入即可。
- * 未配置路由的示例项保持禁用，避免误导用户。
- */
+const managementArrow = ChevronRightIcon
+
 export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
   {
-    id: 'base',
-    label: '基础导航',
+    id: 'operations-management',
+    label: '运营管理',
     items: [
       {
-        id: 'home',
-        label: '首页',
-        icon: HouseIcon,
-        to: { name: 'home' },
+        id: 'data-dashboard',
+        label: '数据看板',
+        icon: ChartNoAxesCombinedIcon,
+        to: { name: 'data-dashboard' },
+      },
+      {
+        id: 'data-screen',
+        label: '数据大屏',
+        icon: LayoutDashboardIcon,
+        to: { name: 'data-screen' },
+      },
+      {
+        id: 'content-management',
+        label: '内容管理',
+        icon: BookOpenTextIcon,
+        to: { name: 'content-management' },
+        trailingIcon: managementArrow,
+      },
+      {
+        id: 'traffic-control',
+        label: '交通管制',
+        icon: TrafficConeIcon,
+        to: { name: 'area-control' },
+        trailingIcon: managementArrow,
       },
     ],
   },
   {
-    id: 'application-management',
-    label: '应用管理',
+    id: 'venue-management',
+    label: '场地管理',
     items: [
       {
-        id: 'control-zones',
-        label: '管制区域',
-        icon: MapPinnedIcon,
-        to: { name: 'area-control' },
-      },
-      {
-        id: 'parking-lots',
-        label: '停车场列表',
-        icon: SquareParkingIcon,
-        to: { name: 'parking-management' },
+        id: 'venue-seats',
+        label: '座位规划管理',
+        icon: ArmchairIcon,
+        to: { name: 'seat-management' },
+        trailingIcon: managementArrow,
       },
       {
         id: 'ticket-gates',
         label: '检票口管理',
-        icon: TicketCheckIcon,
+        icon: CircleDotIcon,
         to: { name: 'ticket-gate-management' },
+        trailingIcon: managementArrow,
       },
       {
-        id: 'shuttle-points',
-        label: '接驳点管理',
+        id: 'parking-areas',
+        label: '停车区管理',
+        icon: CarFrontIcon,
+        to: { name: 'parking-management' },
+        trailingIcon: managementArrow,
+      },
+      {
+        id: 'shuttle-buses',
+        label: '接驳车管理',
         icon: BusFrontIcon,
         to: { name: 'shuttle-point-management' },
-      },
-      {
-        id: 'venue-seats',
-        label: '座位管理',
-        icon: ArmchairIcon,
-        to: { name: 'seat-management' },
+        trailingIcon: managementArrow,
       },
     ],
   },
@@ -87,20 +107,37 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
       {
         id: 'users',
         label: '用户管理',
-        icon: UsersRoundIcon,
+        icon: UserRoundIcon,
         to: { name: 'user-management' },
+        trailingIcon: managementArrow,
       },
       {
         id: 'roles',
         label: '角色管理',
-        icon: ShieldCheckIcon,
+        icon: UsersRoundIcon,
         to: { name: 'role-management' },
+        trailingIcon: managementArrow,
       },
       {
-        id: 'permissions',
-        label: '权限管理',
-        icon: KeyRoundIcon,
-        to: { name: 'permission-management' },
+        id: 'external-data',
+        label: '外部数据对接',
+        icon: ShieldIcon,
+        to: { name: 'external-data-integration' },
+        trailingIcon: managementArrow,
+      },
+      {
+        id: 'operation-logs',
+        label: '操作日志',
+        icon: FileTextIcon,
+        to: { name: 'operation-logs' },
+        trailingIcon: managementArrow,
+      },
+      {
+        id: 'user-services',
+        label: '用户服务管理',
+        icon: MessageSquareIcon,
+        to: { name: 'user-service-management' },
+        trailingIcon: managementArrow,
       },
     ],
   },

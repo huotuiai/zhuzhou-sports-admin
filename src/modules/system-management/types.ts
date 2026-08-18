@@ -1,56 +1,91 @@
-export type DataScope = 'all' | 'department' | 'department-and-children' | 'self'
-export type PermissionType = 'directory' | 'menu' | 'button'
-export type StatusFilter = 'all' | 'enabled' | 'disabled'
+export type RoleKind = 'super-admin' | 'preset' | 'custom'
+export type PermissionType = 'group' | 'page' | 'action'
+export type UserStatus = 'enabled' | 'disabled' | 'locked'
+export type DepartmentStatus = 'enabled' | 'disabled'
+export type UserStatusFilter = 'all' | UserStatus
 
 export interface SystemUser {
   id: string
   username: string
   name: string
   phone: string
-  email: string
-  department: string
+  departmentIds: string[]
   roleIds: string[]
-  enabled: boolean
+  status: UserStatus
   builtIn: boolean
-  remark: string
+  mustChangePassword: boolean
+  passwordUpdatedAt: string
+  lastLoginAt: string | null
+  lockedAt: string | null
   createdAt: string
   updatedAt: string
 }
 
-export interface UserWriteInput {
+export interface UserCreateInput {
   username: string
-  password: string
   name: string
   phone: string
-  email: string
-  department: string
+  departmentIds: string[]
   roleIds: string[]
-  enabled: boolean
-  remark: string
+  password: string
+  confirmPassword: string
+}
+
+export interface UserBasicInfoInput {
+  name: string
+  phone: string
+  departmentIds: string[]
+  roleIds: string[]
+  status: UserStatus
+}
+
+export interface UserPasswordResetInput {
+  password: string
+  confirmPassword: string
+}
+
+export interface SystemDepartment {
+  id: string
+  parentId: string | null
+  name: string
+  ownerUserId: string | null
+  sort: number
+  status: DepartmentStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DepartmentWriteInput {
+  parentId: string | null
+  name: string
+  ownerUserId: string | null
+  sort: number
+  status: DepartmentStatus
 }
 
 export interface SystemRole {
   id: string
   name: string
-  code: string
-  sort: number
-  dataScope: DataScope
+  kind: RoleKind
   permissionIds: string[]
-  enabled: boolean
-  builtIn: boolean
-  remark: string
+  description: string
   createdAt: string
   updatedAt: string
 }
 
-export interface RoleWriteInput {
+export interface RoleCreateInput {
   name: string
-  code: string
-  sort: number
-  dataScope: DataScope
+  description: string
   permissionIds: string[]
-  enabled: boolean
-  remark: string
+}
+
+export interface RoleBasicInfoInput {
+  name: string
+  description: string
+}
+
+export interface RolePermissionInput {
+  permissionIds: string[]
 }
 
 export interface SystemPermission {
@@ -59,75 +94,71 @@ export interface SystemPermission {
   name: string
   code: string
   type: PermissionType
-  routePath: string
   sort: number
-  visible: boolean
-  enabled: boolean
-  builtIn: boolean
-  description: string
-  createdAt: string
-  updatedAt: string
-}
-
-export interface PermissionWriteInput {
-  parentId: string | null
-  name: string
-  code: string
-  type: PermissionType
-  routePath: string
-  sort: number
-  visible: boolean
-  enabled: boolean
-  description: string
 }
 
 export interface UserQuery {
   keyword: string
-  roleId: string
-  status: StatusFilter
+  departmentIds: string[]
+  roleIds: string[]
+  status: UserStatusFilter
 }
 
 export interface RoleQuery {
   keyword: string
-  status: StatusFilter
-}
-
-export interface PermissionQuery {
-  keyword: string
-  type: 'all' | PermissionType
-  status: StatusFilter
 }
 
 export interface ValidationIssue<TField extends string> {
   field: TField
-  code: 'required' | 'duplicate' | 'invalid' | 'too_long' | 'not_found'
+  code: 'required' | 'duplicate' | 'invalid' | 'too_short' | 'too_long' | 'not_found'
   message: string
 }
 
-export type UserValidationField = keyof UserWriteInput
-export type RoleValidationField = keyof RoleWriteInput
-export type PermissionValidationField = keyof PermissionWriteInput
+export type UserCreateValidationField = keyof UserCreateInput
+export type UserBasicInfoValidationField = keyof UserBasicInfoInput
+export type UserPasswordResetValidationField = keyof UserPasswordResetInput
+export type DepartmentValidationField = keyof DepartmentWriteInput
+export type RoleCreateValidationField = keyof RoleCreateInput
+export type RoleBasicInfoValidationField = keyof RoleBasicInfoInput
+export type RolePermissionValidationField = keyof RolePermissionInput
 
 export interface RbacSnapshot {
   users: SystemUser[]
+  departments: SystemDepartment[]
   roles: SystemRole[]
   permissions: SystemPermission[]
 }
 
 export interface RbacService {
   load(): Promise<RbacSnapshot>
-  createUser(input: UserWriteInput): Promise<SystemUser>
-  updateUser(id: string, input: UserWriteInput): Promise<SystemUser>
+  createUser(input: UserCreateInput): Promise<SystemUser>
+  updateUserInfo(id: string, input: UserBasicInfoInput): Promise<SystemUser>
+  resetUserPassword(id: string, input: UserPasswordResetInput): Promise<SystemUser>
+  setUserStatus(id: string, status: Exclude<UserStatus, 'locked'>): Promise<SystemUser>
+  unlockUser(id: string): Promise<SystemUser>
   removeUser(id: string): Promise<void>
-  createRole(input: RoleWriteInput): Promise<SystemRole>
-  updateRole(id: string, input: RoleWriteInput): Promise<SystemRole>
+  createDepartment(input: DepartmentWriteInput): Promise<SystemDepartment>
+  updateDepartment(id: string, input: DepartmentWriteInput): Promise<SystemDepartment>
+  removeDepartment(id: string): Promise<void>
+  createRole(input: RoleCreateInput): Promise<SystemRole>
+  updateRoleInfo(id: string, input: RoleBasicInfoInput): Promise<SystemRole>
+  updateRolePermissions(id: string, input: RolePermissionInput): Promise<SystemRole>
+  assignRoleUsers(id: string, userIds: readonly string[]): Promise<SystemUser[]>
   removeRole(id: string): Promise<void>
-  createPermission(input: PermissionWriteInput): Promise<SystemPermission>
-  updatePermission(id: string, input: PermissionWriteInput): Promise<SystemPermission>
-  removePermission(id: string): Promise<void>
 }
 
 export interface PermissionTreeNode extends SystemPermission {
   children: PermissionTreeNode[]
   depth: number
+}
+
+export interface DepartmentTreeNode extends SystemDepartment {
+  children: DepartmentTreeNode[]
+  depth: number
+}
+
+export interface RolePermissionSummary {
+  pageCount: number
+  actionCount: number
+  label: string
 }

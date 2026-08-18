@@ -116,12 +116,14 @@ function alignClass(column: DataTableColumn<TRow>): string {
 
           <tr v-else-if="rows.length === 0">
             <td :colspan="columnCount" class="h-48 px-4 text-center">
-              <div class="flex flex-col items-center text-muted-foreground" role="status">
-                <span class="grid size-11 place-items-center rounded-xl border bg-muted/40">
-                  <Inbox class="size-5" aria-hidden="true" />
-                </span>
-                <span class="mt-3 text-sm">{{ emptyText }}</span>
-              </div>
+              <slot name="empty">
+                <div class="flex flex-col items-center text-muted-foreground" role="status">
+                  <span class="grid size-11 place-items-center rounded-xl border bg-muted/40">
+                    <Inbox class="size-5" aria-hidden="true" />
+                  </span>
+                  <span class="mt-3 text-sm">{{ emptyText }}</span>
+                </div>
+              </slot>
             </td>
           </tr>
 

@@ -1,4 +1,5 @@
 export { default as CrudDialog } from './CrudDialog.vue'
+export { default as CrudSheet } from './CrudSheet.vue'
 export { default as DataTable } from './DataTable.vue'
 export { default as EnabledStatusBadge } from './EnabledStatusBadge.vue'
 export { default as PaginationBar } from './PaginationBar.vue'

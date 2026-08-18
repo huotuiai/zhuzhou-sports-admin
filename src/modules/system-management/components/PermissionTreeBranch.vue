@@ -30,8 +30,8 @@ function checkboxState(node: PermissionTreeNode): boolean | 'indeterminate' {
 }
 
 function iconFor(type: SystemPermission['type']) {
-  if (type === 'directory') return Folder
-  if (type === 'menu') return Menu
+  if (type === 'group') return Folder
+  if (type === 'page') return Menu
   return KeyRound
 }
 </script>

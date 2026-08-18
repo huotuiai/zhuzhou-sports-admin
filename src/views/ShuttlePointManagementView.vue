@@ -101,7 +101,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
   <section class="tech-grid min-h-[calc(100svh-4rem)] p-6" aria-labelledby="shuttle-point-title">
     <div class="mx-auto flex w-full max-w-[1680px] flex-col gap-4">
       <header class="flex items-center justify-between gap-4">
-        <div class="flex items-center gap-3"><span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><MapPinCheck class="size-5" /></span><div><h1 id="shuttle-point-title" class="text-2xl font-semibold tracking-tight">接驳点管理</h1><p class="mt-1 text-sm text-muted-foreground">配置接驳点、车辆、线路站点与班次计划</p></div></div>
+        <div class="flex items-center gap-3"><span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><MapPinCheck class="size-5" /></span><div><h1 id="shuttle-point-title" class="text-2xl font-semibold tracking-tight">接驳车管理</h1><p class="mt-1 text-sm text-muted-foreground">配置接驳点、车辆、线路站点与班次计划</p></div></div>
         <Button size="lg" class="h-11" @click="openCreate"><Plus />新增接驳点</Button>
       </header>
       <QueryPanel @query="store.setQuery(queryDraft)" @reset="store.resetQuery(); queryDraft = { ...store.query }">

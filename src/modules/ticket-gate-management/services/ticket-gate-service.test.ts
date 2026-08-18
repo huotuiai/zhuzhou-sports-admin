@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { TicketGateWriteInput } from '../types'
-import { LocalTicketGateService, validateTicketGateInput } from './ticket-gate-service'
+import {
+  LEGACY_TICKET_GATE_STORAGE_KEY,
+  LocalTicketGateService,
+  TICKET_GATE_STORAGE_KEY,
+  formatMapCoordinates,
+  parseMapCoordinates,
+  sortTicketGates,
+  validateTicketGateInput,
+} from './ticket-gate-service'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -13,24 +21,85 @@ class MemoryStorage implements Storage {
 }
 
 function input(overrides: Partial<TicketGateWriteInput> = {}): TicketGateWriteInput {
-  return { name: '东广场检票口', code: 'GATE-E01', venueArea: '体育场东广场', location: '', direction: 'entry', laneCount: 4, deviceCount: 4, enabled: true, remark: '', ...overrides }
+  return {
+    code: 'G-1',
+    name: '东门入口',
+    floor: '一层',
+    locationDescription: '场馆东侧主入口',
+    mapCoordinates: '[{"lng":113.1462,"lat":27.8165}]',
+    navigationAddress: '株洲体育中心东门',
+    navigationLongitude: null,
+    navigationLatitude: null,
+    sortOrder: 1,
+    status: 'open',
+    statusRemark: '',
+    ...overrides,
+  }
 }
 
 describe('LocalTicketGateService', () => {
-  it('persists CRUD records and normalizes basic fields', async () => {
+  it('persists CRUD, keeps code immutable and records audit events', async () => {
     const storage = new MemoryStorage()
     let id = 0
-    const service = new LocalTicketGateService({ storage, createId: () => `gate-${++id}`, now: () => new Date('2026-08-13T00:00:00.000Z') })
-    const created = await service.create(input({ name: ' 东广场检票口 ', code: ' GATE-E01 ' }))
-    expect(created).toMatchObject({ name: '东广场检票口', code: 'GATE-E01' })
-    await expect(service.create(input({ code: 'gate-e01' }))).rejects.toThrow('编码不能重复')
-    const updated = await service.update(created.id, input({ code: 'GATE-E01', laneCount: 6 }))
-    expect(updated.laneCount).toBe(6)
+    const service = new LocalTicketGateService({ storage, createId: () => `id-${++id}`, now: () => new Date('2026-08-14T00:00:00.000Z') })
+    const created = await service.create(input({ code: ' g-1 ', name: ' 东门入口 ' }))
+    expect(created).toMatchObject({ code: 'G-1', name: '东门入口', status: 'open', sortOrder: 1 })
+    expect(created.mapPoints).toEqual([{ lng: 113.1462, lat: 27.8165 }])
+    await expect(service.create(input({ code: 'g-1', name: '其他入口' }))).rejects.toThrow('编号不能重复')
+    await expect(service.create(input({ code: 'G-2' }))).rejects.toThrow('名称不能重复')
+
+    const updated = await service.update(created.id, input({ code: 'G-9', name: '东门主入口', sortOrder: 2 }))
+    expect(updated).toMatchObject({ code: 'G-1', name: '东门主入口', sortOrder: 2 })
+    const closed = await service.updateStatus(created.id, { status: 'closed', statusRemark: ' 临时关闭 ' })
+    expect(closed).toMatchObject({ status: 'closed', statusRemark: '临时关闭' })
+    const reopened = await service.updateStatus(created.id, { status: 'open', statusRemark: '不应保留' })
+    expect(reopened.statusRemark).toBe('')
+
     await service.remove(created.id)
     expect(await service.list()).toEqual([])
+    expect((await service.listAuditLogs()).map((item) => item.action)).toEqual(['create', 'update', 'status-update', 'status-update', 'delete'])
   })
 
-  it('validates required fields and device counts', () => {
-    expect(validateTicketGateInput(input({ name: '', laneCount: 0, deviceCount: -1 })).issues.map((item) => item.field)).toEqual(['name', 'laneCount', 'deviceCount'])
+  it('validates code, map JSON, navigation pairing and positive sort order', () => {
+    const issues = validateTicketGateInput(input({
+      code: 'G_1',
+      mapCoordinates: '[{"lng":200,"lat":27}]',
+      navigationAddress: '',
+      navigationLongitude: 113.1,
+      navigationLatitude: null,
+      sortOrder: 0,
+    })).issues
+    expect(issues.map((item) => item.field)).toEqual(['code', 'mapCoordinates', 'navigationLatitude', 'navigationAddress', 'sortOrder'])
+    expect(validateTicketGateInput(input({ navigationAddress: '', navigationLongitude: 113.1, navigationLatitude: 27.8 })).valid).toBe(true)
+  })
+
+  it('parses coordinate JSON and sorts by order then natural code', () => {
+    const points = parseMapCoordinates('[{"lng":113.1,"lat":27.8}]')
+    expect(formatMapCoordinates(points)).toBe('[{"lng":113.1,"lat":27.8}]')
+    expect(() => parseMapCoordinates('{}')).toThrow('JSON 数组')
+    const base = {
+      id: 'gate', name: '入口', floor: '一层' as const, locationDescription: '', mapPoints: [], navigationAddress: '地址', navigationPoint: null,
+      status: 'open' as const, statusRemark: '', createdAt: '2026-01-01', updatedAt: '2026-01-01',
+    }
+    expect(sortTicketGates([
+      { ...base, id: '3', code: 'G-10', sortOrder: 1 },
+      { ...base, id: '2', code: 'G-2', sortOrder: 1 },
+      { ...base, id: '1', code: 'G-1', sortOrder: 2 },
+    ]).map((item) => item.code)).toEqual(['G-2', 'G-10', 'G-1'])
+  })
+
+  it('migrates v1 records into v2 without deleting the legacy key', async () => {
+    const storage = new MemoryStorage()
+    storage.setItem(LEGACY_TICKET_GATE_STORAGE_KEY, JSON.stringify({
+      schemaVersion: 1,
+      records: [{
+        id: 'legacy-1', name: '二层西入口', code: 'g-5', venueArea: '二层', location: '西侧楼梯口', direction: 'entry',
+        laneCount: 2, deviceCount: 2, enabled: false, remark: '设备维护', createdAt: '2026-08-01', updatedAt: '2026-08-02',
+      }],
+    }))
+    const service = new LocalTicketGateService({ storage })
+    expect(await service.list()).toEqual([expect.objectContaining({ id: 'legacy-1', code: 'G-5', floor: '二层', status: 'closed', statusRemark: '设备维护', navigationPoint: null })])
+    expect(storage.getItem(LEGACY_TICKET_GATE_STORAGE_KEY)).not.toBeNull()
+    expect(storage.getItem(TICKET_GATE_STORAGE_KEY)).not.toBeNull()
   })
 })
