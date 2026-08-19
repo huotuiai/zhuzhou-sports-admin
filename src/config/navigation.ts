@@ -22,8 +22,24 @@ export interface SidebarNavigationItem {
   label: string
   icon: Component
   to: RouteLocationRaw
+  permissionId: SidebarPermissionId
   trailingIcon?: Component
 }
+
+export type SidebarPermissionId =
+  | 'permission-home'
+  | 'permission-data-screen'
+  | 'permission-content'
+  | 'permission-area'
+  | 'permission-seat'
+  | 'permission-ticket-gate'
+  | 'permission-parking'
+  | 'permission-shuttle'
+  | 'permission-user'
+  | 'permission-role'
+  | 'permission-external-data'
+  | 'permission-operation-log'
+  | 'permission-user-service'
 
 export interface SidebarNavigationGroup {
   id: string
@@ -43,18 +59,21 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '数据看板',
         icon: ChartNoAxesCombinedIcon,
         to: { name: 'data-dashboard' },
+        permissionId: 'permission-home',
       },
       {
         id: 'data-screen',
         label: '数据大屏',
         icon: LayoutDashboardIcon,
         to: { name: 'data-screen' },
+        permissionId: 'permission-data-screen',
       },
       {
         id: 'content-management',
         label: '内容管理',
         icon: BookOpenTextIcon,
         to: { name: 'content-management' },
+        permissionId: 'permission-content',
         trailingIcon: managementArrow,
       },
       {
@@ -62,6 +81,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '交通管制',
         icon: TrafficConeIcon,
         to: { name: 'area-control' },
+        permissionId: 'permission-area',
         trailingIcon: managementArrow,
       },
     ],
@@ -75,6 +95,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '座位规划管理',
         icon: ArmchairIcon,
         to: { name: 'seat-management' },
+        permissionId: 'permission-seat',
         trailingIcon: managementArrow,
       },
       {
@@ -82,6 +103,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '检票口管理',
         icon: CircleDotIcon,
         to: { name: 'ticket-gate-management' },
+        permissionId: 'permission-ticket-gate',
         trailingIcon: managementArrow,
       },
       {
@@ -89,6 +111,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '停车区管理',
         icon: CarFrontIcon,
         to: { name: 'parking-management' },
+        permissionId: 'permission-parking',
         trailingIcon: managementArrow,
       },
       {
@@ -96,6 +119,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '接驳车管理',
         icon: BusFrontIcon,
         to: { name: 'shuttle-point-management' },
+        permissionId: 'permission-shuttle',
         trailingIcon: managementArrow,
       },
     ],
@@ -109,6 +133,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '用户管理',
         icon: UserRoundIcon,
         to: { name: 'user-management' },
+        permissionId: 'permission-user',
         trailingIcon: managementArrow,
       },
       {
@@ -116,6 +141,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '角色管理',
         icon: UsersRoundIcon,
         to: { name: 'role-management' },
+        permissionId: 'permission-role',
         trailingIcon: managementArrow,
       },
       {
@@ -123,6 +149,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '外部数据对接',
         icon: ShieldIcon,
         to: { name: 'external-data-integration' },
+        permissionId: 'permission-external-data',
         trailingIcon: managementArrow,
       },
       {
@@ -130,6 +157,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '操作日志',
         icon: FileTextIcon,
         to: { name: 'operation-logs' },
+        permissionId: 'permission-operation-log',
         trailingIcon: managementArrow,
       },
       {
@@ -137,6 +165,7 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         label: '用户服务管理',
         icon: MessageSquareIcon,
         to: { name: 'user-service-management' },
+        permissionId: 'permission-user-service',
         trailingIcon: managementArrow,
       },
     ],

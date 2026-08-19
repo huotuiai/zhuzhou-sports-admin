@@ -94,7 +94,7 @@ export const router = createRouter({
         {
           path: 'system/operation-logs',
           name: 'operation-logs',
-          component: () => import('@/views/EmptyRouteView.vue'),
+          component: () => import('@/views/OperationLogView.vue'),
           meta: { title: '操作日志', sectionTitle: '系统管理' },
         },
         {

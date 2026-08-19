@@ -1,6 +1,7 @@
 import type { RoleCreateInput, UserCreateInput } from '../types'
 import { describe, expect, it } from 'vitest'
-import { ALL_PERMISSION_IDS } from '../default-data'
+import { sidebarNavigation } from '@/config/navigation'
+import { ALL_PERMISSION_IDS, DEFAULT_PERMISSIONS } from '../default-data'
 import { LocalRbacService, RBAC_SCHEMA_VERSION, RBAC_STORAGE_KEY } from './rbac-service'
 
 class MemoryStorage implements Storage {
@@ -55,6 +56,20 @@ function legacyRole(overrides: Record<string, unknown> = {}) {
 }
 
 describe('LocalRbacService v8', () => {
+  it('权限树的分组和一级页面与左侧菜单逐项对应', () => {
+    const rootPermissions = DEFAULT_PERMISSIONS.filter(item => item.parentId === null)
+
+    expect(rootPermissions.map(item => item.name)).toEqual(sidebarNavigation.map(group => group.label))
+    for (const group of sidebarNavigation) {
+      const permissionGroup = rootPermissions.find(item => item.name === group.label)!
+      const menuPermissions = DEFAULT_PERMISSIONS.filter(item =>
+        item.parentId === permissionGroup.id && item.type !== 'action',
+      )
+      expect(menuPermissions.map(item => item.name)).toEqual(group.items.map(item => item.label))
+      expect(menuPermissions.map(item => item.id)).toEqual(group.items.map(item => item.permissionId))
+    }
+  })
+
   it('以固定权限、部门树和代表性用户初始化 v8 数据', async () => {
     const { service, storage } = createService()
     const snapshot = await service.load()
