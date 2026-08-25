@@ -1,9 +1,7 @@
 export type ContentManagementTab = 'activity' | 'news' | 'banner' | 'hint'
 
 export type ContentType = 'activity' | 'news' | 'notice'
-export type ContentSource = 'manual' | 'organizer'
 export type PublishStatus = 'draft' | 'published'
-export type SyncStatus = 'not-applicable' | 'idle' | 'syncing' | 'success' | 'failed'
 export type ActivityStatus = 'not-started' | 'ongoing' | 'ended'
 export type ReferenceType = ContentType | 'traffic-control'
 export type BannerJumpType = ReferenceType | 'none'
@@ -33,9 +31,6 @@ export interface ContentRecord {
   bodyHtml: string
   cover: FileAssetMetadata | null
   attachments: FileAssetMetadata[]
-  source: ContentSource
-  sourceSystemId: string | null
-  syncStatus: SyncStatus
   publishStatus: PublishStatus
   publishAt: string | null
   pinned: boolean
@@ -117,25 +112,10 @@ export interface PriorityHintWriteInput {
   validTo: string | null
 }
 
-export interface SyncSummary {
-  created: number
-  updated: number
-  offline: number
-}
-
-export interface OrganizerSyncState {
-  sourceId: string
-  sourceName: string
-  status: Exclude<SyncStatus, 'not-applicable'>
-  lastSyncedAt: string | null
-  summary: SyncSummary
-}
-
 export interface ContentManagementSnapshot {
   contents: ContentRecord[]
   banners: BannerRecord[]
   priorityHints: PriorityHintRecord[]
-  organizerSync: OrganizerSyncState
 }
 
 export interface ExternalContentReference {
@@ -220,5 +200,4 @@ export interface ContentManagementService {
   updatePriorityHint(id: string, input: PriorityHintWriteInput): Promise<PriorityHintRecord>
   setPriorityHintEnabled(id: string, enabled: boolean): Promise<PriorityHintRecord>
   removePriorityHint(id: string): Promise<void>
-  triggerOrganizerSync(): Promise<OrganizerSyncState>
 }

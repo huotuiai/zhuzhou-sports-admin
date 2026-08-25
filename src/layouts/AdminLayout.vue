@@ -2,11 +2,13 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
+  BellRingIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   LogOutIcon,
   UserRoundIcon,
 } from '@lucide/vue'
+import type { RouteLocationRaw } from 'vue-router'
 import AppSidebar from '@/components/navigation/AppSidebar.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { Avatar, AvatarBadge, AvatarFallback } from '@/components/ui/avatar'
@@ -36,6 +38,25 @@ const currentSectionTitle = computed(() => route.meta.sectionTitle
   ? String(route.meta.sectionTitle)
   : '')
 
+interface TodoItem {
+  id: string
+  label: string
+  count: number
+  suffix: string
+  to: RouteLocationRaw
+}
+
+const todoItems: readonly TodoItem[] = [
+  { id: 'feedback', label: '意见反馈未处理', count: 3, suffix: '条', to: { name: 'user-service-management', query: { tab: 'feedback', status: 'pending' } } },
+  { id: 'integration', label: '对接同步失败告警', count: 1, suffix: '项', to: { name: 'external-data-integration', query: { status: 'failed' } } },
+  { id: 'draft', label: '草稿内容待发布', count: 2, suffix: '条', to: { name: 'content-management', query: { status: 'draft' } } },
+]
+const totalTodoCount = computed(() => todoItems.reduce((total, item) => total + item.count, 0))
+
+async function handleTodo(item: TodoItem) {
+  await router.push(item.to)
+}
+
 async function handleLogout() {
   await authStore.logout()
   await router.replace({ name: 'login' })
@@ -64,7 +85,44 @@ async function handleLogout() {
           </ol>
         </nav>
 
-        <div class="ml-auto flex items-center gap-2">
+        <div class="ml-auto flex min-w-0 items-center gap-2">
+          <div class="hidden max-w-[600px] items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-primary/6 p-1 xl:flex" aria-label="运营待办">
+            <BellRingIcon class="mx-1 size-4 shrink-0 text-primary" aria-hidden="true" />
+            <button
+              v-for="item in todoItems"
+              :key="item.id"
+              type="button"
+              class="inline-flex min-h-8 shrink-0 cursor-pointer items-center gap-1 rounded-full border border-primary/20 bg-card px-2.5 text-[11px] text-primary transition-colors duration-150 hover:border-primary/45 hover:bg-primary/8 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
+              @click="handleTodo(item)"
+            >
+              {{ item.label }}
+              <strong class="tabular-nums" :class="item.id === 'draft' ? 'text-primary' : 'text-danger'">{{ item.count }}</strong>
+              {{ item.suffix }}
+            </button>
+          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child>
+              <Button variant="outline" size="icon" class="relative xl:hidden" :aria-label="`查看 ${totalTodoCount} 项运营待办`">
+                <BellRingIcon aria-hidden="true" />
+                <span class="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[9px] font-bold leading-4 text-white">{{ totalTodoCount }}</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" :side-offset="8" class="w-64">
+              <DropdownMenuLabel>运营待办</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                v-for="item in todoItems"
+                :key="item.id"
+                class="min-h-10 cursor-pointer justify-between"
+                @select="handleTodo(item)"
+              >
+                <span>{{ item.label }}</span>
+                <strong class="tabular-nums text-danger">{{ item.count }} {{ item.suffix }}</strong>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
           <ThemeToggle />
 
           <span class="mx-0.5 h-6 w-px bg-border/70" aria-hidden="true" />

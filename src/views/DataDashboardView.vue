@@ -31,7 +31,7 @@ import MetricDetailSheet from '@/modules/data-dashboard/components/MetricDetailS
 import {
   buildDistributionOption,
   buildParkingUsageOption,
-  dashboardChartTheme,
+  distributionSliceColor,
 } from '@/modules/data-dashboard/lib/chart-options'
 import {
   rangeForPreset,
@@ -51,9 +51,8 @@ interface EChartsClickPayload {
 }
 
 const groupTabs: readonly { value: DashboardMetricGroup, label: string, count: number }[] = [
-  { value: 'core', label: '核心指标', count: 7 },
-  { value: 'entry', label: '入口行为', count: 13 },
-  { value: 'page', label: '页面数据', count: 4 },
+  { value: 'entry', label: '入口行为', count: 14 },
+  { value: 'page', label: '页面数据', count: 6 },
 ]
 
 const vrColumns: readonly DataTableColumn<VrWorkMetric>[] = [
@@ -64,10 +63,6 @@ const vrColumns: readonly DataTableColumn<VrWorkMetric>[] = [
   { key: 'pv', label: 'PV', minWidth: '100px', align: 'right' },
   { key: 'likes', label: '点赞', minWidth: '90px', align: 'right' },
   { key: 'sceneCount', label: '场景数', minWidth: '82px', align: 'right' },
-  { key: 'uv', label: 'UV*', minWidth: '92px', align: 'center' },
-  { key: 'shares', label: '分享*', minWidth: '92px', align: 'center' },
-  { key: 'messages', label: '留言*', minWidth: '92px', align: 'center' },
-  { key: 'phoneClicks', label: '电话点击*', minWidth: '100px', align: 'center' },
   { key: 'lastSyncedAt', label: '最后同步', minWidth: '170px' },
   { key: 'actions', label: '操作', minWidth: '150px', align: 'right' },
 ]
@@ -89,22 +84,16 @@ const exporting = ref(false)
 const currentRange = computed<DashboardDateRange>(() => store.snapshot?.operations.range ?? initialRange)
 const selectedDistributionTitle = computed(() => store.selectedDistribution?.title ?? '分布明细')
 const selectedDistributionSliceLabel = computed(() => store.selectedDistribution?.sliceLabel ?? '')
-const chartTheme = computed(() => dashboardChartTheme(themeStore.mode))
-const chartPalette = computed(() => [
-  chartTheme.value.success,
-  chartTheme.value.warning,
-  chartTheme.value.danger,
-  chartTheme.value.primary,
-  chartTheme.value.cyan,
-  chartTheme.value.mutedFill,
-])
-
 function distributionOption(distribution: DashboardDistribution): EChartsCoreOption {
   return buildDistributionOption(
     distribution,
     themeStore.mode,
     reducedMotion.value === 'reduce',
   )
+}
+
+function distributionColor(slice: DashboardDistributionSlice): string {
+  return distributionSliceColor(slice, themeStore.mode)
 }
 
 const parkingOption = computed(() => buildParkingUsageOption(
@@ -117,9 +106,16 @@ function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date)
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? ''
+  return `${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`
 }
 
 function parseChartPayload(payload: unknown): EChartsClickPayload {
@@ -230,10 +226,6 @@ async function syncVrWork(id: string): Promise<void> {
   }
 }
 
-function pendingValue(value: number | null): string {
-  return value === null ? '待接入' : value.toLocaleString('zh-CN')
-}
-
 onMounted(async () => {
   await store.load(initialRange)
 })
@@ -242,7 +234,7 @@ onMounted(async () => {
 <template>
   <section class="tech-grid min-h-[calc(100svh-4rem)] min-w-0 overflow-x-hidden p-4 lg:p-6" aria-labelledby="data-dashboard-title">
     <div class="mx-auto flex w-full max-w-[1680px] flex-col gap-6">
-      <header class="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+      <header class="flex items-center gap-3">
         <div class="flex items-center gap-3">
           <span class="grid size-11 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
             <ChartNoAxesCombined class="size-5" aria-hidden="true" />
@@ -250,18 +242,9 @@ onMounted(async () => {
           <div>
             <div class="flex flex-wrap items-center gap-2">
               <h1 id="data-dashboard-title" class="text-2xl font-semibold tracking-tight">数据看板</h1>
-              <Badge variant="outline" class="border-warning/35 bg-warning/8 text-warning">示例数据</Badge>
             </div>
-            <p class="mt-1 text-sm text-muted-foreground">聚合运营指标、现状分布与 720 云作品累计数据</p>
+            <p class="mt-1 text-sm text-muted-foreground">运营复盘与决策入口</p>
           </div>
-        </div>
-
-        <div class="flex min-h-11 items-center gap-2 self-start rounded-lg border border-border/70 bg-card/75 px-3 py-2 text-xs text-muted-foreground xl:self-auto">
-          <span class="relative flex size-2" aria-hidden="true">
-            <span class="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-40 motion-reduce:animate-none" />
-            <span class="relative inline-flex size-2 rounded-full bg-success" />
-          </span>
-          <span>示例快照更新至 {{ formatDateTime(store.snapshot?.operations.updatedAt) }}</span>
         </div>
       </header>
 
@@ -314,7 +297,7 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div v-if="store.snapshot" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div v-if="store.snapshot" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <DashboardMetricCard
               v-for="metric in store.visibleMetrics"
               :key="metric.id"
@@ -353,20 +336,20 @@ onMounted(async () => {
               </div>
               <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3">
                 <button
-                  v-for="(slice, index) in distribution.slices"
+                  v-for="slice in distribution.slices"
                   :key="slice.key"
                   type="button"
                   class="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
                   @click="openDistribution(distribution, slice)"
                 >
-                  <span class="size-2.5 rounded-sm" :style="{ backgroundColor: chartPalette[index % chartPalette.length] }" aria-hidden="true" />
+                  <span class="size-2.5 rounded-sm" :style="{ backgroundColor: distributionColor(slice) }" aria-hidden="true" />
                   {{ slice.label }} <strong class="font-semibold tabular-nums text-foreground">{{ slice.value }}</strong>
                 </button>
               </div>
             </Card>
           </div>
-          <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Skeleton v-for="index in 4" :key="index" class="h-72 rounded-xl" />
+          <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <Skeleton v-for="index in 3" :key="index" class="h-72 rounded-xl" />
           </div>
 
           <Card v-if="store.snapshot" class="gap-2 py-0">
@@ -421,10 +404,7 @@ onMounted(async () => {
               <span class="inline-grid size-7 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{{ row.rank }}</span>
             </template>
             <template #cell-title="{ row }">
-              <div :class="row.availability === 'invalid' ? 'opacity-55' : ''">
-                <p class="font-medium">{{ row.title }}</p>
-                <Badge v-if="row.availability === 'invalid'" variant="destructive" class="mt-1">已失效</Badge>
-              </div>
+              <p class="font-medium">{{ row.title }}</p>
             </template>
             <template #cell-cover="{ row }">
               <span class="inline-grid h-9 w-12 place-items-center rounded-md bg-gradient-to-br from-sky-800 to-cyan-500 text-[10px] font-semibold text-white shadow-sm">{{ row.coverLabel }}</span>
@@ -437,17 +417,13 @@ onMounted(async () => {
             <template #cell-pv="{ row }"><strong class="tabular-nums">{{ row.pv.toLocaleString('zh-CN') }}</strong></template>
             <template #cell-likes="{ row }"><span class="tabular-nums">{{ row.likes.toLocaleString('zh-CN') }}</span></template>
             <template #cell-sceneCount="{ row }"><span class="tabular-nums">{{ row.sceneCount }}</span></template>
-            <template #cell-uv="{ row }"><Badge v-if="row.uv === null" variant="outline" class="border-dashed text-muted-foreground">{{ pendingValue(row.uv) }}</Badge><span v-else>{{ pendingValue(row.uv) }}</span></template>
-            <template #cell-shares="{ row }"><Badge v-if="row.shares === null" variant="outline" class="border-dashed text-muted-foreground">{{ pendingValue(row.shares) }}</Badge><span v-else>{{ pendingValue(row.shares) }}</span></template>
-            <template #cell-messages="{ row }"><Badge v-if="row.messages === null" variant="outline" class="border-dashed text-muted-foreground">{{ pendingValue(row.messages) }}</Badge><span v-else>{{ pendingValue(row.messages) }}</span></template>
-            <template #cell-phoneClicks="{ row }"><Badge v-if="row.phoneClicks === null" variant="outline" class="border-dashed text-muted-foreground">{{ pendingValue(row.phoneClicks) }}</Badge><span v-else>{{ pendingValue(row.phoneClicks) }}</span></template>
             <template #cell-lastSyncedAt="{ row }"><span class="whitespace-nowrap text-xs tabular-nums">{{ formatDateTime(row.lastSyncedAt) }}</span></template>
             <template #cell-actions="{ row }">
               <div class="inline-flex flex-col items-end gap-1">
                 <Button
                   variant="outline"
                   size="sm"
-                  :disabled="store.syncingVrIds.has(row.id) || row.availability === 'invalid'"
+                  :disabled="store.syncingVrIds.has(row.id)"
                   @click="syncVrWork(row.id)"
                 >
                   <LoaderCircle v-if="store.syncingVrIds.has(row.id)" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />

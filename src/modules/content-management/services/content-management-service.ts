@@ -12,7 +12,6 @@ import type {
   ExternalContentReference,
   ExternalContentReferenceService,
   FileAssetMetadata,
-  OrganizerSyncState,
   PriorityHintRecord,
   PriorityHintValidationField,
   PriorityHintWriteInput,
@@ -22,8 +21,8 @@ import type {
 } from '../types'
 import { createClientId } from '@/lib/id'
 
-export const CONTENT_MANAGEMENT_STORAGE_KEY = 'zz-sports-content-management:v1'
-export const CONTENT_MANAGEMENT_SCHEMA_VERSION = 1
+export const CONTENT_MANAGEMENT_STORAGE_KEY = 'zz-sports-content-management:v2'
+export const CONTENT_MANAGEMENT_SCHEMA_VERSION = 2
 export const MAX_BANNERS = 8
 export const MAX_PRIORITY_HINTS = 3
 export const DEFAULT_PRIORITY = 50
@@ -38,7 +37,6 @@ interface StoredContentManagement {
 export type ContentManagementServiceErrorCode =
   | 'validation_failed'
   | 'not_found'
-  | 'read_only'
   | 'referenced'
   | 'limit_reached'
   | 'storage_unavailable'
@@ -175,9 +173,6 @@ function sampleContent(
     bodyHtml: patch.bodyHtml ?? '<p>这里是内容正文，可在编辑抽屉中继续完善。</p>',
     cover: patch.cover ?? null,
     attachments: patch.attachments ?? [],
-    source: patch.source ?? 'manual',
-    sourceSystemId: patch.sourceSystemId ?? null,
-    syncStatus: patch.syncStatus ?? 'not-applicable',
     publishStatus: patch.publishStatus ?? 'published',
     publishAt: patch.publishAt ?? '2026-08-10T01:30:00.000Z',
     pinned: patch.pinned ?? false,
@@ -213,22 +208,20 @@ export function createDefaultContentManagementSnapshot(): ContentManagementSnaps
     sampleContent({
       id: 'content-003', code: 'CT-003', type: 'news',
       title: '体育中心周边停车指引', priority: 50, enabled: false,
-      source: 'organizer', sourceSystemId: 'ORG-CONTENT-20260811-03', syncStatus: 'success',
       publishAt: '2026-08-11T02:20:00.000Z',
       metrics: { clickPv: 2860, clickUv: 2140, viewPv: 4930, viewUv: 3720 },
     }),
     sampleContent({
       id: 'content-004', code: 'CT-004', type: 'activity',
       title: '8.22 足球赛 · 活动信息（草稿）', publishStatus: 'draft', priority: 70,
-      publishAt: '2026-08-21T01:00:00.000Z', enabled: true,
+      publishAt: null, enabled: true,
       cover: sampleAsset('asset-ct-004', '8.22-足球赛封面.jpg'),
       activityStartAt: '2026-08-22T11:30:00.000Z', activityEndAt: '2026-08-22T14:30:00.000Z',
       activityLocation: '株洲体育中心体育场',
     }),
     sampleContent({
       id: 'content-005', code: 'CT-005', type: 'activity',
-      title: '8.30 音乐节 · 主办方同步活动', priority: 20,
-      source: 'organizer', sourceSystemId: 'ORG-ACT-20260830', syncStatus: 'success',
+      title: '8.30 音乐节 · 进行中（演示）', priority: 20,
       cover: sampleAsset('asset-ct-005', '8.30-音乐节封面.jpg'),
       publishAt: '2026-08-12T07:00:00.000Z',
       activityStartAt: '2026-08-30T10:00:00.000Z', activityEndAt: '2026-08-30T14:00:00.000Z',
@@ -257,7 +250,7 @@ export function createDefaultContentManagementSnapshot(): ContentManagementSnaps
         id: 'banner-002', code: 'BN-02', title: '接驳专线公告 Banner',
         image: sampleAsset('asset-bn-002', '接驳专线公告-Banner.jpg'),
         jumpType: 'notice', targetId: 'content-002', priority: 2, displayEnabled: true,
-        validFrom: '2026-08-11', validTo: '2026-08-18',
+        validFrom: '2026-08-11', validTo: '2026-08-16',
         metrics: { clickPv: 3020, clickUv: 2540 },
         createdAt: '2026-08-11T01:00:00.000Z', updatedAt: '2026-08-11T01:00:00.000Z',
       },
@@ -266,25 +259,18 @@ export function createDefaultContentManagementSnapshot(): ContentManagementSnaps
       {
         id: 'hint-001', code: 'HP-01', title: '重要：活动日交通管制',
         referenceType: 'traffic-control', targetId: 'traffic-gz-001', priority: 1,
-        displayEnabled: true, validFrom: '2026-08-13', validTo: '2026-08-18',
+        displayEnabled: true, validFrom: '2026-08-13', validTo: '2026-08-16',
         metrics: { clickPv: 1860, clickUv: 1520 },
         createdAt: '2026-08-13T01:00:00.000Z', updatedAt: '2026-08-13T01:00:00.000Z',
       },
       {
         id: 'hint-002', code: 'HP-02', title: '免费接驳专线已开通',
         referenceType: 'notice', targetId: 'content-002', priority: 2,
-        displayEnabled: true, validFrom: '2026-08-11', validTo: '2026-08-18',
+        displayEnabled: true, validFrom: '2026-08-11', validTo: '2026-08-16',
         metrics: { clickPv: 1240, clickUv: 1010 },
         createdAt: '2026-08-11T01:00:00.000Z', updatedAt: '2026-08-11T01:00:00.000Z',
       },
     ],
-    organizerSync: {
-      sourceId: 'SRC-01',
-      sourceName: '主办方系统',
-      status: 'success',
-      lastSyncedAt: '2026-08-13T02:00:00.000Z',
-      summary: { created: 0, updated: 3, offline: 0 },
-    },
   }
 }
 
@@ -322,7 +308,6 @@ export function reconcileScheduledContent(
 ): ContentManagementSnapshot {
   const next = clone(snapshot)
   for (const record of next.contents) {
-    if (record.source === 'organizer') continue
     const publishAt = dateValue(record.publishAt)
     if (publishAt === null) continue
     record.publishStatus = publishAt <= now.getTime() ? 'published' : 'draft'
@@ -536,7 +521,7 @@ function isSnapshot(value: unknown): value is ContentManagementSnapshot {
   if (!value || typeof value !== 'object') return false
   const item = value as Record<string, unknown>
   return Array.isArray(item.contents) && Array.isArray(item.banners) &&
-    Array.isArray(item.priorityHints) && Boolean(item.organizerSync && typeof item.organizerSync === 'object')
+    Array.isArray(item.priorityHints)
 }
 
 export class LocalContentManagementService implements ContentManagementService {
@@ -610,9 +595,6 @@ export class LocalContentManagementService implements ContentManagementService {
       ...value,
       id: this.createId(),
       code: nextCode('CT', snapshot.contents.map((item) => item.code)),
-      source: 'manual',
-      sourceSystemId: null,
-      syncStatus: 'not-applicable',
       publishStatus: publishAt !== null && publishAt <= this.now().getTime() ? 'published' : 'draft',
       enabled: true,
       metrics: { ...EMPTY_METRICS },
@@ -629,7 +611,6 @@ export class LocalContentManagementService implements ContentManagementService {
     const index = snapshot.contents.findIndex((item) => item.id === id)
     if (index < 0) throw new ContentManagementServiceError('not_found', '未找到指定内容')
     const previous = snapshot.contents[index]!
-    if (previous.source === 'organizer') throw new ContentManagementServiceError('read_only', '主办方对接内容为只读数据')
     const value = sanitizeContentInput(input)
     throwFirstIssue(validateContentInput(value))
     const publishAt = dateValue(value.publishAt)
@@ -646,7 +627,6 @@ export class LocalContentManagementService implements ContentManagementService {
 
   async publishContent(id: string): Promise<ContentRecord> {
     return this.updateContentRecord(id, (record) => {
-      if (record.source === 'organizer') throw new ContentManagementServiceError('read_only', '主办方对接内容由同步任务发布')
       record.publishStatus = 'published'
       record.publishAt = this.now().toISOString()
     })
@@ -654,14 +634,12 @@ export class LocalContentManagementService implements ContentManagementService {
 
   async setContentPinned(id: string, pinned: boolean): Promise<ContentRecord> {
     return this.updateContentRecord(id, (record) => {
-      if (record.source === 'organizer') throw new ContentManagementServiceError('read_only', '主办方对接内容不能手动调整置顶状态')
       record.pinned = pinned
     })
   }
 
   async setContentEnabled(id: string, enabled: boolean): Promise<ContentRecord> {
     return this.updateContentRecord(id, (record) => {
-      if (record.source === 'organizer') throw new ContentManagementServiceError('read_only', '主办方对接内容不能手动调整启停状态')
       record.enabled = enabled
     })
   }
@@ -678,7 +656,6 @@ export class LocalContentManagementService implements ContentManagementService {
     const snapshot = this.read()
     const record = snapshot.contents.find((item) => item.id === id)
     if (!record) throw new ContentManagementServiceError('not_found', '未找到指定内容')
-    if (record.source === 'organizer') throw new ContentManagementServiceError('read_only', '主办方对接内容不能手动删除')
     const block = await this.getDeleteReferenceBlock(id)
     if (block.bannerCodes.length || block.priorityHintCodes.length) {
       throw new ContentManagementServiceError('referenced', '该内容仍被 Banner 或高优提示引用，请先解除关联', block)
@@ -804,24 +781,6 @@ export class LocalContentManagementService implements ContentManagementService {
     this.write(snapshot)
   }
 
-  async triggerOrganizerSync(): Promise<OrganizerSyncState> {
-    const snapshot = this.read()
-    const timestamp = this.now().toISOString()
-    snapshot.organizerSync = {
-      ...snapshot.organizerSync,
-      status: 'success',
-      lastSyncedAt: timestamp,
-      summary: { created: 0, updated: snapshot.contents.filter((item) => item.source === 'organizer').length, offline: 0 },
-    }
-    snapshot.contents.forEach((record) => {
-      if (record.source === 'organizer') {
-        record.syncStatus = 'success'
-        record.updatedAt = timestamp
-      }
-    })
-    this.write(snapshot)
-    return clone(snapshot.organizerSync)
-  }
 }
 
 export class MockExternalContentReferenceService implements ExternalContentReferenceService {

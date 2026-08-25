@@ -69,13 +69,6 @@ function emptySnapshot(): ContentManagementSnapshot {
     contents: [],
     banners: [],
     priorityHints: [],
-    organizerSync: {
-      sourceId: 'SRC-01',
-      sourceName: '主办方系统',
-      status: 'idle',
-      lastSyncedAt: null,
-      summary: { created: 0, updated: 0, offline: 0 },
-    },
   }
 }
 
@@ -95,7 +88,6 @@ export function createContentManagementStore(
     const now = ref(Date.now())
     const isLoading = ref(false)
     const isSaving = ref(false)
-    const isSyncing = ref(false)
     const error = ref<string | null>(null)
 
     const activityRecords = computed(() => sortContents(snapshot.value.contents.filter((record) => {
@@ -254,21 +246,6 @@ export function createContentManagementStore(
     const setPriorityHintEnabled = (id: string, enabled: boolean) => mutate(() => service.setPriorityHintEnabled(id, enabled))
     const removePriorityHint = (id: string) => mutate(() => service.removePriorityHint(id))
 
-    async function triggerOrganizerSync(): Promise<boolean> {
-      isSyncing.value = true
-      error.value = null
-      try {
-        await service.triggerOrganizerSync()
-        snapshot.value = await service.load()
-        return true
-      } catch (cause) {
-        error.value = errorMessage(cause)
-        return false
-      } finally {
-        isSyncing.value = false
-      }
-    }
-
     function resetError(): void {
       error.value = null
     }
@@ -284,7 +261,6 @@ export function createContentManagementStore(
       now,
       isLoading,
       isSaving,
-      isSyncing,
       error,
       activityRecords,
       newsRecords,
@@ -322,7 +298,6 @@ export function createContentManagementStore(
       updatePriorityHint,
       setPriorityHintEnabled,
       removePriorityHint,
-      triggerOrganizerSync,
       resetError,
     }
   })

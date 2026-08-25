@@ -64,15 +64,14 @@ describe('content management service', () => {
     expect(snapshot.contents).toHaveLength(6)
     expect(snapshot.banners).toHaveLength(2)
     expect(snapshot.priorityHints).toHaveLength(2)
-    expect(JSON.parse(storage.getItem(CONTENT_MANAGEMENT_STORAGE_KEY) ?? '{}')).toMatchObject({ schemaVersion: 1 })
+    expect(JSON.parse(storage.getItem(CONTENT_MANAGEMENT_STORAGE_KEY) ?? '{}')).toMatchObject({ schemaVersion: 2 })
   })
 
-  it('creates manual content, generates the next code, and strips object URLs from storage', async () => {
+  it('creates content, generates the next code, and strips object URLs from storage', async () => {
     const { service, storage } = createService()
     const created = await service.createContent(newsInput({ cover: image() }))
 
     expect(created.code).toBe('CT-007')
-    expect(created.source).toBe('manual')
     expect(created.publishStatus).toBe('draft')
     expect(created.cover?.previewUrl).toBe('blob:preview')
     expect((await service.load()).contents.find((item) => item.id === created.id)?.cover?.previewUrl).toBe('blob:preview')
@@ -82,22 +81,26 @@ describe('content management service', () => {
   })
 
   it('reconciles scheduled publishing against the injected clock', async () => {
-    const { service } = createService('2026-08-22T02:00:00.000Z')
-    const snapshot = await service.load()
-    expect(snapshot.contents.find((item) => item.code === 'CT-004')?.publishStatus).toBe('published')
+    const storage = new MemoryStorage()
+    const earlyService = new LocalContentManagementService({ storage, now: () => new Date('2026-08-17T02:00:00.000Z') })
+    const scheduled = await earlyService.createContent(newsInput({ publishAt: '2026-08-21T01:00:00.000Z' }))
+    expect(scheduled.publishStatus).toBe('draft')
+
+    const lateService = new LocalContentManagementService({ storage, now: () => new Date('2026-08-22T02:00:00.000Z') })
+    expect((await lateService.load()).contents.find((item) => item.id === scheduled.id)?.publishStatus).toBe('published')
   })
 
-  it('blocks deletion when content is referenced and keeps organizer content read-only', async () => {
+  it('blocks referenced deletion and allows ordinary content mutations', async () => {
     const { service } = createService()
     const snapshot = await service.load()
     const referenced = snapshot.contents.find((item) => item.code === 'CT-002')!
-    const organizer = snapshot.contents.find((item) => item.code === 'CT-003')!
+    const editable = snapshot.contents.find((item) => item.code === 'CT-003')!
 
     await expect(service.removeContent(referenced.id)).rejects.toMatchObject({ code: 'referenced' })
-    await expect(service.updateContent(organizer.id, newsInput())).rejects.toMatchObject({ code: 'read_only' })
-    await expect(service.setContentPinned(organizer.id, true)).rejects.toMatchObject({ code: 'read_only' })
-    await expect(service.setContentEnabled(organizer.id, false)).rejects.toMatchObject({ code: 'read_only' })
-    await expect(service.removeContent(organizer.id)).rejects.toMatchObject({ code: 'read_only' })
+    expect((await service.updateContent(editable.id, newsInput())).title).toBe('新的场馆资讯')
+    expect((await service.setContentPinned(editable.id, true)).pinned).toBe(true)
+    expect((await service.setContentEnabled(editable.id, true)).enabled).toBe(true)
+    await service.removeContent(editable.id)
   })
 
   it('supports publishing, pinning, enabling and deleting an unreferenced manual draft', async () => {
@@ -142,13 +145,11 @@ describe('content management service', () => {
     expect(buildSelectableReferences(snapshot).find((item) => item.id === 'content-003')?.valid).toBe(false)
   })
 
-  it('sorts content by pinned, priority and publish time and updates sync metadata', async () => {
+  it('sorts content by pinned, priority and publish time', async () => {
     const { service } = createService()
     const snapshot = await service.load()
     const sorted = sortContents(snapshot.contents)
     expect(sorted[0]?.pinned).toBe(true)
-    expect((await service.triggerOrganizerSync()).summary.updated).toBe(2)
-    expect((await service.load()).contents.filter((item) => item.source === 'organizer').every((item) => item.syncStatus === 'success')).toBe(true)
   })
 
   it('reports corrupted storage without silently replacing user data', async () => {

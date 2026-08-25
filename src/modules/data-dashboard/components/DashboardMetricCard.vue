@@ -53,7 +53,7 @@ function comparisonLabel(value: number | null): string {
       </span>
 
       <span class="mt-2 flex items-center gap-2 text-[11px]">
-        <span class="text-muted-foreground">较上一周期</span>
+        <span class="text-muted-foreground">{{ metric.primaryLabel }} 较上一周期</span>
         <span
           class="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 font-semibold"
           :class="metric.comparisonRate === null || metric.comparisonRate === 0

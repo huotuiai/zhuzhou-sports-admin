@@ -31,8 +31,8 @@ describe('data dashboard store', () => {
     const distributions = store.snapshot?.distributions
     const vrWorks = store.snapshot?.vrWorks
 
-    await store.selectMetric('IND-22')
-    expect(store.selectedMetric?.id).toBe('IND-22')
+    await store.selectMetric('IND-3')
+    expect(store.selectedMetric?.id).toBe('IND-3')
     expect(store.metricDetail.total).toBe(7)
     await store.refreshOperations(rangeForPreset('last-30-days', NOW))
 
@@ -48,10 +48,10 @@ describe('data dashboard store', () => {
     const useStore = createDataDashboardStore(new MockDashboardService({ now: () => NOW, syncDelayMs: 0 }), 'dashboard-selection-test')
     const store = useStore()
     await store.load(rangeForPreset('last-7-days', NOW))
-    await store.selectMetric('IND-1')
-    store.setActiveGroup('entry')
+    await store.selectMetric('IND-3')
+    store.setActiveGroup('page')
     expect(store.selectedMetric).toBeNull()
-    expect(store.visibleMetrics).toHaveLength(13)
+    expect(store.visibleMetrics).toHaveLength(6)
 
     await store.openDistributionDetail({ id: 'parking-charge', title: '停车收费类型分布', sliceKey: 'free', sliceLabel: '免费停车场' })
     expect(store.distributionDetails).toHaveLength(4)

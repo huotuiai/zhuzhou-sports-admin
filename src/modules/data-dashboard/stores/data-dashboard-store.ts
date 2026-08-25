@@ -35,7 +35,7 @@ export function createDataDashboardStore(
 ) {
   return defineStore(storeId, () => {
     const snapshot = ref<DashboardSnapshot | null>(null)
-    const activeGroup = ref<DashboardMetricGroup>('core')
+    const activeGroup = ref<DashboardMetricGroup>('entry')
     const selectedMetricId = ref<string | null>(null)
     const detailDimension = ref<DashboardMetricDimension>('primary')
     const metricDetail = ref<MetricDetailPage>(emptyDetailPage())

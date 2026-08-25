@@ -3,7 +3,7 @@ import type { DashboardDistribution, DashboardMetric, ParkingUsageItem } from '.
 import { buildDistributionOption, buildMetricTrendOption, buildParkingUsageOption } from './chart-options'
 
 const metric: DashboardMetric = {
-  id: 'IND-T', group: 'core', name: '测试指标', definition: '测试', source: '测试源',
+  id: 'IND-T', group: 'entry', name: '测试指标', definition: '测试', source: '测试源',
   primaryLabel: 'PV', primaryValue: 30, secondaryLabel: 'UV', secondaryValue: 20,
   comparisonRate: 10, availability: 'ready', updatedAt: '2026-08-17T00:00:00.000Z',
   trend: [

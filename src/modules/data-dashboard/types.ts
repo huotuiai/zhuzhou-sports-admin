@@ -1,5 +1,5 @@
 export type DashboardDatePreset = 'today' | 'yesterday' | 'last-7-days' | 'last-30-days' | 'custom'
-export type DashboardMetricGroup = 'core' | 'entry' | 'page'
+export type DashboardMetricGroup = 'entry' | 'page'
 export type DashboardMetricDimension = 'primary' | 'secondary'
 export type DashboardMetricAvailability = 'ready' | 'pending'
 
@@ -70,6 +70,7 @@ export interface DashboardDistributionSlice {
   key: string
   label: string
   value: number
+  tone?: 'primary' | 'success' | 'warning' | 'danger' | 'muted'
 }
 
 export interface DashboardDistribution {
@@ -98,7 +99,6 @@ export interface DistributionDetailRow {
   updatedAt: string
 }
 
-export type VrWorkAvailability = 'active' | 'invalid'
 export type VrBindingType = 'manual' | 'external'
 
 export interface VrWorkMetric {
@@ -110,12 +110,7 @@ export interface VrWorkMetric {
   pv: number
   likes: number
   sceneCount: number
-  uv: number | null
-  shares: number | null
-  messages: number | null
-  phoneClicks: number | null
   lastSyncedAt: string
-  availability: VrWorkAvailability
 }
 
 export interface DashboardSnapshot {

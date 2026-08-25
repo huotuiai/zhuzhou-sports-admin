@@ -23,19 +23,24 @@ describe('dashboard service', () => {
       .toThrow('一年以内')
   })
 
-  it('loads the P3 snapshot with seven, thirteen, and four metrics', async () => {
+  it('loads the final P3 snapshot with fourteen entry and six page metrics', async () => {
     const service = new MockDashboardService({ now: () => NOW, syncDelayMs: 0 })
     const snapshot = await service.loadDashboard(rangeForPreset('last-7-days', NOW))
 
-    expect(snapshot.operations.metrics).toHaveLength(24)
-    expect(DASHBOARD_METRIC_COUNTS).toEqual({ core: 7, entry: 13, page: 4 })
-    expect(snapshot.operations.metrics.filter((metric) => metric.group === 'entry')).toHaveLength(13)
+    expect(snapshot.operations.metrics).toHaveLength(20)
+    expect(DASHBOARD_METRIC_COUNTS).toEqual({ entry: 14, page: 6 })
+    expect(snapshot.operations.metrics.filter((metric) => metric.group === 'entry')).toHaveLength(14)
     expect(snapshot.operations.metrics.find((metric) => metric.id === 'IND-1')).toMatchObject({
       primaryValue: 128560,
       comparisonRate: 12.4,
     })
-    expect(snapshot.operations.metrics.find((metric) => metric.id === 'IND-31')?.name).toBe('入场方案生成次数')
-    expect(snapshot.distributions).toHaveLength(4)
+    expect(snapshot.operations.metrics.find((metric) => metric.id === 'IND-7')).toMatchObject({
+      name: '检票口坐标点击次数',
+      primaryValue: 6480,
+      secondaryValue: 4920,
+    })
+    expect(snapshot.operations.metrics.find((metric) => metric.id === 'IND-42')?.name).toBe('资讯页面')
+    expect(snapshot.distributions).toHaveLength(3)
     expect(snapshot.parkingUsage).toHaveLength(6)
     expect(snapshot.vrWorks).toHaveLength(3)
   })
@@ -47,8 +52,8 @@ describe('dashboard service', () => {
     const second = await service.loadOperations(range)
     expect(first.metrics[0]?.trend).toEqual(second.metrics[0]?.trend)
 
-    const pageOne = await service.getMetricDetails('IND-22', 'secondary', range, 1, 20)
-    const pageTwo = await service.getMetricDetails('IND-22', 'secondary', range, 2, 20)
+    const pageOne = await service.getMetricDetails('IND-3', 'secondary', range, 1, 20)
+    const pageTwo = await service.getMetricDetails('IND-3', 'secondary', range, 2, 20)
     expect(pageOne).toMatchObject({ total: 30, page: 1, pageSize: 20 })
     expect(pageOne.items).toHaveLength(20)
     expect(pageTwo.items).toHaveLength(10)

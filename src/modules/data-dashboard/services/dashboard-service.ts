@@ -101,30 +101,26 @@ export function rangeForPreset(preset: Exclude<DashboardDatePreset, 'custom'>, n
 }
 
 const METRIC_SEEDS: readonly MetricSeed[] = [
-  { id: 'IND-1', group: 'core', name: 'H5 页面访问量 PV', definition: 'H5 页面浏览次数之和，不含 Banner 曝光与点击数据。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 128560, secondaryLabel: null, secondaryValue: null, comparisonRate: 12.4, sourceEntry: 'H5 页面' },
-  { id: 'IND-2', group: 'core', name: 'H5 访问人数 UV', definition: '按设备去重后的 H5 访问人数。', source: 'L1 埋点', primaryLabel: 'UV', primaryValue: 42380, secondaryLabel: null, secondaryValue: null, comparisonRate: 9.8, sourceEntry: 'H5 页面' },
-  { id: 'IND-3', group: 'core', name: '座位检索次数', definition: '通过检索框发起“入场方案”查询的次数。', source: 'L1 埋点', primaryLabel: '查询次数', primaryValue: 8942, secondaryLabel: null, secondaryValue: null, comparisonRate: 18.2, sourceEntry: '座位检索' },
-  { id: 'IND-5', group: 'core', name: '停车查询次数', definition: '进入“停车”Tab 的次数。', source: 'L1 埋点', primaryLabel: '查询次数', primaryValue: 15732, secondaryLabel: null, secondaryValue: null, comparisonRate: 21.7, sourceEntry: '停车 Tab' },
-  { id: 'IND-6', group: 'core', name: '接驳车查询次数', definition: '进入“接驳”Tab 的次数。', source: 'L1 埋点', primaryLabel: '查询次数', primaryValue: 12480, secondaryLabel: null, secondaryValue: null, comparisonRate: -3.2, sourceEntry: '接驳 Tab' },
-  { id: 'IND-7', group: 'core', name: '管制查看次数', definition: '用户查看交通管制详情的次数。', source: 'L1 埋点', primaryLabel: '查看次数', primaryValue: 3856, secondaryLabel: null, secondaryValue: null, comparisonRate: 42.6, sourceEntry: '管制详情' },
-  { id: 'IND-8', group: 'core', name: '场馆全景点击次数', definition: '点击首页九宫格“场馆全景”入口的次数。', source: 'L1 埋点', primaryLabel: '点击次数', primaryValue: 9214, secondaryLabel: null, secondaryValue: null, comparisonRate: 15.3, sourceEntry: '首页九宫格' },
-  { id: 'IND-22', group: 'entry', name: '九宫格 · 场馆全景', definition: '点击首页九宫格“场馆全景”入口的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 6892, secondaryLabel: '点击 UV', secondaryValue: 5120, comparisonRate: 8.1, sourceEntry: '首页九宫格' },
-  { id: 'IND-23', group: 'entry', name: '九宫格 · 联系我们', definition: '点击首页九宫格“联系我们”入口的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 1245, secondaryLabel: '点击 UV', secondaryValue: 980, comparisonRate: -2.4, sourceEntry: '首页九宫格' },
-  { id: 'IND-24', group: 'entry', name: '九宫格 · 意见反馈', definition: '点击首页九宫格“意见反馈”入口的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 862, secondaryLabel: '点击 UV', secondaryValue: 740, comparisonRate: 5.9, sourceEntry: '首页九宫格' },
-  { id: 'IND-25', group: 'entry', name: '九宫格 · 一键导航', definition: '点击首页九宫格“一键导航”入口的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 3415, secondaryLabel: '点击 UV', secondaryValue: 2860, comparisonRate: 11.6, sourceEntry: '首页九宫格' },
-  { id: 'IND-26', group: 'entry', name: 'Tab · 首页', definition: '点击底部 Tab“首页”的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 4820, secondaryLabel: '点击 UV', secondaryValue: 3860, comparisonRate: 12.3, sourceEntry: '底部 Tab' },
-  { id: 'IND-27', group: 'entry', name: 'Tab · 座位图', definition: '点击底部 Tab“座位图”的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 9120, secondaryLabel: '点击 UV', secondaryValue: 7340, comparisonRate: 17.4, sourceEntry: '底部 Tab' },
-  { id: 'IND-28', group: 'entry', name: 'Tab · 停车', definition: '点击底部 Tab“停车”的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 15730, secondaryLabel: '点击 UV', secondaryValue: 11200, comparisonRate: 21.7, sourceEntry: '底部 Tab' },
-  { id: 'IND-29', group: 'entry', name: 'Tab · 接驳', definition: '点击底部 Tab“接驳”的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 12480, secondaryLabel: '点击 UV', secondaryValue: 9860, comparisonRate: -3.2, sourceEntry: '底部 Tab' },
-  { id: 'IND-30', group: 'entry', name: 'Tab · 收藏', definition: '点击底部 Tab“收藏”的 PV/UV。', source: 'L1 埋点', primaryLabel: '点击 PV', primaryValue: 4230, secondaryLabel: '点击 UV', secondaryValue: 3650, comparisonRate: 4.8, sourceEntry: '底部 Tab' },
-  { id: 'IND-31', group: 'entry', name: '入场方案生成次数', definition: '完成座位检索并生成入场方案的 PV/UV。', source: 'L1 埋点', primaryLabel: '生成 PV', primaryValue: 2420, secondaryLabel: '生成 UV', secondaryValue: 1980, comparisonRate: 10.5, sourceEntry: '入场方案' },
-  { id: 'IND-32', group: 'entry', name: '座位页收藏线路次数', definition: '座位页收藏推荐线路的点击 PV/UV。', source: 'L1 埋点', primaryLabel: '收藏 PV', primaryValue: 980, secondaryLabel: '收藏 UV', secondaryValue: 760, comparisonRate: 8.2, sourceEntry: '座位页面' },
-  { id: 'IND-33', group: 'entry', name: '接驳页收藏线路次数', definition: '接驳页收藏接驳线路的点击 PV/UV。', source: 'L1 埋点', primaryLabel: '收藏 PV', primaryValue: 1240, secondaryLabel: '收藏 UV', secondaryValue: 980, comparisonRate: 6.1, sourceEntry: '接驳页面' },
-  { id: 'IND-34', group: 'entry', name: '首页快捷查询次数', definition: '首页座位快捷查询条“查入场方案”的 PV/UV。', source: 'L1 埋点', primaryLabel: '查询 PV', primaryValue: 3560, secondaryLabel: '查询 UV', secondaryValue: 2940, comparisonRate: 9.8, sourceEntry: '首页快捷查询' },
-  { id: 'IND-35', group: 'page', name: '停车场页面', definition: '停车页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: '浏览 PV', primaryValue: 17850, secondaryLabel: '浏览 UV', secondaryValue: 12340, comparisonRate: 14.2, sourceEntry: '停车页面' },
-  { id: 'IND-36', group: 'page', name: '接驳车页面', definition: '接驳页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: '浏览 PV', primaryValue: 13260, secondaryLabel: '浏览 UV', secondaryValue: 9870, comparisonRate: -2.8, sourceEntry: '接驳页面' },
-  { id: 'IND-37', group: 'page', name: '座位图页面', definition: '座位图页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: '浏览 PV', primaryValue: 9480, secondaryLabel: '浏览 UV', secondaryValue: 7150, comparisonRate: 16.5, sourceEntry: '座位图页面' },
-  { id: 'IND-38', group: 'page', name: '收藏页面', definition: '收藏页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: '浏览 PV', primaryValue: 4960, secondaryLabel: '浏览 UV', secondaryValue: 3580, comparisonRate: 6.7, sourceEntry: '收藏页面' },
+  { id: 'IND-3', group: 'entry', name: '座位检索次数', definition: '所有页面发起座位检索的 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 8942, secondaryLabel: 'UV', secondaryValue: 6820, comparisonRate: 18.2, sourceEntry: '座位检索' },
+  { id: 'IND-5', group: 'entry', name: '停车场坐标点击次数', definition: '首页所有停车场坐标点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 15732, secondaryLabel: 'UV', secondaryValue: 11450, comparisonRate: 21.7, sourceEntry: '首页停车场坐标' },
+  { id: 'IND-6', group: 'entry', name: '接驳车坐标点击次数', definition: '首页所有接驳车坐标点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 12480, secondaryLabel: 'UV', secondaryValue: 9860, comparisonRate: -3.2, sourceEntry: '首页接驳车坐标' },
+  { id: 'IND-7', group: 'entry', name: '检票口坐标点击次数', definition: '首页所有检票口坐标点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 6480, secondaryLabel: 'UV', secondaryValue: 4920, comparisonRate: 28.4, sourceEntry: '首页检票口坐标' },
+  { id: 'IND-8', group: 'entry', name: 'VR 使用次数', definition: '所有 VR 入口点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 9214, secondaryLabel: 'UV', secondaryValue: 5120, comparisonRate: 15.3, sourceEntry: 'VR 入口' },
+  { id: 'IND-34', group: 'entry', name: '首页查询座位次数', definition: '首页座位快捷查询条“查入场方案”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 3560, secondaryLabel: 'UV', secondaryValue: 2940, comparisonRate: 9.8, sourceEntry: '首页座位快捷查询' },
+  { id: 'IND-25', group: 'entry', name: '去场馆', definition: '点击首页“去场馆”图标的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 3415, secondaryLabel: 'UV', secondaryValue: 2860, comparisonRate: 11.6, sourceEntry: '首页去场馆' },
+  { id: 'IND-26', group: 'entry', name: 'Tab · 首页', definition: '点击底部 Tab“首页”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 4820, secondaryLabel: 'UV', secondaryValue: 3860, comparisonRate: 12.3, sourceEntry: '底部 Tab-首页' },
+  { id: 'IND-27', group: 'entry', name: 'Tab · 座位', definition: '点击底部 Tab“座位”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 9120, secondaryLabel: 'UV', secondaryValue: 7340, comparisonRate: 17.4, sourceEntry: '底部 Tab-座位' },
+  { id: 'IND-28', group: 'entry', name: 'Tab · 交通', definition: '点击底部 Tab“交通”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 15730, secondaryLabel: 'UV', secondaryValue: 11200, comparisonRate: 21.7, sourceEntry: '底部 Tab-交通' },
+  { id: 'IND-30', group: 'entry', name: 'Tab · 我的', definition: '点击底部 Tab“我的”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 4230, secondaryLabel: 'UV', secondaryValue: 3650, comparisonRate: 4.8, sourceEntry: '底部 Tab-我的' },
+  { id: 'IND-39', group: 'entry', name: '收藏 · 检票口次数', definition: '点击收藏检票口的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 1150, secondaryLabel: 'UV', secondaryValue: 920, comparisonRate: 18.6, sourceEntry: '收藏-检票口' },
+  { id: 'IND-40', group: 'entry', name: '收藏 · 停车场次数', definition: '点击收藏停车场的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 2340, secondaryLabel: 'UV', secondaryValue: 1860, comparisonRate: 9.2, sourceEntry: '收藏-停车场' },
+  { id: 'IND-41', group: 'entry', name: '收藏 · 接驳车次数', definition: '点击收藏接驳车的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 1680, secondaryLabel: 'UV', secondaryValue: 1340, comparisonRate: 5.4, sourceEntry: '收藏-接驳车' },
+  { id: 'IND-1', group: 'page', name: 'H5 页面访问量 PV', definition: 'H5 页面浏览次数之和，不含 Banner 曝光与点击埋点。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 128560, secondaryLabel: null, secondaryValue: null, comparisonRate: 12.4, sourceEntry: 'H5 页面' },
+  { id: 'IND-2', group: 'page', name: 'H5 访问人数 UV', definition: '按设备去重后的访问人数，与 H5 页面访问量口径一致。', source: 'L1 埋点', primaryLabel: 'UV', primaryValue: 42380, secondaryLabel: null, secondaryValue: null, comparisonRate: 9.8, sourceEntry: 'H5 页面' },
+  { id: 'IND-36', group: 'page', name: '交通页面', definition: '交通页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 13260, secondaryLabel: 'UV', secondaryValue: 9870, comparisonRate: -2.8, sourceEntry: '交通页面' },
+  { id: 'IND-37', group: 'page', name: '座位页面', definition: '座位页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 9480, secondaryLabel: 'UV', secondaryValue: 7150, comparisonRate: 16.5, sourceEntry: '座位页面' },
+  { id: 'IND-38', group: 'page', name: '我的页面', definition: '我的页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 4960, secondaryLabel: 'UV', secondaryValue: 3580, comparisonRate: 6.7, sourceEntry: '我的页面' },
+  { id: 'IND-42', group: 'page', name: '资讯页面', definition: '资讯页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 6820, secondaryLabel: 'UV', secondaryValue: 5240, comparisonRate: 22.1, sourceEntry: '资讯页面' },
 ]
 
 const ACTIVITIES: readonly DashboardActivityOption[] = [
@@ -135,35 +131,31 @@ const ACTIVITIES: readonly DashboardActivityOption[] = [
 const DISTRIBUTIONS: readonly DashboardDistribution[] = [
   {
     id: 'parking-charge', title: '停车收费类型分布', description: '当前停车区配置', kind: 'donut', centerText: '10 个',
-    slices: [{ key: 'free', label: '免费停车场', value: 4 }, { key: 'paid', label: '收费停车场', value: 6 }],
+    slices: [{ key: 'free', label: '免费停车场', value: 4, tone: 'success' }, { key: 'paid', label: '收费停车场', value: 6, tone: 'warning' }],
   },
   {
     id: 'control-status', title: '管制状态分布', description: '当前交通管制状态', kind: 'donut', centerText: '5 项',
-    slices: [{ key: 'published', label: '已发布', value: 3 }, { key: 'draft', label: '草稿', value: 1 }, { key: 'revoked', label: '已撤销', value: 1 }],
+    slices: [{ key: 'published', label: '已发布', value: 3, tone: 'success' }, { key: 'draft', label: '草稿', value: 1, tone: 'muted' }, { key: 'revoked', label: '已撤销', value: 1, tone: 'danger' }],
   },
   {
     id: 'activity-status', title: '活动状态分布', description: '当前活动上下架状态', kind: 'donut', centerText: '3 场',
-    slices: [{ key: 'online', label: '上架', value: 2 }, { key: 'offline', label: '下架', value: 1 }],
-  },
-  {
-    id: 'shuttle-realtime', title: '接驳车实时数据可用率', description: '有实时数据线路数 / 线路总数', kind: 'progress', centerText: '80%',
-    slices: [{ key: 'available', label: '已接入实时数据', value: 4 }, { key: 'unavailable', label: '未接入实时数据', value: 1 }],
+    slices: [{ key: 'online', label: '上架', value: 2, tone: 'primary' }, { key: 'offline', label: '下架', value: 1, tone: 'muted' }],
   },
 ]
 
 const PARKING_USAGE: readonly ParkingUsageItem[] = [
   { id: 'P1', name: 'P1', total: 500, used: 320, available: 180, usageRate: 64 },
   { id: 'P2', name: 'P2', total: 300, used: 180, available: 120, usageRate: 60 },
-  { id: 'P3', name: 'P3', total: 200, used: 45, available: 155, usageRate: 22.5 },
+  { id: 'P3', name: 'P3', total: 200, used: 45, available: 155, usageRate: 22 },
   { id: 'P4', name: 'P4', total: 400, used: 368, available: 32, usageRate: 92 },
   { id: 'P5', name: 'P5', total: 150, used: 150, available: 0, usageRate: 100 },
   { id: 'P6', name: 'P6', total: 200, used: 60, available: 140, usageRate: 30 },
 ]
 
 const INITIAL_VR_WORKS: readonly VrWorkMetric[] = [
-  { id: 'vr-1', rank: 1, title: '体育中心全景导览', coverLabel: 'VR', bindingType: 'manual', pv: 45230, likes: 3102, sceneCount: 12, uv: null, shares: null, messages: null, phoneClicks: null, lastSyncedAt: '2026-08-13T10:00:00.000Z', availability: 'active' },
-  { id: 'vr-2', rank: 2, title: '场馆入口与检票口导览', coverLabel: 'VR', bindingType: 'manual', pv: 28940, likes: 1876, sceneCount: 8, uv: null, shares: null, messages: null, phoneClicks: null, lastSyncedAt: '2026-08-13T10:00:00.000Z', availability: 'active' },
-  { id: 'vr-3', rank: 3, title: '座位区 3D 俯瞰', coverLabel: 'VR', bindingType: 'manual', pv: 19580, likes: 1205, sceneCount: 6, uv: null, shares: null, messages: null, phoneClicks: null, lastSyncedAt: '2026-08-13T10:00:00.000Z', availability: 'active' },
+  { id: 'vr-1', rank: 1, title: '体育中心全景导览', coverLabel: 'VR', bindingType: 'manual', pv: 45230, likes: 3102, sceneCount: 12, lastSyncedAt: '2026-08-13T10:00:00+08:00' },
+  { id: 'vr-2', rank: 2, title: '场馆入口与检票口导览', coverLabel: 'VR', bindingType: 'manual', pv: 28940, likes: 1876, sceneCount: 8, lastSyncedAt: '2026-08-13T10:00:00+08:00' },
+  { id: 'vr-3', rank: 3, title: '座位区 3D 俯瞰', coverLabel: 'VR', bindingType: 'manual', pv: 19580, likes: 1205, sceneCount: 6, lastSyncedAt: '2026-08-13T10:00:00+08:00' },
 ]
 
 const TREND_WEIGHTS = [0.78, 0.9, 1, 1.12, 1.24, 1.1, 0.96] as const
@@ -255,10 +247,6 @@ function defaultDistributionDetails(distributionId: string, sliceKey: string, up
     'activity-status': {
       online: ['8 月 15 日演唱会', '8 月 22 日足球赛'],
       offline: ['全民健身日活动'],
-    },
-    'shuttle-realtime': {
-      available: ['火车站接驳线', '高铁西站接驳线', '中心广场接驳线', '神农城接驳线'],
-      unavailable: ['备用循环接驳线'],
     },
   }
   const distribution = DISTRIBUTIONS.find((item) => item.id === distributionId)
@@ -368,7 +356,6 @@ export class MockDashboardService implements DashboardService {
 export const dashboardService: DashboardService = new MockDashboardService()
 
 export const DASHBOARD_METRIC_COUNTS: Readonly<Record<DashboardMetricGroup, number>> = {
-  core: METRIC_SEEDS.filter((item) => item.group === 'core').length,
   entry: METRIC_SEEDS.filter((item) => item.group === 'entry').length,
   page: METRIC_SEEDS.filter((item) => item.group === 'page').length,
 }

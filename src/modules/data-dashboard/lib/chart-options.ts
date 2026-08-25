@@ -2,6 +2,7 @@ import type { EChartsCoreOption } from 'echarts/core'
 import type { ThemeMode } from '@/stores/theme'
 import type {
   DashboardDistribution,
+  DashboardDistributionSlice,
   DashboardMetric,
   DashboardMetricDimension,
   ParkingUsageItem,
@@ -18,6 +19,21 @@ interface DashboardChartTheme {
   warning: string
   danger: string
   mutedFill: string
+}
+
+export function distributionSliceColor(
+  slice: DashboardDistributionSlice,
+  mode: ThemeMode,
+): string {
+  const theme = dashboardChartTheme(mode)
+  const colors = {
+    primary: theme.primary,
+    success: theme.success,
+    warning: theme.warning,
+    danger: theme.danger,
+    muted: theme.mutedFill,
+  }
+  return colors[slice.tone ?? 'primary']
 }
 
 export function dashboardChartTheme(mode: ThemeMode): DashboardChartTheme {
@@ -100,10 +116,9 @@ export function buildDistributionOption(
   reducedMotion: boolean,
 ): EChartsCoreOption {
   const theme = dashboardChartTheme(mode)
-  const palette = [theme.success, theme.warning, theme.danger, theme.primary, theme.cyan, theme.mutedFill]
   return {
     animation: !reducedMotion,
-    color: palette,
+    color: distribution.slices.map((slice) => distributionSliceColor(slice, mode)),
     aria: {
       enabled: true,
       label: { description: `${distribution.title}，${distribution.slices.map((slice) => `${slice.label}${slice.value}`).join('，')}。` },
@@ -125,11 +140,11 @@ export function buildDistributionOption(
       labelLine: { show: false },
       itemStyle: { borderColor: theme.card, borderWidth: 3, borderRadius: 4 },
       emphasis: { scaleSize: 5 },
-      data: distribution.slices.map((slice, index) => ({
+      data: distribution.slices.map((slice) => ({
         id: slice.key,
         name: slice.label,
         value: slice.value,
-        itemStyle: { color: palette[index % palette.length] },
+        itemStyle: { color: distributionSliceColor(slice, mode) },
       })),
     }],
     graphic: distribution.centerText ? [{
