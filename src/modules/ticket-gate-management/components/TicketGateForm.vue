@@ -50,11 +50,6 @@ function text(field: 'code' | 'name' | 'locationDescription' | 'mapCoordinates' 
   patch({ [field]: String(value) })
 }
 
-function numberValue(field: 'navigationLongitude' | 'navigationLatitude', value: string | number): void {
-  const source = String(value).trim()
-  patch({ [field]: source ? Number(source) : null })
-}
-
 function sortValue(value: string | number): void {
   const source = String(value).trim()
   patch({ sortOrder: source ? Number(source) : Number.NaN })
@@ -170,78 +165,36 @@ watch(() => props.mode, () => {
     </div>
 
     <div class="col-span-2 space-y-2">
-      <Label :for="inputId('mapCoordinates')">地图坐标（JSON）</Label>
-      <Textarea
+      <Label :for="inputId('mapCoordinates')">定位（经纬度） <span class="text-destructive" aria-hidden="true">*</span></Label>
+      <Input
         :id="inputId('mapCoordinates')"
         data-field="mapCoordinates"
         :model-value="value.mapCoordinates"
-        class="min-h-24 resize-y font-mono text-xs"
-        placeholder="例如：[{&quot;lng&quot;:113.1462,&quot;lat&quot;:27.8165}]"
+        class="h-11 font-mono"
+        placeholder="例如：113.1462, 27.8165"
         :disabled="saving"
         :aria-invalid="Boolean(issueFor('mapCoordinates'))"
+        :aria-describedby="issueFor('mapCoordinates') ? errorId('mapCoordinates') : undefined"
         @update:model-value="text('mapCoordinates', $event)"
         @blur="touched.mapCoordinates = true"
       />
-      <p v-if="issueFor('mapCoordinates')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('mapCoordinates')?.message }}</p>
-      <p v-else class="text-xs leading-5 text-muted-foreground">选填。格式为包含 lng、lat 数值的 JSON 数组。</p>
+      <p v-if="issueFor('mapCoordinates')" :id="errorId('mapCoordinates')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('mapCoordinates')?.message }}</p>
+      <div v-else class="flex items-start gap-2 rounded-lg bg-muted/35 px-3 py-2 text-xs leading-5 text-muted-foreground"><Info class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />定位为必填项，用于地图点位、距离计算、2KM 筛选和一键导航。</div>
     </div>
 
-    <div class="col-span-2 rounded-xl border bg-muted/20 p-4">
-      <div class="mb-4 flex items-start gap-2">
-        <Info class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
-        <p class="text-xs leading-5 text-muted-foreground">导航地址与完整经纬度至少填写一项，用于 H5 拉起第三方导航。</p>
-      </div>
-      <div class="grid grid-cols-2 gap-4">
-        <div class="col-span-2 space-y-2">
-          <Label :for="inputId('navigationAddress')">导航地址</Label>
-          <Input
-            :id="inputId('navigationAddress')"
-            data-field="navigationAddress"
-            :model-value="value.navigationAddress"
-            class="h-11"
-            placeholder="例如：株洲市天元区体育中心北门"
-            :disabled="saving"
-            :aria-invalid="Boolean(issueFor('navigationAddress'))"
-            @update:model-value="text('navigationAddress', $event)"
-            @blur="touched.navigationAddress = true"
-          />
-          <p v-if="issueFor('navigationAddress')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('navigationAddress')?.message }}</p>
-        </div>
-        <div class="space-y-2">
-          <Label :for="inputId('navigationLongitude')">经度（lng）</Label>
-          <Input
-            :id="inputId('navigationLongitude')"
-            data-field="navigationLongitude"
-            type="number"
-            step="any"
-            :model-value="value.navigationLongitude ?? ''"
-            class="h-11 tabular-nums"
-            placeholder="113.1462"
-            :disabled="saving"
-            :aria-invalid="Boolean(issueFor('navigationLongitude'))"
-            @update:model-value="numberValue('navigationLongitude', $event)"
-            @blur="touched.navigationLongitude = true"
-          />
-          <p v-if="issueFor('navigationLongitude')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('navigationLongitude')?.message }}</p>
-        </div>
-        <div class="space-y-2">
-          <Label :for="inputId('navigationLatitude')">纬度（lat）</Label>
-          <Input
-            :id="inputId('navigationLatitude')"
-            data-field="navigationLatitude"
-            type="number"
-            step="any"
-            :model-value="value.navigationLatitude ?? ''"
-            class="h-11 tabular-nums"
-            placeholder="27.8165"
-            :disabled="saving"
-            :aria-invalid="Boolean(issueFor('navigationLatitude'))"
-            @update:model-value="numberValue('navigationLatitude', $event)"
-            @blur="touched.navigationLatitude = true"
-          />
-          <p v-if="issueFor('navigationLatitude')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('navigationLatitude')?.message }}</p>
-        </div>
-      </div>
+    <div class="col-span-2 space-y-2">
+      <Label :for="inputId('navigationAddress')">导航地址（选填）</Label>
+      <Input
+        :id="inputId('navigationAddress')"
+        data-field="navigationAddress"
+        :model-value="value.navigationAddress"
+        class="h-11"
+        placeholder="例如：株洲市天元区湘江大道 88 号"
+        :disabled="saving"
+        @update:model-value="text('navigationAddress', $event)"
+        @blur="touched.navigationAddress = true"
+      />
+      <p class="text-xs leading-5 text-muted-foreground">文本地址，作为第三方地图目的地或复制地址兜底。</p>
     </div>
 
     <div class="col-span-2 space-y-2">

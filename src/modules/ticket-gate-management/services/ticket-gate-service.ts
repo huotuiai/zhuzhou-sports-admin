@@ -72,6 +72,14 @@ function isFinitePoint(value: unknown): value is GeoPoint {
 export function parseMapCoordinates(value: string): GeoPoint[] {
   const source = value.trim()
   if (!source) return []
+  if (!source.startsWith('[')) {
+    const coordinateParts = source.split(',').map((item) => item.trim())
+    const point = { lng: Number(coordinateParts[0]), lat: Number(coordinateParts[1]) }
+    if (coordinateParts.length !== 2 || coordinateParts.some((item) => !item) || !isFinitePoint(point)) {
+      throw new TicketGateServiceError('定位格式应为“经度, 纬度”')
+    }
+    return [point]
+  }
   const parsed: unknown = JSON.parse(source)
   if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isFinitePoint)) {
     throw new TicketGateServiceError('地图坐标必须是包含有效 lng、lat 的 JSON 数组')
@@ -80,6 +88,7 @@ export function parseMapCoordinates(value: string): GeoPoint[] {
 }
 
 export function formatMapCoordinates(points: readonly GeoPoint[]): string {
+  if (points.length === 1) return `${points[0]!.lng}, ${points[0]!.lat}`
   return points.length ? JSON.stringify(points) : ''
 }
 
@@ -140,11 +149,15 @@ export function validateTicketGateInput(
     issues.push({ field: 'floor', code: 'invalid', message: '请选择有效楼层' })
   }
 
-  if (value.mapCoordinates) {
+  if (!value.mapCoordinates) {
+    issues.push({ field: 'mapCoordinates', code: 'required', message: '请输入定位（经纬度）' })
+  } else {
     try {
-      parseMapCoordinates(value.mapCoordinates)
+      if (parseMapCoordinates(value.mapCoordinates).length !== 1) {
+        issues.push({ field: 'mapCoordinates', code: 'invalid', message: '定位只能填写一组经纬度' })
+      }
     } catch {
-      issues.push({ field: 'mapCoordinates', code: 'invalid', message: '请输入有效的坐标 JSON 数组' })
+      issues.push({ field: 'mapCoordinates', code: 'invalid', message: '定位格式应为“经度, 纬度”' })
     }
   }
 
@@ -155,10 +168,6 @@ export function validateTicketGateInput(
   } else if (hasLongitude && hasLatitude && !isFinitePoint({ lng: value.navigationLongitude, lat: value.navigationLatitude })) {
     issues.push({ field: 'navigationLongitude', code: 'invalid', message: '请输入有效的导航经纬度' })
   }
-  if (!value.navigationAddress && !(hasLongitude && hasLatitude)) {
-    issues.push({ field: 'navigationAddress', code: 'required', message: '导航地址与完整经纬度至少填写一项' })
-  }
-
   if (!Number.isInteger(value.sortOrder) || value.sortOrder <= 0) {
     issues.push({ field: 'sortOrder', code: 'positive_integer', message: '排序号必须是大于 0 的整数' })
   }

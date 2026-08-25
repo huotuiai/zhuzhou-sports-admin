@@ -14,7 +14,7 @@ export interface ParkingLot {
   totalSpaces: number
   availableSpaces: number
   feeType: ParkingFeeType
-  hourlyRateYuan: number | null
+  feeStandard: string
   openStatus: ParkingOpenStatus
   enabled: boolean
   recommendationWeight: number
@@ -33,7 +33,7 @@ export interface ParkingLotBaseInput {
   navigationAddress: string
   totalSpaces: number
   feeType: ParkingFeeType
-  hourlyRateYuan: number | null
+  feeStandard: string
   openStatus: ParkingOpenStatus
   enabled: boolean
   recommendationWeight: number

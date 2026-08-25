@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { sortTrafficControls, trafficControlService, validateTrafficControlInput } from '../services/traffic-control-service'
 
-const DEFAULT_QUERY: TrafficControlQuery = { keyword: '', type: 'all', timeStatus: 'all', dateStart: '', dateEnd: '' }
+const DEFAULT_QUERY: TrafficControlQuery = { keyword: '', type: 'all', publishStatus: 'all', timeStatus: 'all', dateStart: '', dateEnd: '' }
 const PAGE_SIZE = 20
 
 function errorMessage(error: unknown): string {
@@ -40,6 +40,7 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       return sortTrafficControls(records.value.filter((item) => {
         if (keyword && ![item.code, item.title, item.areaName].some((value) => includes(value, keyword))) return false
         if (query.type !== 'all' && item.type !== query.type) return false
+        if (query.publishStatus !== 'all' && item.publishStatus !== query.publishStatus) return false
         if (query.timeStatus !== 'all' && deriveTrafficControlTimeStatus(item, new Date(clock.value)) !== query.timeStatus) return false
         if (Date.parse(item.startAt) > rangeEnd || Date.parse(item.endAt) < rangeStart) return false
         return true
@@ -148,14 +149,31 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
         endAt: item.endAt,
         detourInstructions: item.detourInstructions,
         geometry: item.geometry,
+        publishAt: item.publishAt,
         pinned: !item.pinned,
         sortOrder: item.sortOrder,
       })
     }
+    async function changePublishStatus(item: TrafficControl, action: 'publish' | 'revoke'): Promise<TrafficControl | null> {
+      isSaving.value = true
+      error.value = null
+      try {
+        const record = action === 'publish' ? await service.publish(item.id) : await service.revoke(item.id)
+        records.value = sortTrafficControls([...records.value.filter((current) => current.id !== item.id), record])
+        return record
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally { isSaving.value = false }
+    }
+    const publish = (item: TrafficControl) => changePublishStatus(item, 'publish')
+    const revoke = (item: TrafficControl) => changePublishStatus(item, 'revoke')
     function resetError(): void { error.value = null }
     function refreshTime(): void { clock.value = now().getTime() }
 
-    return { records, query, page, pageSize, isLoading, isSaving, deletingId, error, filteredRecords, total, pageCount, currentPage, paginatedRecords, setQuery, resetQuery, setPage, setPageSize, validate, load, create, update, remove, togglePinned, resetError, refreshTime }
+    return { records, query, page, pageSize, isLoading, isSaving, deletingId, error, filteredRecords, total, pageCount, currentPage, paginatedRecords, setQuery, resetQuery, setPage, setPageSize, validate, load, create, update, remove, togglePinned, publish, revoke, resetError, refreshTime }
   })
 }
 

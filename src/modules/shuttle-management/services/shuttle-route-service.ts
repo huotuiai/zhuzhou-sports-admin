@@ -75,6 +75,7 @@ function isRoute(value: unknown): value is ShuttleRoute {
     typeof route.lastDeparture === 'string' && TIME_PATTERN.test(route.lastDeparture) && route.firstDeparture < route.lastDeparture &&
     Number.isInteger(route.departureIntervalMinutes) && Number(route.departureIntervalMinutes) >= 5 &&
     Number.isInteger(route.durationMinutes) && Number(route.durationMinutes) > 0 && isOperatingStatus(route.operatingStatus) &&
+    (route.realtimeStatusText === undefined || typeof route.realtimeStatusText === 'string') &&
     Number.isInteger(route.sortOrder) && Number(route.sortOrder) >= 0 && typeof route.enabled === 'boolean' &&
     Array.isArray(route.stations) && route.stations.length <= 20 && route.stations.every(isStation) &&
     route.coordinateSystem === 'GCJ-02' && typeof route.createdAt === 'string' && typeof route.updatedAt === 'string'
@@ -85,7 +86,7 @@ function cloneStation(station: ShuttleStation): ShuttleStation {
 }
 
 function cloneRoute(route: ShuttleRoute): ShuttleRoute {
-  return { ...route, stations: route.stations.map(cloneStation) }
+  return { ...route, realtimeStatusText: route.realtimeStatusText ?? '', stations: route.stations.map(cloneStation) }
 }
 
 export function sortShuttleRoutes(records: readonly ShuttleRoute[]): ShuttleRoute[] {
@@ -104,6 +105,7 @@ export function sanitizeShuttleRouteBaseInput(input: ShuttleRouteUpdateInput): S
     departureIntervalMinutes: Number(input.departureIntervalMinutes),
     durationMinutes: Number(input.durationMinutes),
     operatingStatus: input.operatingStatus,
+    realtimeStatusText: normalizeText(input.realtimeStatusText),
     sortOrder: Number(input.sortOrder),
     enabled: Boolean(input.enabled),
   }
@@ -171,7 +173,8 @@ export function validateShuttleStations(stationsInput: readonly ShuttleStation[]
   if (stations.length > 20) issues.push({ field: 'stations', code: 'limit', message: '每条线路最多配置 20 个站点' })
   for (const station of stations) {
     if (!station.name) issues.push({ field: 'name', stationId: station.id, code: 'required', message: '请输入站点名称' })
-    if (station.point && !isValidGeoPoint(station.point)) issues.push({ field: 'point', stationId: station.id, code: 'invalid', message: '请输入合法的经度,纬度' })
+    if (!station.point) issues.push({ field: 'point', stationId: station.id, code: 'required', message: '请输入站点定位经纬度' })
+    else if (!isValidGeoPoint(station.point)) issues.push({ field: 'point', stationId: station.id, code: 'invalid', message: '请输入合法的经度,纬度' })
     if (station.arrivalOffsetMinutes !== null && (!Number.isInteger(station.arrivalOffsetMinutes) || station.arrivalOffsetMinutes < 0)) {
       issues.push({ field: 'arrivalOffsetMinutes', stationId: station.id, code: 'invalid', message: '到达偏移必须是非负整数' })
     }

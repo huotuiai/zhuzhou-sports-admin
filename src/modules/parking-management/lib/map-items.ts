@@ -33,9 +33,9 @@ export function parkingAvailabilityLabel(
   return '即将满位'
 }
 
-export function formatParkingFee(record: Pick<ParkingLot, 'feeType' | 'hourlyRateYuan'>): string {
+export function formatParkingFee(record: Pick<ParkingLot, 'feeType' | 'feeStandard'>): string {
   if (record.feeType === 'free') return '免费'
-  return record.hourlyRateYuan === null ? '收费' : `${record.hourlyRateYuan.toLocaleString('zh-CN')} 元/小时`
+  return record.feeStandard || '收费'
 }
 
 export function parkingMarkerColor(

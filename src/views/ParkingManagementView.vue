@@ -11,9 +11,9 @@ import {
   CircleDollarSign,
   List,
   Map as MapIcon,
-  MapPinOff,
   PencilLine,
   Plus,
+  Power,
   RefreshCw,
   SquareParking,
   Trash2,
@@ -51,14 +51,13 @@ import ParkingLotForm from '@/modules/parking-management/components/ParkingLotFo
 import ParkingLotMapView from '@/modules/parking-management/components/ParkingLotMapView.vue'
 import ParkingOpenStatusBadge from '@/modules/parking-management/components/ParkingOpenStatusBadge.vue'
 import ParkingLotStatusBadge from '@/modules/parking-management/components/ParkingLotStatusBadge.vue'
-import { formatParkingFee } from '@/modules/parking-management/lib/map-items'
 import {
   parkingLotFormToCreateInput,
   parkingLotFormToUpdateInput,
   parkingLotToFormValue,
 } from '@/modules/parking-management/lib/form-value'
 import { useParkingLotStore } from '@/modules/parking-management/stores/parking-lot-store'
-import { PARKING_FEE_TYPES, PARKING_OPEN_STATUSES } from '@/modules/parking-management/types'
+import { PARKING_FEE_TYPES, PARKING_OPEN_STATUSES, parkingFeeTypeLabel } from '@/modules/parking-management/types'
 import { ticketGateRelationService } from '@/modules/ticket-gate-management/services/ticket-gate-relation-service'
 import { useThemeStore } from '@/stores/theme'
 
@@ -66,15 +65,15 @@ type ViewMode = 'list' | 'map'
 
 const columns: readonly DataTableColumn<ParkingLot>[] = [
   { key: 'code', label: '停车场编号', width: '118px' },
-  { key: 'name', label: '名称 / 位置', minWidth: '220px' },
-  { key: 'spaces', label: '空余 / 总车位', minWidth: '210px' },
-  { key: 'fee', label: '收费', minWidth: '126px' },
+  { key: 'name', label: '名称', minWidth: '160px' },
+  { key: 'locationDescription', label: '位置描述', minWidth: '220px' },
+  { key: 'totalSpaces', label: '总车位', width: '96px', align: 'center' },
+  { key: 'availableSpaces', label: '空余车位', minWidth: '160px' },
+  { key: 'feeType', label: '收费类型', width: '108px', align: 'center' },
   { key: 'openStatus', label: '开放状态', width: '108px', align: 'center' },
-  { key: 'enabled', label: '启用状态', width: '108px', align: 'center' },
+  { key: 'enabled', label: '状态', width: '96px', align: 'center' },
   { key: 'recommendationWeight', label: '推荐权重', width: '96px', align: 'center' },
-  { key: 'sortOrder', label: '排序', width: '76px', align: 'center' },
-  { key: 'availabilityUpdatedAt', label: '余位更新时间', minWidth: '168px' },
-  { key: 'actions', label: '操作', width: '256px', align: 'right' },
+  { key: 'actions', label: '操作', width: '330px', align: 'right' },
 ]
 
 const store = useParkingLotStore()
@@ -118,7 +117,7 @@ function emptyForm(): ParkingLotFormValue {
     navigationAddress: '',
     totalSpaces: Number.NaN,
     feeType: 'free',
-    hourlyRateYuan: null,
+    feeStandard: '',
     openStatus: 'open',
     enabled: true,
     recommendationWeight: 50,
@@ -133,19 +132,6 @@ function cloneForm(value: ParkingLotFormValue): ParkingLotFormValue {
 
 function nextSortOrder(): number {
   return store.records.reduce((maximum, record) => Math.max(maximum, record.sortOrder), 0) + 1
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return new Intl.DateTimeFormat('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
 }
 
 function openCreate(): void {
@@ -309,6 +295,16 @@ async function removeParkingLot(): Promise<void> {
   deleteTarget.value = null
 }
 
+async function toggleParkingLot(record: ParkingLot): Promise<void> {
+  const value = parkingLotToFormValue(record)
+  const saved = await store.update(record.id, parkingLotFormToUpdateInput({ ...value, enabled: !record.enabled }))
+  if (!saved) {
+    toast.error(store.error ?? '停车场状态更新失败。')
+    return
+  }
+  toast.success(`停车场已${saved.enabled ? '启用' : '停用'}。`)
+}
+
 function applyQuery(): void {
   store.setQuery({ ...queryDraft.value })
 }
@@ -352,7 +348,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </span>
           <div>
             <h1 id="parking-management-title" class="text-2xl font-semibold tracking-tight">停车区管理</h1>
-            <p class="mt-1 text-sm text-muted-foreground">维护停车场档案、实时余位、收费信息与地图点位</p>
+            <p class="mt-1 text-sm text-muted-foreground">停车场基础信息与实时车位</p>
           </div>
         </div>
 
@@ -427,28 +423,26 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </template>
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs font-semibold">{{ row.code }}</span></template>
           <template #cell-name="{ row }">
-            <div class="min-w-0">
-              <p class="font-medium text-foreground">{{ row.name }}</p>
-              <p class="mt-1 max-w-64 truncate text-xs text-muted-foreground" :title="row.locationDescription || row.navigationAddress || undefined">{{ row.locationDescription || row.navigationAddress || '未填写位置' }}</p>
-              <span v-if="!row.point" class="mt-1 inline-flex items-center gap-1 text-[11px] text-warning"><MapPinOff class="size-3" aria-hidden="true" />未配置坐标</span>
-            </div>
+            <span class="font-medium text-foreground">{{ row.name }}</span>
           </template>
-          <template #cell-spaces="{ row }">
+          <template #cell-locationDescription="{ row }">
+            <span class="block max-w-72 truncate text-sm text-muted-foreground" :title="row.locationDescription || undefined">{{ row.locationDescription || '—' }}</span>
+          </template>
+          <template #cell-totalSpaces="{ row }"><span class="font-semibold tabular-nums">{{ row.totalSpaces.toLocaleString('zh-CN') }}</span></template>
+          <template #cell-availableSpaces="{ row }">
             <div class="flex items-center gap-2">
-              <span class="font-semibold tabular-nums">{{ row.availableSpaces.toLocaleString('zh-CN') }} / {{ row.totalSpaces.toLocaleString('zh-CN') }}</span>
+              <span class="font-semibold tabular-nums">{{ row.availableSpaces.toLocaleString('zh-CN') }}</span>
               <ParkingAvailabilityBadge :record="row" />
             </div>
           </template>
-          <template #cell-fee="{ row }">
-            <Badge variant="outline" :class="row.feeType === 'free' ? 'border-success/30 bg-success/10 text-success' : 'border-warning/30 bg-warning/10 text-warning'">
-              <CircleDollarSign class="size-3.5" aria-hidden="true" />{{ formatParkingFee(row) }}
+          <template #cell-feeType="{ row }">
+            <Badge variant="outline" :title="row.feeStandard || undefined" :class="row.feeType === 'free' ? 'border-success/30 bg-success/10 text-success' : 'border-warning/30 bg-warning/10 text-warning'">
+              <CircleDollarSign class="size-3.5" aria-hidden="true" />{{ parkingFeeTypeLabel(row.feeType) }}
             </Badge>
           </template>
           <template #cell-openStatus="{ row }"><ParkingOpenStatusBadge :status="row.openStatus" /></template>
           <template #cell-enabled="{ row }"><ParkingLotStatusBadge :enabled="row.enabled" /></template>
           <template #cell-recommendationWeight="{ row }"><span class="font-semibold tabular-nums">{{ row.recommendationWeight }}</span></template>
-          <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
-          <template #cell-availabilityUpdatedAt="{ row }"><time class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.availabilityUpdatedAt">{{ formatDateTime(row.availabilityUpdatedAt) }}</time></template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button variant="ghost" size="sm" class="h-9 px-2.5" :aria-label="`更新${row.name}余位`" @click="openAvailability(row)">
@@ -456,6 +450,9 @@ useEventListener(window, 'beforeunload', beforeUnload)
               </Button>
               <Button variant="ghost" size="sm" class="h-9 px-2.5" :aria-label="`编辑${row.name}`" @click="openEdit(row)">
                 <PencilLine aria-hidden="true" />编辑
+              </Button>
+              <Button variant="ghost" size="sm" class="h-9 px-2.5" :disabled="store.isSaving" :aria-label="`${row.enabled ? '停用' : '启用'}${row.name}`" @click="toggleParkingLot(row)">
+                <Power aria-hidden="true" />{{ row.enabled ? '停用' : '启用' }}
               </Button>
               <Button variant="ghost" size="icon" class="h-9 w-9 text-destructive hover:text-destructive" :aria-label="`删除${row.name}`" @click="deleteTarget = row">
                 <Trash2 aria-hidden="true" />
@@ -564,7 +561,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle>
-          <AlertDialogDescription>删除后该停车场档案将立即移除，并同步清理已有的检票口附近停车场关联，此操作无法恢复。</AlertDialogDescription>
+          <AlertDialogDescription>删除后该停车场档案将立即移除，此操作无法恢复。</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel class="h-11">取消</AlertDialogCancel>

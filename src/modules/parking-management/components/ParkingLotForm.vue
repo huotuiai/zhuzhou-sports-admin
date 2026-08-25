@@ -7,7 +7,7 @@ import type {
   ParkingLotValidationIssue,
   ParkingOpenStatus,
 } from '../types'
-import { AlertTriangle, CircleDollarSign, MapPin, ParkingSquare } from '@lucide/vue'
+import { AlertTriangle, MapPin, ParkingSquare } from '@lucide/vue'
 import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import {
   AlertDialog,
@@ -50,7 +50,7 @@ const fields: ParkingLotValidationField[] = [
   'navigationAddress',
   'totalSpaces',
   'feeType',
-  'hourlyRateYuan',
+  'feeStandard',
   'openStatus',
   'enabled',
   'recommendationWeight',
@@ -95,36 +95,35 @@ function patch(value: Partial<ParkingLotFormValue>): void {
 }
 
 function text(
-  field: 'code' | 'name' | 'locationDescription' | 'coordinateInput' | 'navigationAddress' | 'remark',
+  field: 'code' | 'name' | 'locationDescription' | 'coordinateInput' | 'navigationAddress' | 'feeStandard' | 'remark',
   value: string | number,
 ): void {
   patch({ [field]: String(value) })
 }
 
 function numeric(
-  field: 'totalSpaces' | 'hourlyRateYuan' | 'recommendationWeight' | 'sortOrder',
+  field: 'totalSpaces' | 'recommendationWeight' | 'sortOrder',
   value: string | number,
 ): void {
   const source = String(value).trim()
-  if (field === 'hourlyRateYuan') patch({ hourlyRateYuan: source ? Number(source) : null })
-  else patch({ [field]: source ? Number(source) : Number.NaN })
+  patch({ [field]: source ? Number(source) : Number.NaN })
 }
 
 function handleFeeType(value: unknown): void {
   const next = value as ParkingFeeType
-  if (next === 'free' && props.value.hourlyRateYuan !== null) {
+  if (next === 'free' && props.value.feeStandard.trim()) {
     feeClearConfirmOpen.value = true
     return
   }
-  patch({ feeType: next, hourlyRateYuan: next === 'free' ? null : props.value.hourlyRateYuan })
+  patch({ feeType: next, feeStandard: next === 'free' ? '' : props.value.feeStandard })
   touched.feeType = true
 }
 
 function confirmClearFee(): void {
   feeClearConfirmOpen.value = false
-  patch({ feeType: 'free', hourlyRateYuan: null })
+  patch({ feeType: 'free', feeStandard: '' })
   touched.feeType = true
-  touched.hourlyRateYuan = true
+  touched.feeStandard = true
 }
 
 function validateAndFocus(): boolean {
@@ -200,7 +199,7 @@ watch(() => props.mode, () => {
     </div>
 
     <div class="col-span-2 space-y-2">
-      <Label :for="inputId('point')">定位（经度,纬度）</Label>
+      <Label :for="inputId('point')">定位（经度,纬度） <span class="text-destructive" aria-hidden="true">*</span></Label>
       <div class="relative">
         <MapPin class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
         <Input
@@ -216,7 +215,7 @@ watch(() => props.mode, () => {
         />
       </div>
       <p v-if="issueFor('point')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('point')?.message }}</p>
-      <p v-else class="text-xs leading-5 text-muted-foreground">坐标系为 GCJ-02；允许留空，未配置时只在列表展示。</p>
+      <p v-else class="text-xs leading-5 text-muted-foreground">请使用 GCJ-02 坐标系，格式为“经度,纬度”。</p>
     </div>
 
     <div class="col-span-2 space-y-2">
@@ -267,27 +266,22 @@ watch(() => props.mode, () => {
       </Select>
     </div>
 
-    <div class="space-y-2">
-      <Label :for="inputId('hourlyRateYuan')">每小时价格 <span v-if="value.feeType === 'paid'" class="text-destructive" aria-hidden="true">*</span></Label>
-      <div class="relative">
-        <CircleDollarSign class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <Input
-          :id="inputId('hourlyRateYuan')"
-          data-field="hourlyRateYuan"
-          type="number"
-          min="0.01"
-          step="0.01"
-          :model-value="value.hourlyRateYuan ?? ''"
-          class="h-11 pl-9 tabular-nums"
-          placeholder="例如：5"
-          :disabled="saving || value.feeType === 'free'"
-          :aria-invalid="Boolean(issueFor('hourlyRateYuan'))"
-          @update:model-value="numeric('hourlyRateYuan', $event)"
-          @blur="touched.hourlyRateYuan = true"
-        />
-      </div>
-      <p v-if="issueFor('hourlyRateYuan')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('hourlyRateYuan')?.message }}</p>
-      <p v-else class="text-xs text-muted-foreground">{{ value.feeType === 'free' ? '免费停车场无需填写。' : '单位：元/小时，最多两位小数。' }}</p>
+    <div class="col-span-2 space-y-2">
+      <Label :for="inputId('feeStandard')">收费标准 <span v-if="value.feeType === 'paid'" class="text-destructive" aria-hidden="true">*</span></Label>
+      <Textarea
+        :id="inputId('feeStandard')"
+        data-field="feeStandard"
+        :model-value="value.feeStandard"
+        class="min-h-20 resize-y"
+        maxlength="300"
+        placeholder="例如：首小时 5 元，之后每小时 2 元，24 小时封顶 30 元"
+        :disabled="saving || value.feeType === 'free'"
+        :aria-invalid="Boolean(issueFor('feeStandard'))"
+        @update:model-value="text('feeStandard', $event)"
+        @blur="touched.feeStandard = true"
+      />
+      <p v-if="issueFor('feeStandard')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('feeStandard')?.message }}</p>
+      <p v-else class="text-xs text-muted-foreground">{{ value.feeType === 'free' ? '免费停车场无需填写。' : '支持分时段、封顶价等阶梯收费说明。' }}</p>
     </div>
 
     <div class="space-y-2">
@@ -370,7 +364,7 @@ watch(() => props.mode, () => {
     <AlertDialogContent>
       <AlertDialogHeader>
         <AlertDialogTitle>改为免费停车场？</AlertDialogTitle>
-        <AlertDialogDescription>确认后将清空当前每小时收费价格。</AlertDialogDescription>
+        <AlertDialogDescription>确认后将清空当前收费标准。</AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
         <AlertDialogCancel class="h-11">继续保留收费</AlertDialogCancel>

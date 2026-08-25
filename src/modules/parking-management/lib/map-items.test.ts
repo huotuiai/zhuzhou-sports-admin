@@ -20,7 +20,7 @@ function lot(overrides: Partial<ParkingLot> = {}): ParkingLot {
     totalSpaces: 100,
     availableSpaces: 31,
     feeType: 'free',
-    hourlyRateYuan: null,
+    feeStandard: '',
     openStatus: 'open',
     enabled: true,
     recommendationWeight: 50,
@@ -49,13 +49,13 @@ describe('parking map items', () => {
   })
 
   it('formats fees and omits missing coordinates while retaining selection', () => {
-    const paid = lot({ feeType: 'paid', hourlyRateYuan: 5.5 })
-    expect(formatParkingFee(paid)).toBe('5.5 元/小时')
+    const paid = lot({ feeType: 'paid', feeStandard: '首小时 5 元，之后每小时 2 元' })
+    expect(formatParkingFee(paid)).toBe('首小时 5 元，之后每小时 2 元')
     const result = createParkingMapItems([paid, lot({ id: 'missing', point: null })], paid.id)
     expect(result).toMatchObject({ missingCount: 1, mappedCount: 1 })
     expect(result.markers[0]).toMatchObject({
       selected: true,
-      description: '余 31/100 · 5.5 元/小时',
+      description: '余 31/100 · 首小时 5 元，之后每小时 2 元',
     })
   })
 })

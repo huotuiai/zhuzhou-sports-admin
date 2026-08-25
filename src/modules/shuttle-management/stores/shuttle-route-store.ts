@@ -67,10 +67,9 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
     }
     function setPageSize(value: number): void {
-      if (Number.isInteger(value) && value > 0) {
-        pageSize.value = value
-        page.value = 1
-      }
+      if (value !== 20) return
+      pageSize.value = 20
+      page.value = 1
     }
     async function load(): Promise<boolean> {
       isLoading.value = true

@@ -14,13 +14,21 @@ import type {
 import { isValidGeoPoint } from '@/components/map/geometry'
 import { createClientId } from '@/lib/id'
 
-export const PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v2'
+export const PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v3'
+export const LEGACY_V2_PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v2'
 export const LEGACY_PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v1'
-export const PARKING_LOT_SCHEMA_VERSION = 2
+export const PARKING_LOT_SCHEMA_VERSION = 3
 
 interface StoredParkingLots {
   schemaVersion: typeof PARKING_LOT_SCHEMA_VERSION
   records: ParkingLot[]
+}
+
+type LegacyV2ParkingLot = Omit<ParkingLot, 'feeStandard'> & { hourlyRateYuan: number | null }
+
+interface StoredV2ParkingLots {
+  schemaVersion: 2
+  records: LegacyV2ParkingLot[]
 }
 
 interface LegacyParkingLot {
@@ -96,10 +104,6 @@ function isOpenStatus(value: unknown): value is ParkingOpenStatus {
   return value === 'open' || value === 'closed'
 }
 
-function hasAtMostTwoDecimals(value: number): boolean {
-  return Math.abs(value * 100 - Math.round(value * 100)) < 1e-8
-}
-
 function characterCount(value: string): number {
   return Array.from(value).length
 }
@@ -112,11 +116,7 @@ export function sanitizeParkingLotBaseInput(input: ParkingLotBaseInput): Parking
     navigationAddress: normalizeText(input.navigationAddress),
     totalSpaces: Number(input.totalSpaces),
     feeType: input.feeType,
-    hourlyRateYuan: input.feeType === 'free'
-      ? null
-      : input.hourlyRateYuan === null
-        ? null
-        : Number(input.hourlyRateYuan),
+    feeStandard: input.feeType === 'free' ? '' : normalizeText(input.feeStandard),
     openStatus: input.openStatus,
     enabled: Boolean(input.enabled),
     recommendationWeight: Number(input.recommendationWeight),
@@ -146,16 +146,13 @@ export function validateParkingLotBaseInput(input: ParkingLotBaseInput): Parking
   const issues: ParkingLotValidationIssue[] = []
 
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入停车场名称' })
-  else if (characterCount(value.name) < 2 || characterCount(value.name) > 50) {
-    issues.push({ field: 'name', code: 'range', message: '停车场名称长度须为 2–50 个字符' })
-  }
+  else pushLengthIssue(issues, 'name', value.name, 50, '停车场名称')
   pushLengthIssue(issues, 'locationDescription', value.locationDescription, 100, '位置描述')
   pushLengthIssue(issues, 'navigationAddress', value.navigationAddress, 200, '导航地址')
   pushLengthIssue(issues, 'remark', value.remark, 300, '备注')
 
-  if (value.point && !isValidGeoPoint(value.point)) {
-    issues.push({ field: 'point', code: 'invalid', message: '请输入合法的经度,纬度' })
-  }
+  if (!value.point) issues.push({ field: 'point', code: 'required', message: '请输入定位经纬度' })
+  else if (!isValidGeoPoint(value.point)) issues.push({ field: 'point', code: 'invalid', message: '请输入合法的经度,纬度' })
   if (!Number.isInteger(value.totalSpaces) || value.totalSpaces <= 0) {
     issues.push({ field: 'totalSpaces', code: 'range', message: '总车位数必须是正整数' })
   }
@@ -163,12 +160,8 @@ export function validateParkingLotBaseInput(input: ParkingLotBaseInput): Parking
     issues.push({ field: 'feeType', code: 'invalid', message: '请选择收费类型' })
   }
   else if (value.feeType === 'paid') {
-    if (value.hourlyRateYuan === null || !Number.isFinite(value.hourlyRateYuan)) {
-      issues.push({ field: 'hourlyRateYuan', code: 'required', message: '请输入每小时收费价格' })
-    }
-    else if (value.hourlyRateYuan <= 0 || !hasAtMostTwoDecimals(value.hourlyRateYuan)) {
-      issues.push({ field: 'hourlyRateYuan', code: 'range', message: '每小时价格必须大于零且最多保留两位小数' })
-    }
+    if (!value.feeStandard) issues.push({ field: 'feeStandard', code: 'required', message: '请输入收费标准' })
+    else pushLengthIssue(issues, 'feeStandard', value.feeStandard, 300, '收费标准')
   }
   if (!isOpenStatus(value.openStatus)) {
     issues.push({ field: 'openStatus', code: 'invalid', message: '请选择开放状态' })
@@ -233,13 +226,32 @@ function isParkingLot(value: unknown): value is ParkingLot {
     typeof record.navigationAddress === 'string' && Number.isInteger(record.totalSpaces) && Number(record.totalSpaces) > 0 &&
     Number.isInteger(record.availableSpaces) && Number(record.availableSpaces) >= 0 &&
     Number(record.availableSpaces) <= Number(record.totalSpaces) &&
-    isFeeType(record.feeType) && (record.hourlyRateYuan === null || typeof record.hourlyRateYuan === 'number') &&
+    isFeeType(record.feeType) && typeof record.feeStandard === 'string' &&
     isOpenStatus(record.openStatus) && typeof record.enabled === 'boolean' &&
     Number.isInteger(record.recommendationWeight) && Number(record.recommendationWeight) >= 0 &&
     Number(record.recommendationWeight) <= 100 &&
     Number.isInteger(record.sortOrder) && Number(record.sortOrder) >= 0 && typeof record.remark === 'string' &&
     record.coordinateSystem === 'GCJ-02' && typeof record.availabilityUpdatedAt === 'string' &&
     typeof record.createdAt === 'string' && typeof record.updatedAt === 'string'
+}
+
+function isV2ParkingLot(value: unknown): value is LegacyV2ParkingLot {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  const point = record.point
+  return typeof record.id === 'string' && typeof record.code === 'string' && typeof record.name === 'string' &&
+    typeof record.locationDescription === 'string' &&
+    (point === null || (typeof point === 'object' && isValidGeoPoint(point as { lng: number, lat: number }))) &&
+    typeof record.navigationAddress === 'string' && Number.isInteger(record.totalSpaces) && Number(record.totalSpaces) > 0 &&
+    Number.isInteger(record.availableSpaces) && Number(record.availableSpaces) >= 0 &&
+    Number(record.availableSpaces) <= Number(record.totalSpaces) && isFeeType(record.feeType) &&
+    (record.hourlyRateYuan === null || typeof record.hourlyRateYuan === 'number') &&
+    isOpenStatus(record.openStatus) && typeof record.enabled === 'boolean' &&
+    Number.isInteger(record.recommendationWeight) && Number(record.recommendationWeight) >= 0 &&
+    Number(record.recommendationWeight) <= 100 && Number.isInteger(record.sortOrder) && Number(record.sortOrder) >= 0 &&
+    typeof record.remark === 'string' && record.coordinateSystem === 'GCJ-02' &&
+    typeof record.availabilityUpdatedAt === 'string' && typeof record.createdAt === 'string' &&
+    typeof record.updatedAt === 'string'
 }
 
 export class LocalParkingLotService implements ParkingLotService {
@@ -272,6 +284,25 @@ export class LocalParkingLotService implements ParkingLotService {
     }
   }
 
+  private migrateV2(raw: string): ParkingLot[] {
+    try {
+      const parsed = JSON.parse(raw) as Partial<StoredV2ParkingLots>
+      if (parsed.schemaVersion !== 2 || !Array.isArray(parsed.records) || !parsed.records.every(isV2ParkingLot)) {
+        throw new Error('Invalid v2 parking schema')
+      }
+      return parsed.records.map(({ hourlyRateYuan, ...record }): ParkingLot => ({
+        ...record,
+        point: clonePoint(record.point),
+        feeStandard: record.feeType === 'paid' && hourlyRateYuan !== null
+          ? `${hourlyRateYuan.toLocaleString('zh-CN')} 元/小时`
+          : '',
+      }))
+    }
+    catch (error) {
+      throw new ParkingLotServiceError('storage_corrupted', '旧版本地停车场数据无法解析', { cause: error })
+    }
+  }
+
   private migrateLegacy(raw: string): ParkingLot[] {
     try {
       const parsed = JSON.parse(raw) as Partial<StoredLegacyParkingLots>
@@ -290,7 +321,7 @@ export class LocalParkingLotService implements ParkingLotService {
           totalSpaces,
           availableSpaces: totalSpaces,
           feeType: 'free',
-          hourlyRateYuan: null,
+          feeStandard: '',
           openStatus: 'open',
           enabled: record.enabled,
           recommendationWeight: 50,
@@ -311,6 +342,12 @@ export class LocalParkingLotService implements ParkingLotService {
   private read(): ParkingLot[] {
     const currentRaw = this.storage.getItem(PARKING_LOT_STORAGE_KEY)
     if (currentRaw !== null) return this.parseCurrent(currentRaw)
+    const v2Raw = this.storage.getItem(LEGACY_V2_PARKING_LOT_STORAGE_KEY)
+    if (v2Raw !== null) {
+      const migrated = this.migrateV2(v2Raw)
+      this.write(migrated)
+      return migrated
+    }
     const legacyRaw = this.storage.getItem(LEGACY_PARKING_LOT_STORAGE_KEY)
     if (legacyRaw === null) return []
     const migrated = this.migrateLegacy(legacyRaw)

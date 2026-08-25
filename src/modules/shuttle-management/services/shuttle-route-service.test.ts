@@ -30,6 +30,7 @@ function createInput(overrides: Partial<ShuttleRouteCreateInput> = {}): ShuttleR
     departureIntervalMinutes: 10,
     durationMinutes: 45,
     operatingStatus: 'operating',
+    realtimeStatusText: '',
     sortOrder: 1,
     enabled: true,
     ...overrides,
@@ -47,6 +48,7 @@ function updateInput(overrides: Partial<ShuttleRouteUpdateInput> = {}): ShuttleR
     departureIntervalMinutes: source.departureIntervalMinutes,
     durationMinutes: source.durationMinutes,
     operatingStatus: source.operatingStatus,
+    realtimeStatusText: source.realtimeStatusText,
     sortOrder: source.sortOrder,
     enabled: source.enabled,
     ...overrides,
@@ -57,7 +59,7 @@ function station(id: string, overrides: Partial<ShuttleStation> = {}): ShuttleSt
   return {
     id,
     name: `站点 ${id}`,
-    point: null,
+    point: { lng: 113.1462, lat: 27.8165 },
     navigationAddress: '',
     arrivalOffsetMinutes: null,
     ...overrides,
@@ -94,6 +96,7 @@ describe('LocalShuttleRouteService', () => {
     expect(routeResult.issues.map((item) => item.field)).toEqual(expect.arrayContaining(['code', 'schedule', 'departureIntervalMinutes', 'durationMinutes', 'sortOrder']))
     expect(validateShuttleRouteUpdateInput(updateInput()).valid).toBe(true)
     expect(validateShuttleStations([station('S1')]).valid).toBe(true)
+    expect(validateShuttleStations([station('S1', { point: null })]).issues[0]).toMatchObject({ field: 'point', code: 'required' })
     expect(validateShuttleStations([station('S1', { point: { lng: 181, lat: 27 } })]).issues[0]?.field).toBe('point')
     expect(validateShuttleStations(Array.from({ length: 21 }, (_, index) => station(String(index)))).issues[0]?.field).toBe('stations')
   })

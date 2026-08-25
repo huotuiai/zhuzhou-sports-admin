@@ -2,6 +2,7 @@ import type { MapGeometry } from '@/components/map/types'
 
 export type TrafficControlType = 'road-closure' | 'restriction' | 'detour' | 'temporary' | 'other'
 export type TrafficControlTimeStatus = 'upcoming' | 'active' | 'ended'
+export type TrafficControlPublishStatus = 'draft' | 'published' | 'revoked'
 
 export interface TrafficControl {
   id: string
@@ -14,6 +15,9 @@ export interface TrafficControl {
   detourInstructions: string
   geometry: MapGeometry | null
   areaSquareMeters: number | null
+  publishStatus: TrafficControlPublishStatus
+  publisher: string
+  publishAt: string | null
   pinned: boolean
   sortOrder: number
   coordinateSystem: 'GCJ-02'
@@ -22,12 +26,13 @@ export interface TrafficControl {
 }
 
 export type TrafficControlWriteInput = Pick<TrafficControl,
-  'title' | 'type' | 'areaName' | 'startAt' | 'endAt' | 'detourInstructions' | 'geometry' | 'pinned' | 'sortOrder'
+  'title' | 'type' | 'areaName' | 'startAt' | 'endAt' | 'detourInstructions' | 'geometry' | 'publishAt' | 'pinned' | 'sortOrder'
 >
 
 export interface TrafficControlQuery {
   keyword: string
   type: TrafficControlType | 'all'
+  publishStatus: TrafficControlPublishStatus | 'all'
   timeStatus: TrafficControlTimeStatus | 'all'
   dateStart: string
   dateEnd: string
@@ -51,6 +56,8 @@ export interface TrafficControlService {
   create(input: TrafficControlWriteInput): Promise<TrafficControl>
   update(id: string, input: TrafficControlWriteInput): Promise<TrafficControl>
   remove(id: string): Promise<void>
+  publish(id: string): Promise<TrafficControl>
+  revoke(id: string): Promise<TrafficControl>
 }
 
 export const TRAFFIC_CONTROL_TYPES: readonly {
@@ -69,6 +76,12 @@ export const TRAFFIC_TIME_STATUS_LABELS: Record<TrafficControlTimeStatus, string
   upcoming: '即将开始',
   active: '进行中',
   ended: '已结束',
+}
+
+export const TRAFFIC_PUBLISH_STATUS_LABELS: Record<TrafficControlPublishStatus, string> = {
+  draft: '草稿',
+  published: '已发布',
+  revoked: '已撤销',
 }
 
 export function trafficControlTypeMeta(type: TrafficControlType) {

@@ -23,7 +23,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:value': [value: TrafficControlWriteInput] }>()
 const id = useId()
 const container = ref<HTMLElement | null>(null)
-const fields: TrafficControlField[] = ['title', 'type', 'areaName', 'startAt', 'endAt', 'detourInstructions', 'geometry', 'pinned', 'sortOrder', 'dateRange']
+const fields: TrafficControlField[] = ['title', 'type', 'areaName', 'startAt', 'endAt', 'detourInstructions', 'geometry', 'publishAt', 'pinned', 'sortOrder', 'dateRange']
 const touched = reactive(Object.fromEntries(fields.map((field) => [field, false])) as Record<TrafficControlField, boolean>)
 const allIssues = computed(() => {
   const merged = new Map<TrafficControlField, TrafficControlValidationIssue>()
@@ -123,6 +123,13 @@ watch(() => props.mode, () => { for (const field of fields) touched[field] = fal
     <div class="flex min-h-20 items-center justify-between gap-4 rounded-xl border bg-muted/20 px-4 py-3">
       <div><Label :for="inputId('pinned')" class="cursor-pointer">置顶显示</Label><p class="mt-1 text-xs text-muted-foreground">置顶后排在普通记录之前。</p></div>
       <Switch :id="inputId('pinned')" data-field="pinned" :model-value="value.pinned" :disabled="saving" @update:model-value="patch({ pinned: $event })" />
+    </div>
+
+    <div class="col-span-2 space-y-2">
+      <Label :for="inputId('publishAt')">发布时间 <span class="ml-1 text-xs font-normal text-muted-foreground">定时发布</span></Label>
+      <Input :id="inputId('publishAt')" data-field="publishAt" type="datetime-local" :model-value="value.publishAt ?? ''" class="h-11 tabular-nums" :disabled="saving" :aria-invalid="Boolean(issueFor('publishAt'))" @update:model-value="patch({ publishAt: String($event) || null }); touched.publishAt = true" @blur="touched.publishAt = true" />
+      <p v-if="issueFor('publishAt')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('publishAt')?.message }}</p>
+      <p v-else class="rounded-lg bg-muted/45 px-3 py-2 text-xs leading-5 text-muted-foreground">时间未到时保存为草稿，到点自动发布；留空后可在列表手动发布。</p>
     </div>
   </div>
 </template>

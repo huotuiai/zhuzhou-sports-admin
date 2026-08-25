@@ -25,7 +25,7 @@ export interface TicketGate {
   updatedAt: string
 }
 
-/** 表单/写接口使用 JSON 字符串承接原型中的地图坐标输入。 */
+/** 表单使用“经度, 纬度”字符串承接定位；服务层兼容旧版 JSON 坐标数据。 */
 export interface TicketGateWriteInput {
   code: string
   name: string

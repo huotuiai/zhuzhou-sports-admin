@@ -15,6 +15,9 @@ function record(id: string, overrides: Partial<TrafficControl> = {}): TrafficCon
     detourInstructions: '',
     geometry: null,
     areaSquareMeters: null,
+    publishStatus: 'published',
+    publisher: '张警官',
+    publishAt: '2026-08-18T08:00:00+08:00',
     pinned: false,
     sortOrder: 10,
     coordinateSystem: 'GCJ-02',
@@ -39,6 +42,17 @@ class StubTrafficControlService implements TrafficControlService {
     return structuredClone(next)
   }
   async remove(id: string): Promise<void> { this.records = this.records.filter((item) => item.id !== id) }
+  async publish(id: string): Promise<TrafficControl> {
+    const item = this.records.find((record) => record.id === id)!
+    item.publishStatus = 'published'
+    item.publishAt = '2026-08-18T03:00:00.000Z'
+    return structuredClone(item)
+  }
+  async revoke(id: string): Promise<TrafficControl> {
+    const item = this.records.find((record) => record.id === id)!
+    item.publishStatus = 'revoked'
+    return structuredClone(item)
+  }
 }
 
 describe('traffic control store', () => {
@@ -65,7 +79,7 @@ describe('traffic control store', () => {
     ]
     const store = createTrafficControlStore(service, () => currentTime, 'traffic-filter')()
     await store.load()
-    store.setQuery({ keyword: '南门', type: 'detour', timeStatus: 'upcoming', dateStart: '2026-08-21', dateEnd: '2026-08-22' })
+    store.setQuery({ keyword: '南门', type: 'detour', publishStatus: 'published', timeStatus: 'upcoming', dateStart: '2026-08-21', dateEnd: '2026-08-22' })
     expect(store.filteredRecords.map((item) => item.id)).toEqual(['GZ-002'])
     store.setQuery({ keyword: '', type: 'all', timeStatus: 'ended', dateStart: '', dateEnd: '' })
     expect(store.filteredRecords.map((item) => item.id)).toEqual(['GZ-003'])
@@ -85,6 +99,17 @@ describe('traffic control store', () => {
     expect(store.paginatedRecords).toHaveLength(2)
     const toggled = await store.togglePinned(store.records.find((item) => item.id === 'GZ-001')!)
     expect(toggled?.pinned).toBe(true)
-    expect(store.validate({ title: '新管制', type: 'other', areaName: '北门', startAt: '2026-08-18T12:00', endAt: '2026-08-18T13:00', detourInstructions: '', geometry: null, pinned: false, sortOrder: 0 }, 'create').valid).toBe(true)
+    expect(store.validate({ title: '新管制', type: 'other', areaName: '北门', startAt: '2026-08-18T12:00', endAt: '2026-08-18T13:00', detourInstructions: '', geometry: null, publishAt: null, pinned: false, sortOrder: 0 }, 'create').valid).toBe(true)
+  })
+
+  it('filters publication status and updates publish/revoke transitions', async () => {
+    service.records = [record('GZ-001', { publishStatus: 'draft', publishAt: null }), record('GZ-002')]
+    const store = createTrafficControlStore(service, () => currentTime, 'traffic-publish')()
+    await store.load()
+    store.setQuery({ publishStatus: 'draft' })
+    expect(store.filteredRecords.map((item) => item.id)).toEqual(['GZ-001'])
+    const published = await store.publish(store.records[0]!)
+    expect(published?.publishStatus).toBe('published')
+    expect((await store.revoke(published!))?.publishStatus).toBe('revoked')
   })
 })

@@ -15,6 +15,7 @@ function route(id: string, overrides: Partial<ShuttleRoute> = {}): ShuttleRoute 
     departureIntervalMinutes: 10,
     durationMinutes: 45,
     operatingStatus: 'operating',
+    realtimeStatusText: '',
     sortOrder: 0,
     enabled: true,
     stations: [],
@@ -87,12 +88,12 @@ describe('shuttle route store', () => {
     await store.load()
     const input: ShuttleRouteCreateInput = {
       code: 'L2', name: '新线路', direction: 'inbound', description: '', firstDeparture: '08:00', lastDeparture: '22:00',
-      departureIntervalMinutes: 10, durationMinutes: 40, operatingStatus: 'operating', sortOrder: 2, enabled: true,
+      departureIntervalMinutes: 10, durationMinutes: 40, operatingStatus: 'operating', realtimeStatusText: '', sortOrder: 2, enabled: true,
     }
     expect((await store.create(input))?.code).toBe('L2')
     const updated = await store.update('L1', { ...input, name: '更新线路' })
     expect(updated?.name).toBe('更新线路')
-    const station: ShuttleStation = { id: 'S1', name: '体育中心', point: null, navigationAddress: '', arrivalOffsetMinutes: null }
+    const station: ShuttleStation = { id: 'S1', name: '体育中心', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', arrivalOffsetMinutes: null }
     expect((await store.replaceStations('L1', [station]))?.stations).toHaveLength(1)
     expect(await store.remove('L1')).toBe(true)
   })

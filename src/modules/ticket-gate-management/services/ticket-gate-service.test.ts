@@ -26,7 +26,7 @@ function input(overrides: Partial<TicketGateWriteInput> = {}): TicketGateWriteIn
     name: '东门入口',
     floor: '一层',
     locationDescription: '场馆东侧主入口',
-    mapCoordinates: '[{"lng":113.1462,"lat":27.8165}]',
+    mapCoordinates: '113.1462, 27.8165',
     navigationAddress: '株洲体育中心东门',
     navigationLongitude: null,
     navigationLatitude: null,
@@ -60,7 +60,7 @@ describe('LocalTicketGateService', () => {
     expect((await service.listAuditLogs()).map((item) => item.action)).toEqual(['create', 'update', 'status-update', 'status-update', 'delete'])
   })
 
-  it('validates code, map JSON, navigation pairing and positive sort order', () => {
+  it('requires one positioning coordinate, validates navigation pairing and positive sort order', () => {
     const issues = validateTicketGateInput(input({
       code: 'G_1',
       mapCoordinates: '[{"lng":200,"lat":27}]',
@@ -69,14 +69,21 @@ describe('LocalTicketGateService', () => {
       navigationLatitude: null,
       sortOrder: 0,
     })).issues
-    expect(issues.map((item) => item.field)).toEqual(['code', 'mapCoordinates', 'navigationLatitude', 'navigationAddress', 'sortOrder'])
-    expect(validateTicketGateInput(input({ navigationAddress: '', navigationLongitude: 113.1, navigationLatitude: 27.8 })).valid).toBe(true)
+    expect(issues.map((item) => item.field)).toEqual(['code', 'mapCoordinates', 'navigationLatitude', 'sortOrder'])
+    expect(validateTicketGateInput(input({ mapCoordinates: '', navigationAddress: '' })).issues.map((item) => item.field)).toEqual(['mapCoordinates'])
+    expect(validateTicketGateInput(input({ navigationAddress: '', navigationLongitude: null, navigationLatitude: null })).valid).toBe(true)
   })
 
-  it('parses coordinate JSON and sorts by order then natural code', () => {
-    const points = parseMapCoordinates('[{"lng":113.1,"lat":27.8}]')
-    expect(formatMapCoordinates(points)).toBe('[{"lng":113.1,"lat":27.8}]')
-    expect(() => parseMapCoordinates('{}')).toThrow('JSON 数组')
+  it('parses the prototype coordinate format while retaining legacy JSON compatibility', () => {
+    const points = parseMapCoordinates('113.1, 27.8')
+    expect(points).toEqual([{ lng: 113.1, lat: 27.8 }])
+    expect(parseMapCoordinates('[{"lng":113.1,"lat":27.8}]')).toEqual(points)
+    expect(formatMapCoordinates(points)).toBe('113.1, 27.8')
+    expect(() => parseMapCoordinates('{}')).toThrow('经度, 纬度')
+    expect(() => parseMapCoordinates('113.1,')).toThrow('经度, 纬度')
+  })
+
+  it('sorts by order then natural code', () => {
     const base = {
       id: 'gate', name: '入口', floor: '一层' as const, locationDescription: '', mapPoints: [], navigationAddress: '地址', navigationPoint: null,
       status: 'open' as const, statusRemark: '', createdAt: '2026-01-01', updatedAt: '2026-01-01',

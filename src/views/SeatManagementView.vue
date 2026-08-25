@@ -3,13 +3,12 @@ import type { CrudDialogCloseRequest, CrudDialogMode, DataTableColumn } from '@/
 import type {
   SeatFloor,
   SeatPlanningQuery,
-  SeatPlanningTreeRow,
   SeatZone,
   SeatZoneValidationIssue,
   SeatZoneWriteInput,
 } from '@/modules/seat-management/types'
 import {
-  AlertTriangle, Ban, Building2, ChevronDown, ChevronRight, Ellipsis, Layers3,
+  AlertTriangle, Ban, Building2, ChevronDown, Layers3,
   PencilLine, Plus, RotateCcw, ShieldAlert, Trash2, Unlink, X,
 } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
@@ -33,19 +32,19 @@ const EMPTY_ZONE: SeatZoneWriteInput = {
   gateIds: [], sortOrder: 1, status: 'enabled', remark: '',
 }
 
-const columns: readonly DataTableColumn<SeatPlanningTreeRow>[] = [
-  { key: 'name', label: '楼层 / 座位分区', minWidth: '300px' },
+const columns: readonly DataTableColumn<SeatZone>[] = [
+  { key: 'code', label: '分区编号', width: '120px' },
+  { key: 'name', label: '区域名称', minWidth: '220px' },
+  { key: 'floor', label: '楼层', width: '100px', align: 'center' },
   { key: 'range', label: '座位范围', width: '120px', align: 'center' },
   { key: 'gates', label: '对应检票口', minWidth: '260px' },
   { key: 'sortOrder', label: '排序', width: '82px', align: 'center' },
   { key: 'status', label: '状态', width: '104px', align: 'center' },
-  { key: 'remark', label: '备注', minWidth: '180px' },
-  { key: 'actions', label: '操作', width: '164px', align: 'right' },
+  { key: 'actions', label: '操作', width: '252px', align: 'right' },
 ]
 
 const store = useSeatPlanningStore()
 const queryDraft = ref<SeatPlanningQuery>({ ...store.query, gateIds: [...store.query.gateIds] })
-const expandedIds = ref(new Set<string>())
 const zoneOpen = ref(false)
 const zoneMode = ref<CrudDialogMode>('create')
 const editingId = ref<string | null>(null)
@@ -69,20 +68,7 @@ const loadError = ref('')
 const zoneDirty = computed(() => JSON.stringify(zoneValue.value) !== JSON.stringify(initialZoneValue.value))
 const floorDirty = computed(() => floorName.value !== initialFloorName.value)
 const hasQuery = computed(() => Boolean(store.query.keyword || store.query.floorId !== 'all' || store.query.status !== 'all' || store.query.gateIds.length))
-const treeRows = computed<SeatPlanningTreeRow[]>(() => {
-  const rows: SeatPlanningTreeRow[] = []
-  for (const floor of store.floors) {
-    const matchingCount = store.matchingZoneCount(floor.id)
-    if (hasQuery.value && matchingCount === 0) continue
-    rows.push({ key: `floor:${floor.id}`, kind: 'floor', floor, matchingZoneCount: matchingCount })
-    if (hasQuery.value || expandedIds.value.has(floor.id)) {
-      store.paginatedZones.filter((zone) => zone.floorId === floor.id).forEach((zone) => {
-        rows.push({ key: `zone:${zone.id}`, kind: 'zone', zone })
-      })
-    }
-  }
-  return rows
-})
+const floorById = computed(() => new Map(store.floors.map((floor) => [floor.id, floor])))
 
 function cloneQuery(query: SeatPlanningQuery): SeatPlanningQuery {
   return { ...query, gateIds: [...query.gateIds] }
@@ -94,13 +80,6 @@ function toWriteInput(zone: SeatZone): SeatZoneWriteInput {
     rowStart: zone.rowStart, rowEnd: zone.rowEnd, gateIds: store.zoneGateIds(zone.code),
     sortOrder: zone.sortOrder, status: zone.status, remark: zone.remark,
   }
-}
-
-function toggleExpanded(id: string): void {
-  const next = new Set(expandedIds.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  expandedIds.value = next
 }
 
 function applyQuery(): void {
@@ -179,7 +158,6 @@ async function saveZone(): Promise<void> {
     toast.error(store.error ?? '座位分区保存失败')
     return
   }
-  expandedIds.value = new Set(expandedIds.value).add(saved.floorId)
   closeZone()
   toast.success(creating ? '座位分区已新增。' : '座位分区已更新。')
 }
@@ -221,7 +199,7 @@ async function saveFloor(): Promise<void> {
     toast.error(floorError.value)
     return
   }
-  expandedIds.value = new Set(expandedIds.value).add(floor.id)
+  if (zoneOpen.value) updateZoneValue({ ...zoneValue.value, floorId: floor.id })
   closeFloor()
   toast.success('楼层已新增。')
 }
@@ -260,9 +238,9 @@ async function removeFloor(): Promise<void> {
   if (!floorDeleteTarget.value) return
   const id = floorDeleteTarget.value.id
   if (await store.removeFloor(id)) {
-    const next = new Set(expandedIds.value)
-    next.delete(id)
-    expandedIds.value = next
+    if (zoneOpen.value && zoneValue.value.floorId === id) {
+      updateZoneValue({ ...zoneValue.value, floorId: store.floors[0]?.id ?? '' })
+    }
     floorDeleteTarget.value = null
     toast.success('楼层已删除。')
   } else toast.error(store.error ?? '楼层删除失败')
@@ -287,7 +265,6 @@ async function load(): Promise<void> {
     toast.error(loadError.value)
     return
   }
-  expandedIds.value = new Set(store.floors.map((item) => item.id))
   queryDraft.value = cloneQuery(store.query)
 }
 
@@ -302,11 +279,22 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <header class="flex items-center justify-between gap-4">
         <div class="flex items-center gap-3">
           <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><Layers3 class="size-5" aria-hidden="true" /></span>
-          <div><h1 id="seat-planning-title" class="text-2xl font-semibold tracking-tight">座位规划管理</h1><p class="mt-1 text-sm text-muted-foreground">维护楼层、座位分区与检票口对应关系</p></div>
+          <div><h1 id="seat-planning-title" class="text-2xl font-semibold tracking-tight">座位规划管理</h1><p class="mt-1 text-sm text-muted-foreground">座位分区与检票口对应关系</p></div>
         </div>
         <div class="flex items-center gap-2">
-          <Button variant="outline" size="lg" class="h-11 px-4" @click="openCreateFloor"><Building2 aria-hidden="true" />新增楼层</Button>
           <Button size="lg" class="h-11 px-4" @click="openCreateZone()"><Plus aria-hidden="true" />新增分区</Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger as-child><Button variant="outline" size="lg" class="h-11 px-4"><Building2 aria-hidden="true" />楼层管理<ChevronDown aria-hidden="true" /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end" class="w-64">
+              <DropdownMenuLabel>场馆楼层</DropdownMenuLabel>
+              <DropdownMenuItem class="min-h-10 px-3" @select="openCreateFloor"><Plus />新增楼层</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem v-for="floor in store.floors" :key="floor.id" class="min-h-10 px-3" @select="requestFloorDelete(floor)">
+                <Building2 /><span class="min-w-0 flex-1 truncate">{{ floor.name }}</span><span class="text-xs text-muted-foreground">{{ store.totalZoneCount(floor.id) }} 个分区</span><Trash2 class="text-destructive" />
+              </DropdownMenuItem>
+              <p v-if="store.floors.length === 0" class="px-3 py-4 text-center text-xs text-muted-foreground">暂无楼层</p>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
@@ -331,47 +319,31 @@ useEventListener(window, 'beforeunload', beforeUnload)
         <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button>
       </div>
 
-      <DataTable :columns="columns" :rows="treeRows" row-key="key" :loading="store.isLoading" :empty-text="hasQuery ? '当前查询条件下暂无座位分区' : '暂无楼层，请先新增楼层'" caption="座位规划树">
-        <template #cell-name="{ row }">
-          <div v-if="row.kind === 'floor'" class="flex items-center gap-1">
-            <Button variant="ghost" size="icon-sm" class="size-7" :aria-label="expandedIds.has(row.floor.id) ? `收起${row.floor.name}` : `展开${row.floor.name}`" :aria-expanded="expandedIds.has(row.floor.id)" @click="toggleExpanded(row.floor.id)"><ChevronDown v-if="expandedIds.has(row.floor.id)" /><ChevronRight v-else /></Button>
-            <Building2 class="ml-1 size-4 text-primary" aria-hidden="true" /><span class="font-semibold">{{ row.floor.name }}</span><Badge variant="secondary" class="ml-1 h-5 text-[10px]">{{ hasQuery ? row.matchingZoneCount : store.totalZoneCount(row.floor.id) }} 个分区</Badge>
-          </div>
-          <div v-else class="flex min-w-0 items-center gap-2 pl-9"><span class="h-7 border-l" aria-hidden="true" /><code class="shrink-0 rounded-md border bg-muted/35 px-2 py-1 text-xs font-semibold">{{ row.zone.code }}</code><span class="truncate font-medium" :title="row.zone.name">{{ row.zone.name }}</span></div>
-        </template>
-        <template #cell-range="{ row }"><span v-if="row.kind === 'zone'" class="whitespace-nowrap font-medium tabular-nums">{{ row.zone.rowStart }}–{{ row.zone.rowEnd }} 排</span><span v-else class="text-muted-foreground">—</span></template>
+      <DataTable :columns="columns" :rows="store.paginatedZones" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '无匹配结果' : '暂无座位分区，请新增分区'" caption="座位分区信息表">
+        <template #cell-code="{ row }"><code class="rounded-md border bg-muted/35 px-2 py-1 text-xs font-semibold">{{ row.code }}</code></template>
+        <template #cell-name="{ row }"><span class="font-medium" :title="row.name">{{ row.name }}</span></template>
+        <template #cell-floor="{ row }"><span>{{ floorById.get(row.floorId)?.name ?? '未知楼层' }}</span></template>
+        <template #cell-range="{ row }"><span class="whitespace-nowrap font-medium tabular-nums">{{ row.rowStart }}–{{ row.rowEnd }} 排</span></template>
         <template #cell-gates="{ row }">
-          <span v-if="row.kind === 'floor'" class="text-muted-foreground">—</span>
-          <div v-else-if="store.zoneGateIds(row.zone.code).length" class="flex max-w-72 flex-wrap gap-1.5">
+          <div v-if="store.zoneGateIds(row.code).length" class="flex max-w-72 flex-wrap gap-1.5">
             <Badge
-              v-for="gateId in store.zoneGateIds(row.zone.code).slice(0, 3)" :key="gateId" variant="outline"
+              v-for="gateId in store.zoneGateIds(row.code).slice(0, 3)" :key="gateId" variant="outline"
               :class="store.gateById.get(gateId)?.status === 'restricted' ? 'border-destructive/30 text-destructive' : store.gateById.get(gateId)?.status === 'closed' ? 'border-warning/30 text-warning' : ''"
               :title="`${store.gateById.get(gateId)?.name ?? '未知检票口'} · ${store.gateById.get(gateId)?.status === 'open' ? '开放' : store.gateById.get(gateId)?.status === 'restricted' ? '管制' : '关闭'}`"
             >
               <ShieldAlert v-if="store.gateById.get(gateId)?.status === 'restricted'" class="size-3" /><Ban v-else-if="store.gateById.get(gateId)?.status === 'closed'" class="size-3" />{{ store.gateById.get(gateId)?.code ?? '失效' }} {{ store.gateById.get(gateId)?.name ?? '' }}
             </Badge>
-            <Badge v-if="store.zoneGateIds(row.zone.code).length > 3" variant="secondary" :title="store.zoneGateIds(row.zone.code).slice(3).map((id) => store.gateById.get(id)?.name ?? id).join('、')">+{{ store.zoneGateIds(row.zone.code).length - 3 }}</Badge>
+            <Badge v-if="store.zoneGateIds(row.code).length > 3" variant="secondary" :title="store.zoneGateIds(row.code).slice(3).map((id) => store.gateById.get(id)?.name ?? id).join('、')">+{{ store.zoneGateIds(row.code).length - 3 }}</Badge>
           </div>
           <span v-else class="text-xs text-destructive">未绑定检票口</span>
         </template>
-        <template #cell-sortOrder="{ row }"><span v-if="row.kind === 'zone'" class="tabular-nums">{{ row.zone.sortOrder }}</span><span v-else class="text-muted-foreground">—</span></template>
-        <template #cell-status="{ row }"><SeatStatusBadge v-if="row.kind === 'zone'" :status="row.zone.status" /><span v-else class="text-muted-foreground">—</span></template>
-        <template #cell-remark="{ row }"><p v-if="row.kind === 'zone'" class="max-w-48 truncate text-sm text-muted-foreground" :title="row.zone.remark">{{ row.zone.remark || '—' }}</p><span v-else class="text-muted-foreground">—</span></template>
+        <template #cell-sortOrder="{ row }"><span class="tabular-nums">{{ row.sortOrder }}</span></template>
+        <template #cell-status="{ row }"><SeatStatusBadge :status="row.status" /></template>
         <template #cell-actions="{ row }">
-          <div v-if="row.kind === 'floor'" class="flex justify-end gap-1">
-            <Button variant="ghost" size="icon-lg" class="h-11 w-11" :aria-label="`在${row.floor.name}新增分区`" @click="openCreateZone(row.floor.id)"><Plus /></Button>
-            <Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :aria-label="`删除楼层${row.floor.name}`" @click="requestFloorDelete(row.floor)"><Trash2 /></Button>
-          </div>
-          <div v-else class="flex justify-end gap-1">
-            <Button variant="ghost" class="h-11 px-3" @click="openEditZone(row.zone)"><PencilLine />编辑</Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-11 w-11" :aria-label="`${row.zone.name}更多操作`"><Ellipsis /></Button></DropdownMenuTrigger>
-              <DropdownMenuContent align="end" class="w-40">
-                <DropdownMenuItem class="min-h-10 px-3" :disabled="store.changingStatusId === row.zone.id" @select="toggleZoneStatus(row.zone)"><RotateCcw v-if="store.changingStatusId === row.zone.id" class="animate-spin motion-reduce:animate-none" /><Ban v-else />{{ row.zone.status === 'enabled' ? '停用分区' : '启用分区' }}</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" class="min-h-10 px-3" @select="requestZoneDelete(row.zone)"><Trash2 />删除</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <div class="flex justify-end gap-1">
+            <Button variant="ghost" class="h-11 px-3" @click="openEditZone(row)"><PencilLine />编辑</Button>
+            <Button variant="ghost" class="h-11 px-3" :disabled="store.changingStatusId === row.id" @click="toggleZoneStatus(row)"><RotateCcw v-if="store.changingStatusId === row.id" class="animate-spin motion-reduce:animate-none" /><Ban v-else />{{ row.status === 'enabled' ? '停用' : '启用' }}</Button>
+            <Button variant="ghost" class="h-11 px-3 text-destructive hover:text-destructive" @click="requestZoneDelete(row)"><Trash2 />删除</Button>
           </div>
         </template>
       </DataTable>
@@ -383,7 +355,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <VenueSeatForm :key="`${zoneMode}-${editingId ?? 'new'}`" ref="zoneFormRef" :mode="zoneMode" :value="zoneValue" :floors="store.floors" :zones="store.zones" :ticket-gates="store.ticketGates" :editing-id="editingId ?? undefined" :issues="zoneIssues" :saving="store.isSaving" @update:value="updateZoneValue" />
     </CrudSheet>
 
-    <CrudDialog :open="floorOpen" mode="create" title="新增楼层" description="楼层将作为座位规划树的一级节点。" submit-label="确认新增" :saving="store.isSaving" :dirty="floorDirty" @submit="saveFloor" @request-close="requestFloorClose">
+    <CrudDialog :open="floorOpen" mode="create" title="新增楼层" description="楼层用于座位分区归属与列表排序。" submit-label="确认新增" :saving="store.isSaving" :dirty="floorDirty" @submit="saveFloor" @request-close="requestFloorClose">
       <div class="space-y-2"><Label for="seat-floor-name">楼层名称 <span class="text-destructive">*</span></Label><Input id="seat-floor-name" ref="floorInput" v-model="floorName" maxlength="20" class="h-11" placeholder="例如：三层" :disabled="store.isSaving" :aria-invalid="Boolean(floorError)" :aria-describedby="floorError ? 'seat-floor-name-error' : undefined" @input="floorError = ''" /><p v-if="floorError" id="seat-floor-name-error" class="flex items-center gap-1.5 text-xs text-destructive" role="alert"><AlertTriangle class="size-3.5" />{{ floorError }}</p><p v-else class="text-xs leading-5 text-muted-foreground">楼层名称不可重复；楼层下存在分区时不能删除。</p></div>
     </CrudDialog>
 
@@ -391,7 +363,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
 
     <AlertDialog :open="Boolean(zoneBlockedTarget)" @update:open="!$event && (zoneBlockedTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>该分区无法删除</AlertDialogTitle><AlertDialogDescription>“{{ zoneBlockedTarget?.name }}”当前处于启用状态，请先停用后再删除。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><Button class="h-11" @click="zoneBlockedTarget = null"><Unlink />我知道了</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog :open="Boolean(floorBlockedTarget)" @update:open="!$event && (floorBlockedTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>该楼层无法删除</AlertDialogTitle><AlertDialogDescription>“{{ floorBlockedTarget?.name }}”已绑定 {{ floorBlockedTarget ? store.totalZoneCount(floorBlockedTarget.id) : 0 }} 个座位分区，请先迁移或删除这些分区。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><Button class="h-11" @click="floorBlockedTarget = null"><Unlink />我知道了</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
-    <AlertDialog :open="Boolean(zoneDeleteTarget)" @update:open="!$event && (zoneDeleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ zoneDeleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>删除后 H5 将无法匹配该分区，相关检票口绑定会同步清理，且无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="removeZone"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog :open="Boolean(zoneDeleteTarget)" @update:open="!$event && (zoneDeleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ zoneDeleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>删除后 H5 将无法匹配该分区，相关检票口绑定会同步清理；用户已收藏的该分区信息将失效，并提示“该分区已不存在”。此操作无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="removeZone"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog :open="Boolean(floorDeleteTarget)" @update:open="!$event && (floorDeleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除楼层“{{ floorDeleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>该楼层当前没有座位分区，删除后无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="removeFloor"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>
 </template>

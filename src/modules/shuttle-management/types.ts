@@ -22,6 +22,7 @@ export interface ShuttleRoute {
   departureIntervalMinutes: number
   durationMinutes: number
   operatingStatus: ShuttleOperatingStatus
+  realtimeStatusText: string
   sortOrder: number
   enabled: boolean
   stations: ShuttleStation[]
@@ -39,6 +40,7 @@ export interface ShuttleRouteBaseInput {
   departureIntervalMinutes: number
   durationMinutes: number
   operatingStatus: ShuttleOperatingStatus
+  realtimeStatusText: string
   sortOrder: number
   enabled: boolean
 }

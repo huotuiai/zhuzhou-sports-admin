@@ -13,7 +13,7 @@ import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { CrudSheet, DataTable, EnabledStatusBadge, PaginationBar, QueryPanel } from '@/components/common'
+import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,7 +39,6 @@ const columns: readonly DataTableColumn<ShuttleRoute>[] = [
   { key: 'interval', label: '发车间隔', width: '110px', align: 'center' },
   { key: 'duration', label: '全程时长', width: '110px', align: 'center' },
   { key: 'operatingStatus', label: '运营状态', width: '112px', align: 'center' },
-  { key: 'enabled', label: '启用状态', width: '104px', align: 'center' },
   { key: 'sortOrder', label: '排序', width: '82px', align: 'center' },
   { key: 'actions', label: '操作', width: '244px', align: 'right' },
 ]
@@ -82,6 +81,7 @@ function emptyRoute(): ShuttleRouteCreateInput {
     departureIntervalMinutes: 10,
     durationMinutes: 45,
     operatingStatus: 'operating',
+    realtimeStatusText: '',
     sortOrder: 0,
     enabled: true,
   }
@@ -106,6 +106,7 @@ function toRouteInput(route: ShuttleRoute): ShuttleRouteCreateInput {
     departureIntervalMinutes: route.departureIntervalMinutes,
     durationMinutes: route.durationMinutes,
     operatingStatus: route.operatingStatus,
+    realtimeStatusText: route.realtimeStatusText,
     sortOrder: route.sortOrder,
     enabled: route.enabled,
   }
@@ -121,6 +122,7 @@ function toUpdateInput(value: ShuttleRouteCreateInput): ShuttleRouteUpdateInput 
     departureIntervalMinutes: value.departureIntervalMinutes,
     durationMinutes: value.durationMinutes,
     operatingStatus: value.operatingStatus,
+    realtimeStatusText: value.realtimeStatusText,
     sortOrder: value.sortOrder,
     enabled: value.enabled,
   }
@@ -132,11 +134,15 @@ function operatingClass(route: ShuttleRoute): string {
   return 'border-border bg-muted text-muted-foreground'
 }
 
+function nextSortOrder(): number {
+  return store.records.reduce((maximum, route) => Math.max(maximum, route.sortOrder), 0) + 1
+}
+
 function openCreate(): void {
   store.resetError()
   routeMode.value = 'create'
   editingId.value = null
-  const value = emptyRoute()
+  const value = { ...emptyRoute(), sortOrder: nextSortOrder() }
   routeValue.value = cloneRouteInput(value)
   routeInitial.value = cloneRouteInput(value)
   routeIssues.value = []
@@ -222,7 +228,7 @@ async function saveRoute(): Promise<void> {
   await nextTick()
   if (!routeFormRef.value?.validateAndFocus() || routeIssues.value.length) return
   const current = editingId.value ? store.records.find((item) => item.id === editingId.value) : null
-  if (current?.stations.length && routeValue.value.direction !== routeInitial.value.direction) {
+  if (current && routeValue.value.direction !== routeInitial.value.direction) {
     directionConfirmOpen.value = true
     return
   }
@@ -299,7 +305,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <header class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-3">
           <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><BusFront class="size-5" aria-hidden="true" /></span>
-          <div><h1 id="shuttle-route-title" class="text-2xl font-semibold tracking-tight">接驳车管理</h1><p class="mt-1 text-sm text-muted-foreground">维护接驳线路、班次与有序站点坐标</p></div>
+          <div><h1 id="shuttle-route-title" class="text-2xl font-semibold tracking-tight">接驳车管理</h1><p class="mt-1 text-sm text-muted-foreground">接驳线路 / 站点 / 排班</p></div>
         </div>
         <div class="flex items-center gap-2">
           <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
@@ -328,11 +334,10 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-interval="{ row }"><span class="tabular-nums">{{ row.departureIntervalMinutes }} 分钟</span></template>
           <template #cell-duration="{ row }"><span class="tabular-nums">{{ row.durationMinutes }} 分钟</span></template>
           <template #cell-operatingStatus="{ row }"><Badge variant="outline" :class="operatingClass(row)">{{ shuttleOperatingStatusLabel(row.operatingStatus) }}</Badge></template>
-          <template #cell-enabled="{ row }"><EnabledStatusBadge :enabled="row.enabled" /></template>
           <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" @click="openStations(row)"><MapPin aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :aria-label="`删除${row.name}`" @click="deleteTarget = row"><Trash2 aria-hidden="true" /></Button></div></template>
         </DataTable>
-        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="store.setPage" @update:page-size="store.setPageSize" />
+        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20]" @update:page="store.setPage" @update:page-size="store.setPageSize" />
       </template>
 
       <ShuttleRouteMapView v-else :records="store.filteredRecords" :theme="themeStore.mode" />
@@ -342,13 +347,13 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <ShuttleRouteForm :key="`${routeMode}-${editingId ?? 'new'}`" ref="routeFormRef" :mode="routeMode" :value="routeValue" :issues="routeIssues" :saving="store.isSaving" @update:value="updateRoute" />
     </CrudSheet>
 
-    <CrudSheet :open="stationOpen" mode="edit" size="wide" :title="`站点配置 · ${stationRoute?.code ?? ''}`" :description="stationRoute ? `${stationRoute.name} · ${shuttleDirectionLabel(stationRoute.direction)}，坐标为选填项。` : '维护线路站点'" submit-label="保存站点" :saving="store.isSaving" :dirty="stationDirty" @submit="saveStations" @request-close="requestStationClose">
+    <CrudSheet :open="stationOpen" mode="edit" size="wide" :title="`站点配置 · ${stationRoute?.code ?? ''}`" :description="stationRoute ? `${stationRoute.name} · ${shuttleDirectionLabel(stationRoute.direction)}，站点定位为必填项。` : '维护线路站点'" submit-label="保存站点" :saving="store.isSaving" :dirty="stationDirty" @submit="saveStations" @request-close="requestStationClose">
       <ShuttleStationConfig v-if="stationRouteId" :key="stationRouteId" ref="stationFormRef" :route-id="stationRouteId" :value="stationValue" :saving="store.isSaving" @update:value="stationValue = $event; store.resetError()" @editor-dirty="stationEditorDirty = $event" />
     </CrudSheet>
 
     <AlertDialog :open="Boolean(discardKind)" @update:open="!$event && (discardKind = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>{{ discardKind === 'stations' ? '当前站点顺序或站点信息尚未保存，关闭后将无法恢复。' : '当前接驳线路信息尚未保存，关闭后将无法恢复。' }}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><Button variant="destructive" class="h-11" @click="discardChanges"><X aria-hidden="true" />放弃修改</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
-    <AlertDialog :open="directionConfirmOpen" @update:open="directionConfirmOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认变更线路方向？</AlertDialogTitle><AlertDialogDescription>该线路已配置 {{ store.records.find((item) => item.id === editingId)?.stations.length ?? 0 }} 个站点。方向变更后，现有站点顺序将按新的进场/出场语义展示。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">返回检查</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmDirectionSave">确认变更并保存</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog :open="directionConfirmOpen" @update:open="directionConfirmOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认变更线路方向？</AlertDialogTitle><AlertDialogDescription>方向变更将影响 H5 进出场推荐；该线路现有 {{ store.records.find((item) => item.id === editingId)?.stations.length ?? 0 }} 个站点的方向语义也会同步变更。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">返回检查</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmDirectionSave">确认变更并保存</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
     <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>删除后线路基础信息及其 {{ deleteTarget?.stations.length ?? 0 }} 个站点将一并移除，且无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 aria-hidden="true" />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>

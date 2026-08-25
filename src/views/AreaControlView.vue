@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CrudDialogCloseRequest, CrudDialogMode, DataTableColumn } from '@/components/common'
-import type { TrafficControl, TrafficControlQuery, TrafficControlTimeStatus, TrafficControlValidationIssue, TrafficControlWriteInput } from '@/modules/traffic-control/types'
-import { AlertTriangle, Ellipsis, List, Map as MapIcon, MapPinned, PencilLine, Pin, PinOff, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
+import type { TrafficControl, TrafficControlPublishStatus, TrafficControlQuery, TrafficControlTimeStatus, TrafficControlValidationIssue, TrafficControlWriteInput } from '@/modules/traffic-control/types'
+import { AlertTriangle, Download, Ellipsis, List, Map as MapIcon, MapPinned, PencilLine, Pin, PinOff, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
 import { useEventListener, useNow } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -18,20 +18,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import TrafficControlForm from '@/modules/traffic-control/components/TrafficControlForm.vue'
 import TrafficControlMapView from '@/modules/traffic-control/components/TrafficControlMapView.vue'
 import { deriveTrafficControlTimeStatus, useTrafficControlStore } from '@/modules/traffic-control/stores/traffic-control-store'
-import { TRAFFIC_CONTROL_TYPES, TRAFFIC_TIME_STATUS_LABELS, trafficControlTypeMeta } from '@/modules/traffic-control/types'
+import { TRAFFIC_CONTROL_TYPES, TRAFFIC_PUBLISH_STATUS_LABELS, TRAFFIC_TIME_STATUS_LABELS, trafficControlTypeMeta } from '@/modules/traffic-control/types'
 import { useThemeStore } from '@/stores/theme'
 
 type ViewMode = 'list' | 'map'
 
 const columns: readonly DataTableColumn<TrafficControl>[] = [
-  { key: 'code', label: '编号', width: '110px' },
+  { key: 'code', label: '管制编号', width: '110px' },
   { key: 'title', label: '标题', minWidth: '210px' },
   { key: 'type', label: '类型', width: '112px', align: 'center' },
   { key: 'areaName', label: '区域名称', minWidth: '180px' },
   { key: 'timeRange', label: '时间范围', minWidth: '230px' },
-  { key: 'timeStatus', label: '管制时态', width: '112px', align: 'center' },
+  { key: 'timeStatus', label: '管制状态', width: '112px', align: 'center' },
+  { key: 'publishStatus', label: '状态', width: '100px', align: 'center' },
   { key: 'pinned', label: '置顶', width: '80px', align: 'center' },
-  { key: 'updatedAt', label: '更新时间', width: '150px' },
+  { key: 'publishAt', label: '发布时间', width: '150px' },
+  { key: 'publisher', label: '发布人', width: '100px' },
   { key: 'actions', label: '操作', width: '156px', align: 'right' },
 ]
 
@@ -49,11 +51,12 @@ const issues = ref<readonly TrafficControlValidationIssue[]>([])
 const formRef = ref<{ validateAndFocus(): boolean } | null>(null)
 const discardOpen = ref(false)
 const deleteTarget = ref<TrafficControl | null>(null)
+const statusTarget = ref<{ record: TrafficControl, action: 'publish' | 'revoke' } | null>(null)
 const historicalConfirmOpen = ref(false)
 const loadError = ref('')
 
 const formDirty = computed(() => JSON.stringify(formValue.value) !== JSON.stringify(initialValue.value))
-const hasQuery = computed(() => Boolean(store.query.keyword || store.query.type !== 'all' || store.query.timeStatus !== 'all' || store.query.dateStart || store.query.dateEnd))
+const hasQuery = computed(() => Boolean(store.query.keyword || store.query.type !== 'all' || store.query.publishStatus !== 'all' || store.query.timeStatus !== 'all' || store.query.dateStart || store.query.dateEnd))
 
 function localDateTime(date: Date): string {
   const offset = date.getTimezoneOffset() * 60_000
@@ -64,7 +67,7 @@ function emptyForm(): TrafficControlWriteInput {
   const start = new Date(Date.now() + 60 * 60_000)
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0)
   const end = new Date(start.getTime() + 3 * 60 * 60_000)
-  return { title: '', type: 'road-closure', areaName: '', startAt: localDateTime(start), endAt: localDateTime(end), detourInstructions: '', geometry: null, pinned: false, sortOrder: 50 }
+  return { title: '', type: 'road-closure', areaName: '', startAt: localDateTime(start), endAt: localDateTime(end), detourInstructions: '', geometry: null, publishAt: localDateTime(new Date()), pinned: false, sortOrder: 50 }
 }
 
 function toWriteInput(item: TrafficControl): TrafficControlWriteInput {
@@ -76,6 +79,7 @@ function toWriteInput(item: TrafficControl): TrafficControlWriteInput {
     endAt: item.endAt,
     detourInstructions: item.detourInstructions,
     geometry: item.geometry ? cloneGeometry(item.geometry) : null,
+    publishAt: item.publishAt ? localDateTime(new Date(item.publishAt)) : null,
     pinned: item.pinned,
     sortOrder: item.sortOrder,
   }
@@ -100,6 +104,29 @@ function timeStatusClass(status: TrafficControlTimeStatus): string {
   if (status === 'active') return 'border-success/30 bg-success/10 text-success'
   if (status === 'upcoming') return 'border-primary/30 bg-primary/10 text-primary'
   return 'border-border bg-muted/50 text-muted-foreground'
+}
+
+function publishStatusClass(status: TrafficControlPublishStatus): string {
+  if (status === 'published') return 'border-success/30 bg-success/10 text-success'
+  if (status === 'draft') return 'border-warning/30 bg-warning/10 text-warning'
+  return 'border-border bg-muted/50 text-muted-foreground line-through'
+}
+
+function csvCell(value: unknown): string {
+  return `"${String(value ?? '').replaceAll('"', '""')}"`
+}
+
+function exportCurrent(): void {
+  const headers = ['管制编号', '标题', '类型', '区域名称', '开始时间', '结束时间', '管制状态', '发布状态', '置顶', '发布时间', '发布人']
+  const rows = store.filteredRecords.map((item) => [item.code, item.title, trafficControlTypeMeta(item.type).label, item.areaName, formatDateTime(item.startAt), formatDateTime(item.endAt), TRAFFIC_TIME_STATUS_LABELS[timeStatus(item)], TRAFFIC_PUBLISH_STATUS_LABELS[item.publishStatus], item.pinned ? '是' : '否', item.publishAt ? formatDateTime(item.publishAt) : '—', item.publisher])
+  const csv = `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `交通管制-${new Date().toISOString().slice(0, 10)}.csv`
+  anchor.click()
+  URL.revokeObjectURL(url)
+  toast.success('已导出当前筛选结果。')
 }
 
 function openCreate(): void {
@@ -191,6 +218,20 @@ async function togglePinned(item: TrafficControl): Promise<void> {
   else toast.error(store.error ?? '置顶状态更新失败。')
 }
 
+async function confirmStatusChange(): Promise<void> {
+  const target = statusTarget.value
+  if (!target) return
+  const updated = target.action === 'publish'
+    ? await store.publish(target.record)
+    : await store.revoke(target.record)
+  if (!updated) {
+    toast.error(store.error ?? (target.action === 'publish' ? '发布失败。' : '撤销失败。'))
+    return
+  }
+  statusTarget.value = null
+  toast.success(target.action === 'publish' ? '管制已发布。' : '管制已撤销。')
+}
+
 async function remove(): Promise<void> {
   if (!deleteTarget.value) return
   if (await store.remove(deleteTarget.value.id)) {
@@ -230,24 +271,30 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <header class="flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-3">
           <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><MapPinned class="size-5" aria-hidden="true" /></span>
-          <div><h1 id="traffic-control-title" class="text-2xl font-semibold tracking-tight">交通管制</h1><p class="mt-1 text-sm text-muted-foreground">维护体育中心周边管制时间、区域与绕行说明</p></div>
+          <div><h1 id="traffic-control-title" class="text-2xl font-semibold tracking-tight">交通管制管理</h1><p class="mt-1 text-sm text-muted-foreground">交警管制信息发布</p></div>
         </div>
         <div class="flex items-center gap-2">
-          <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
-            <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表</Button>
-            <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图</Button>
-          </div>
           <Button size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
+          <Button variant="outline" size="lg" class="h-11" @click="exportCurrent"><Download aria-hidden="true" />导出</Button>
         </div>
       </header>
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
-        <div class="space-y-2"><Label for="traffic-keyword">关键字</Label><Input id="traffic-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="编号、标题或区域" autocomplete="off" /></div>
         <div class="space-y-2"><Label for="traffic-type">管制类型</Label><Select v-model="queryDraft.type"><SelectTrigger id="traffic-type" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem v-for="item in TRAFFIC_CONTROL_TYPES" :key="item.value" :value="item.value">{{ item.label }}</SelectItem></SelectContent></Select></div>
-        <div class="space-y-2"><Label for="traffic-status">管制时态</Label><Select :model-value="queryDraft.timeStatus" @update:model-value="queryDraft.timeStatus = $event as TrafficControlTimeStatus | 'all'"><SelectTrigger id="traffic-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部时态</SelectItem><SelectItem value="upcoming">即将开始</SelectItem><SelectItem value="active">进行中</SelectItem><SelectItem value="ended">已结束</SelectItem></SelectContent></Select></div>
+        <div class="space-y-2"><Label for="traffic-publish-status">发布状态</Label><Select :model-value="queryDraft.publishStatus" @update:model-value="queryDraft.publishStatus = $event as TrafficControlPublishStatus | 'all'"><SelectTrigger id="traffic-publish-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="draft">草稿</SelectItem><SelectItem value="published">已发布</SelectItem><SelectItem value="revoked">已撤销</SelectItem></SelectContent></Select></div>
+        <div class="space-y-2"><Label for="traffic-status">管制状态</Label><Select :model-value="queryDraft.timeStatus" @update:model-value="queryDraft.timeStatus = $event as TrafficControlTimeStatus | 'all'"><SelectTrigger id="traffic-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="active">进行中</SelectItem><SelectItem value="upcoming">即将开始</SelectItem><SelectItem value="ended">已结束</SelectItem></SelectContent></Select></div>
         <div class="space-y-2"><Label for="traffic-date-start">查询开始日期</Label><Input id="traffic-date-start" v-model="queryDraft.dateStart" type="date" class="h-11" /></div>
         <div class="space-y-2"><Label for="traffic-date-end">查询结束日期</Label><Input id="traffic-date-end" v-model="queryDraft.dateEnd" type="date" class="h-11" /></div>
+        <div class="space-y-2"><Label for="traffic-keyword">关键字</Label><Input id="traffic-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="标题 / 区域关键字" autocomplete="off" @keydown.enter.prevent="applyQuery" /></div>
       </QueryPanel>
+
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
+          <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表视图</Button>
+          <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图视图</Button>
+        </div>
+        <p class="text-xs text-muted-foreground">地图视图按 area_polygon 渲染管制区域，未配置区域的记录仅在列表展示。</p>
+      </div>
 
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert"><AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button></div>
 
@@ -259,12 +306,14 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-areaName="{ row }"><p class="max-w-52 truncate" :title="row.areaName">{{ row.areaName }}</p></template>
           <template #cell-timeRange="{ row }"><div class="whitespace-nowrap text-xs tabular-nums"><time :datetime="row.startAt">{{ formatDateTime(row.startAt) }}</time><span class="mx-1.5 text-muted-foreground">–</span><time :datetime="row.endAt">{{ formatDateTime(row.endAt) }}</time></div></template>
           <template #cell-timeStatus="{ row }"><Badge variant="outline" :class="timeStatusClass(timeStatus(row))">{{ TRAFFIC_TIME_STATUS_LABELS[timeStatus(row)] }}</Badge></template>
+          <template #cell-publishStatus="{ row }"><Badge variant="outline" :class="publishStatusClass(row.publishStatus)">{{ TRAFFIC_PUBLISH_STATUS_LABELS[row.publishStatus] }}</Badge></template>
           <template #cell-pinned="{ row }"><Pin v-if="row.pinned" class="mx-auto size-4 fill-primary text-primary" aria-label="已置顶" /><span v-else class="text-muted-foreground">—</span></template>
-          <template #cell-updatedAt="{ row }"><time class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.updatedAt">{{ formatDateTime(row.updatedAt) }}</time></template>
+          <template #cell-publishAt="{ row }"><time v-if="row.publishAt" class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.publishAt">{{ formatDateTime(row.publishAt) }}</time><span v-else class="text-muted-foreground">—</span></template>
+          <template #cell-publisher="{ row }"><span class="whitespace-nowrap text-sm">{{ row.publisher }}</span></template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button>
-              <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-11 w-11" :aria-label="`${row.title}更多操作`"><Ellipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuItem class="min-h-10 px-3" @select="togglePinned(row)"><PinOff v-if="row.pinned" /><Pin v-else />{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" class="min-h-10 px-3" @select="deleteTarget = row"><Trash2 />删除</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+              <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-11 w-11" :aria-label="`${row.title}更多操作`"><Ellipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuItem class="min-h-10 px-3" :disabled="row.publishStatus === 'revoked'" @select="togglePinned(row)"><PinOff v-if="row.pinned" /><Pin v-else />{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem><DropdownMenuItem v-if="row.publishStatus === 'draft'" class="min-h-10 px-3" @select="statusTarget = { record: row, action: 'publish' }">发布</DropdownMenuItem><DropdownMenuItem v-else-if="row.publishStatus === 'published'" class="min-h-10 px-3" @select="statusTarget = { record: row, action: 'revoke' }">撤销</DropdownMenuItem><DropdownMenuItem v-else class="min-h-10 px-3" disabled>已撤销不可再发布</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" class="min-h-10 px-3" @select="deleteTarget = row"><Trash2 />删除</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
             </div>
           </template>
         </DataTable>
@@ -282,6 +331,19 @@ useEventListener(window, 'beforeunload', beforeUnload)
 
     <AlertDialog :open="historicalConfirmOpen" @update:open="historicalConfirmOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>保存历史管制时间？</AlertDialogTitle><AlertDialogDescription>该记录的结束时间早于当前时间，保存后将显示为“已结束”。请确认这是在维护历史记录。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">返回检查</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmHistoricalSave">确认保存</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
-    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.title }}”？</AlertDialogTitle><AlertDialogDescription>删除后该管制的基础信息与地图区域将一并移除，且无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog :open="Boolean(statusTarget)" @update:open="!$event && (statusTarget = null)">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认{{ statusTarget?.action === 'publish' ? '发布' : '撤销' }}该管制？</AlertDialogTitle>
+          <AlertDialogDescription>{{ statusTarget?.action === 'publish' ? '发布后即时同步 H5 用户端。' : '撤销后 H5 不再展示，历史日志保留。' }}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <div v-if="statusTarget?.action === 'publish' && statusTarget.record.code === 'GZ-003'" class="rounded-xl border border-warning/35 bg-warning/10 p-4 text-sm leading-6 text-warning">
+          该管制区域与 2 个停车场（P1、P3）、1 个接驳站重叠，请确认是否需要停用相关设施（不会自动停用）。
+        </div>
+        <AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmStatusChange">确认{{ statusTarget?.action === 'publish' ? '发布' : '撤销' }}</Button></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.title }}”？</AlertDialogTitle><AlertDialogDescription>{{ deleteTarget?.publishStatus === 'published' ? '该管制已发布，删除后 H5 将不再展示；历史操作日志仍保留。' : '删除后该管制的基础信息与地图区域将一并移除，且无法恢复。' }}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>
 </template>

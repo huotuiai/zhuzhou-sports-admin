@@ -22,6 +22,7 @@ const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const fields: ShuttleRouteValidationField[] = [
   'code', 'name', 'direction', 'description', 'firstDeparture', 'lastDeparture', 'schedule',
   'departureIntervalMinutes', 'durationMinutes', 'operatingStatus', 'sortOrder', 'enabled',
+  'realtimeStatusText',
 ]
 const touched = reactive(Object.fromEntries(fields.map((field) => [field, false])) as Record<ShuttleRouteValidationField, boolean>)
 const allIssues = computed(() => {
@@ -37,7 +38,7 @@ function patch(value: Partial<ShuttleRouteCreateInput>): void {
   emit('update:value', { ...props.value, ...value })
 }
 
-function text(field: 'code' | 'name' | 'description' | 'firstDeparture' | 'lastDeparture', value: string | number): void {
+function text(field: 'code' | 'name' | 'description' | 'firstDeparture' | 'lastDeparture' | 'realtimeStatusText', value: string | number): void {
   patch({ [field]: String(value) })
 }
 
@@ -151,6 +152,11 @@ watch(() => props.mode, () => { for (const field of fields) touched[field] = fal
           <Label :for="inputId('sortOrder')">排序号</Label>
           <Input :id="inputId('sortOrder')" data-field="sortOrder" type="number" min="0" step="1" :model-value="Number.isFinite(value.sortOrder) ? value.sortOrder : ''" class="h-11 tabular-nums" :disabled="saving" :aria-invalid="Boolean(issueFor('sortOrder'))" @update:model-value="numberValue('sortOrder', $event)" @blur="touched.sortOrder = true" />
           <p v-if="issueFor('sortOrder')" class="field-error"><AlertTriangle />{{ issueFor('sortOrder')?.message }}</p>
+        </div>
+        <div class="space-y-2 sm:col-span-2">
+          <Label :for="inputId('realtimeStatusText')">实时动态文本</Label>
+          <Input :id="inputId('realtimeStatusText')" data-field="realtimeStatusText" :model-value="value.realtimeStatusText" maxlength="100" class="h-11" placeholder="例如：当前 3 辆车运营中" :disabled="saving" @update:model-value="text('realtimeStatusText', $event)" />
+          <p class="text-xs text-muted-foreground">选填，用于 H5 展示当前线路运营说明。</p>
         </div>
       </div>
       <div class="flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-3 py-2.5">

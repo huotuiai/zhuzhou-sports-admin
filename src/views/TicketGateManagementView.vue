@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CrudDialogCloseRequest, CrudDialogMode, DataTableColumn } from '@/components/common'
 import type { TicketGate, TicketGateStatus, TicketGateStatusInput, TicketGateValidationIssue, TicketGateWriteInput } from '@/modules/ticket-gate-management/types'
-import { AlertTriangle, Building2, Ellipsis, MapPin, Navigation, PencilLine, Plus, RotateCcw, ScanLine, Settings2, Trash2, Unlink, X } from '@lucide/vue'
+import { AlertTriangle, Building2, Ellipsis, MapPin, PencilLine, Plus, RotateCcw, ScanLine, Settings2, Trash2, Unlink, X } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -264,7 +264,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <header class="flex items-center justify-between gap-4">
         <div class="flex items-center gap-3">
           <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><ScanLine class="size-5" aria-hidden="true" /></span>
-          <div><h1 id="ticket-gate-title" class="text-2xl font-semibold tracking-tight">检票口管理</h1><p class="mt-1 text-sm text-muted-foreground">维护检票口基础信息、开放状态与邻近交通设施</p></div>
+          <div><h1 id="ticket-gate-title" class="text-2xl font-semibold tracking-tight">检票口管理</h1><p class="mt-1 text-sm text-muted-foreground">检票口基础信息与状态配置</p></div>
         </div>
         <Button size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增检票口</Button>
       </header>
@@ -281,9 +281,9 @@ useEventListener(window, 'beforeunload', beforeUnload)
 
       <DataTable :columns="columns" :rows="store.paginatedRecords" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '当前查询条件下暂无检票口' : '暂无检票口，请新增'" caption="检票口信息列表">
         <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs font-semibold">{{ row.code }}</span></template>
-        <template #cell-name="{ row }"><p class="font-medium">{{ row.name }}</p><p class="mt-1 text-xs tabular-nums text-muted-foreground">排序 {{ row.sortOrder }}</p></template>
+        <template #cell-name="{ row }"><p class="font-medium">{{ row.name }}</p></template>
         <template #cell-floor="{ row }"><Badge variant="outline"><Building2 class="size-3.5" />{{ row.floor }}</Badge></template>
-        <template #cell-locationDescription="{ row }"><div class="flex items-start gap-2"><MapPin class="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div class="min-w-0"><p class="max-w-52 truncate" :title="row.locationDescription">{{ row.locationDescription || '—' }}</p><p v-if="!row.navigationAddress && !row.navigationPoint" class="mt-1 flex items-center gap-1 text-xs text-warning"><Navigation class="size-3.5" />导航待补充</p></div></div></template>
+        <template #cell-locationDescription="{ row }"><div class="flex items-start gap-2"><MapPin class="mt-0.5 size-4 shrink-0 text-muted-foreground" /><p class="max-w-52 truncate" :title="row.locationDescription">{{ row.locationDescription || '—' }}</p></div></template>
         <template #cell-coveredZones="{ row }"><div v-if="store.coveredZones(row.id).length" class="flex max-w-60 flex-wrap gap-1.5"><Badge v-for="zone in store.coveredZones(row.id).slice(0, 3)" :key="zone" variant="secondary">{{ zone }}</Badge><Badge v-if="store.coveredZones(row.id).length > 3" variant="outline" :title="store.coveredZones(row.id).slice(3).join('、')">+{{ store.coveredZones(row.id).length - 3 }}</Badge></div><span v-else class="text-xs text-muted-foreground">未绑定座位分区</span></template>
         <template #cell-status="{ row }"><TicketGateStatusBadge :status="row.status" interactive @click="openStatus(row)" /></template>
         <template #cell-statusRemark="{ row }"><p :class="['max-w-52 truncate text-sm', row.status === 'open' || !row.statusRemark ? 'text-muted-foreground' : row.status === 'restricted' ? 'text-destructive' : 'text-warning']" :title="row.statusRemark">{{ row.status === 'open' || !row.statusRemark ? '—' : row.statusRemark }}</p></template>

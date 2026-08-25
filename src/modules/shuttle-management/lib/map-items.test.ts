@@ -9,7 +9,7 @@ function station(id: string, point: ShuttleStation['point']): ShuttleStation {
 function route(stations: ShuttleStation[]): ShuttleRoute {
   return {
     id: 'route-1', code: 'L1', name: '测试线路', direction: 'inbound', description: '', firstDeparture: '08:00', lastDeparture: '22:00',
-    departureIntervalMinutes: 10, durationMinutes: 40, operatingStatus: 'operating', sortOrder: 1, enabled: true, stations,
+    departureIntervalMinutes: 10, durationMinutes: 40, operatingStatus: 'operating', realtimeStatusText: '', sortOrder: 1, enabled: true, stations,
     coordinateSystem: 'GCJ-02', createdAt: '2026-08-18T00:00:00.000Z', updatedAt: '2026-08-18T00:00:00.000Z',
   }
 }

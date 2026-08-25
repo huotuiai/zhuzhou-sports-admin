@@ -20,7 +20,7 @@ function lot(id: string, overrides: Partial<ParkingLot> = {}): ParkingLot {
     totalSpaces: 100,
     availableSpaces: 100,
     feeType: 'free',
-    hourlyRateYuan: null,
+    feeStandard: '',
     openStatus: 'open',
     enabled: true,
     recommendationWeight: 50,
@@ -86,11 +86,11 @@ function input(overrides: Partial<ParkingLotCreateInput> = {}): ParkingLotCreate
     code: 'NEW-001',
     name: '新停车场',
     locationDescription: '',
-    point: null,
+    point: { lng: 113.1462, lat: 27.8165 },
     navigationAddress: '',
     totalSpaces: 100,
     feeType: 'free',
-    hourlyRateYuan: null,
+    feeStandard: '',
     openStatus: 'open',
     enabled: true,
     recommendationWeight: 50,
@@ -109,7 +109,7 @@ function updateInput(overrides: Partial<ParkingLotUpdateInput> = {}): ParkingLot
     navigationAddress: value.navigationAddress,
     totalSpaces: value.totalSpaces,
     feeType: value.feeType,
-    hourlyRateYuan: value.hourlyRateYuan,
+    feeStandard: value.feeStandard,
     openStatus: value.openStatus,
     enabled: value.enabled,
     recommendationWeight: value.recommendationWeight,
@@ -128,7 +128,7 @@ describe('parking lot store', () => {
 
   it('combines keyword and status filters and keeps map results independent of pagination', async () => {
     service.records = [
-      lot('A-001', { name: '东区停车场', feeType: 'paid', hourlyRateYuan: 5, sortOrder: 1 }),
+      lot('A-001', { name: '东区停车场', feeType: 'paid', feeStandard: '5 元/小时', sortOrder: 1 }),
       lot('B-001', { name: '西区停车场', openStatus: 'closed', enabled: false, sortOrder: 2 }),
       lot('A-002', { name: '东区备用停车场', sortOrder: 3 }),
     ]
@@ -159,7 +159,7 @@ describe('parking lot store', () => {
     expect(store.validateCreate(input({ code: 'a-001' })).issues).toContainEqual(
       expect.objectContaining({ field: 'code', code: 'duplicate' }),
     )
-    expect(store.validateUpdate(updateInput({ name: '一' })).valid).toBe(false)
+    expect(store.validateUpdate(updateInput({ name: ' ' })).valid).toBe(false)
   })
 
   it('creates, updates, updates availability and deletes without a refresh', async () => {

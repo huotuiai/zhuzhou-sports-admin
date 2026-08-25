@@ -2,6 +2,7 @@ import type { ParkingLotCreateInput } from '../types'
 import { describe, expect, it } from 'vitest'
 import {
   LEGACY_PARKING_LOT_STORAGE_KEY,
+  LEGACY_V2_PARKING_LOT_STORAGE_KEY,
   PARKING_LOT_SCHEMA_VERSION,
   PARKING_LOT_STORAGE_KEY,
   LocalParkingLotService,
@@ -23,11 +24,11 @@ function input(overrides: Partial<ParkingLotCreateInput> = {}): ParkingLotCreate
     code: 'P-001',
     name: '中心停车场',
     locationDescription: '体育中心东侧',
-    point: null,
+    point: { lng: 113.1462, lat: 27.8165 },
     navigationAddress: '株洲市天元区',
     totalSpaces: 120,
     feeType: 'free',
-    hourlyRateYuan: null,
+    feeStandard: '',
     openStatus: 'open',
     enabled: true,
     recommendationWeight: 50,
@@ -79,12 +80,12 @@ describe('LocalParkingLotService', () => {
     await service.create(input())
     await expect(service.create(input({ code: 'p-001' }))).rejects.toMatchObject({ code: 'duplicate_code' })
     await expect(service.create(input({ code: 'x', name: '新停车场' }))).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(service.create(input({ code: 'P-002', name: '一' }))).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(service.create(input({ code: 'P-002', name: ' ' }))).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(service.create(input({ code: 'P-002', totalSpaces: 0 }))).rejects.toMatchObject({ code: 'invalid_input' })
+    await expect(service.create(input({ code: 'P-002', point: null }))).rejects.toMatchObject({ code: 'invalid_input' })
     await expect(service.create(input({ code: 'P-002', point: { lng: 181, lat: 27 } }))).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(service.create(input({ code: 'P-002', feeType: 'paid', hourlyRateYuan: null }))).rejects.toMatchObject({ code: 'invalid_input' })
-    await expect(service.create(input({ code: 'P-002', feeType: 'paid', hourlyRateYuan: 5.555 }))).rejects.toMatchObject({ code: 'invalid_input' })
-    expect(validateParkingLotCreateInput(input({ feeType: 'paid', hourlyRateYuan: 5.5 })).valid).toBe(true)
+    await expect(service.create(input({ code: 'P-002', feeType: 'paid', feeStandard: ' ' }))).rejects.toMatchObject({ code: 'invalid_input' })
+    expect(validateParkingLotCreateInput(input({ feeType: 'paid', feeStandard: '首小时 5 元，之后每小时 2 元' })).valid).toBe(true)
   })
 
   it('requires explicit confirmation before clamping availability to a smaller capacity', async () => {
@@ -130,6 +131,38 @@ describe('LocalParkingLotService', () => {
       updatedAt: legacy.records[0]!.updatedAt,
     })
     expect(storage.getItem(LEGACY_PARKING_LOT_STORAGE_KEY)).toBe(JSON.stringify(legacy))
+    expect(storage.getItem(PARKING_LOT_STORAGE_KEY)).not.toBeNull()
+  })
+
+  it('migrates v2 hourly pricing to a textual fee standard', async () => {
+    const storage = new MemoryStorage()
+    const legacyV2 = {
+      schemaVersion: 2,
+      records: [{
+        id: 'v2-1',
+        code: 'P-02',
+        name: '收费停车场',
+        locationDescription: '东门',
+        point: { lng: 113.1462, lat: 27.8165 },
+        navigationAddress: '',
+        totalSpaces: 100,
+        availableSpaces: 80,
+        feeType: 'paid',
+        hourlyRateYuan: 5.5,
+        openStatus: 'open',
+        enabled: true,
+        recommendationWeight: 50,
+        sortOrder: 1,
+        remark: '',
+        coordinateSystem: 'GCJ-02',
+        availabilityUpdatedAt: '2026-01-01T00:00:00.000Z',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    }
+    storage.setItem(LEGACY_V2_PARKING_LOT_STORAGE_KEY, JSON.stringify(legacyV2))
+    const [record] = await new LocalParkingLotService({ storage }).list()
+    expect(record?.feeStandard).toBe('5.5 元/小时')
     expect(storage.getItem(PARKING_LOT_STORAGE_KEY)).not.toBeNull()
   })
 

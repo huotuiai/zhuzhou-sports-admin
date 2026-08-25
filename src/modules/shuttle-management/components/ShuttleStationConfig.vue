@@ -79,16 +79,19 @@ function commitEditor(): boolean {
     editorErrorField.value = 'name'
     return false
   }
-  let point = null
-  if (editor.coordinate.trim()) {
-    try {
-      point = parseGeoPointInput(editor.coordinate)
-    }
-    catch (error) {
-      editorError.value = error instanceof Error ? error.message : '请输入合法的经度,纬度'
-      editorErrorField.value = 'coordinate'
-      return false
-    }
+  if (!editor.coordinate.trim()) {
+    editorError.value = '请输入站点定位经纬度'
+    editorErrorField.value = 'coordinate'
+    return false
+  }
+  let point
+  try {
+    point = parseGeoPointInput(editor.coordinate)
+  }
+  catch (error) {
+    editorError.value = error instanceof Error ? error.message : '请输入合法的经度,纬度'
+    editorErrorField.value = 'coordinate'
+    return false
   }
   const offsetSource = editor.arrivalOffsetMinutes.trim()
   const offset = offsetSource ? Number(offsetSource) : null
@@ -137,7 +140,14 @@ function validateAndCommit(): boolean {
   if (editorMode.value && !editorDirty.value) cancelEditor()
   const result = validateShuttleStations(props.value)
   if (!result.valid) {
-    editorError.value = result.issues[0]!.message
+    const issue = result.issues[0]!
+    const station = issue.stationId ? props.value.find((item) => item.id === issue.stationId) : null
+    if (station) {
+      beginEdit(station)
+      editorError.value = issue.message
+      editorErrorField.value = issue.field === 'point' ? 'coordinate' : issue.field === 'arrivalOffsetMinutes' ? 'arrivalOffsetMinutes' : 'name'
+    }
+    else editorError.value = issue.message
     return false
   }
   return true
@@ -185,12 +195,12 @@ watch(() => props.routeId, cancelEditor)
 
     <section v-if="editorMode" class="rounded-xl border border-primary/25 bg-primary/4 p-4" aria-labelledby="station-editor-heading">
       <div class="mb-4 flex items-center justify-between gap-3">
-        <div><h3 id="station-editor-heading" class="font-semibold">{{ editorMode === 'create' ? '新增站点' : '编辑站点' }}</h3><p class="mt-1 text-xs text-muted-foreground">坐标选填；填写时使用“经度,纬度”格式。</p></div>
+        <div><h3 id="station-editor-heading" class="font-semibold">{{ editorMode === 'create' ? '新增站点' : '编辑站点' }}</h3><p class="mt-1 text-xs text-muted-foreground">定位必填，使用“经度,纬度”格式。</p></div>
         <Button type="button" variant="ghost" size="icon-lg" class="h-11 w-11" aria-label="关闭站点编辑区" @click="cancelEditor"><X aria-hidden="true" /></Button>
       </div>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div class="space-y-2 sm:col-span-2"><Label for="station-name">站点名称 <span class="text-destructive">*</span></Label><Input id="station-name" v-model="editor.name" class="h-11" placeholder="例如：体育中心东门站" :disabled="saving" :aria-invalid="editorErrorField === 'name'" /></div>
-        <div class="space-y-2 sm:col-span-2"><Label for="station-coordinate">定位（经度,纬度）</Label><Input id="station-coordinate" v-model="editor.coordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'coordinate'" /><p class="text-xs text-muted-foreground">坐标系为 GCJ-02；留空时站点仅在列表展示。</p></div>
+        <div class="space-y-2 sm:col-span-2"><Label for="station-coordinate">定位（经度,纬度） <span class="text-destructive">*</span></Label><Input id="station-coordinate" v-model="editor.coordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'coordinate'" /><p class="text-xs text-muted-foreground">坐标系为 GCJ-02，用于地图点位、距离计算和导航。</p></div>
         <div class="space-y-2"><Label for="station-address">导航地址</Label><Input id="station-address" v-model="editor.navigationAddress" class="h-11" placeholder="选填导航位置说明" :disabled="saving" /></div>
         <div class="space-y-2"><Label for="station-offset">到达偏移（分钟）</Label><Input id="station-offset" v-model="editor.arrivalOffsetMinutes" type="number" min="0" step="1" class="h-11 tabular-nums" placeholder="选填" :disabled="saving" :aria-invalid="editorErrorField === 'arrivalOffsetMinutes'" /></div>
       </div>
