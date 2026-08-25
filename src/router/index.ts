@@ -120,9 +120,10 @@ export const router = createRouter({
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   pageProgress.start()
   const authStore = useAuthStore(pinia)
+  await authStore.initialize()
 
   if (to.meta.requiresAuth && !authStore.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
