@@ -115,6 +115,11 @@ export interface GateParkingRelationInput {
   walkingMinutes: number | null
 }
 
+export interface ParkingLotGateBindingInput {
+  gateId: string
+  walkingMinutes: number
+}
+
 export interface GateShuttleRelationInput {
   gateId: string
   shuttlePointId: string
@@ -132,11 +137,15 @@ export interface TicketGateRelationService {
   listSeatZoneBindings(): Promise<SeatZoneGateBinding[]>
   countSeatZoneBindings(gateId: string): Promise<number>
   listRelations(gateId: string): Promise<TicketGateRelationSnapshot>
+  listParkingLotRelations(parkingLotId: string): Promise<GateParkingRelation[]>
+  listShuttleRouteRelations(shuttlePointId: string): Promise<GateShuttleRelation[]>
+  replaceParkingLotRelations(parkingLotId: string, bindings: readonly ParkingLotGateBindingInput[]): Promise<GateParkingRelation[]>
   bindParking(input: GateParkingRelationInput): Promise<GateParkingRelation>
   unbindParking(id: string): Promise<void>
   bindShuttle(input: GateShuttleRelationInput): Promise<GateShuttleRelation>
   unbindShuttle(id: string): Promise<void>
   cleanupGate(gateId: string): Promise<void>
   cleanupParkingLot(parkingLotId: string): Promise<void>
+  cleanupShuttleRoute(shuttlePointId: string): Promise<void>
   reconcile(parkingLotIds: readonly string[], shuttleStationKeys: readonly string[]): Promise<void>
 }

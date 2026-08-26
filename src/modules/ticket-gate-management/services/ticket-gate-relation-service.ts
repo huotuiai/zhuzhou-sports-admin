@@ -4,6 +4,7 @@ import type {
   GateShuttleRelation,
   GateShuttleRelationInput,
   GeoPoint,
+  ParkingLotGateBindingInput,
   SeatZoneGateBinding,
   TicketGateRelationService,
   TicketGateRelationSnapshot,
@@ -182,6 +183,68 @@ export class LocalTicketGateRelationService implements TicketGateRelationService
     return cloneSnapshot(this.read(), gateId)
   }
 
+  async listParkingLotRelations(parkingLotId: string): Promise<GateParkingRelation[]> {
+    return this.read().parkingRelations
+      .filter((item) => item.parkingLotId === parkingLotId)
+      .map(cloneParking)
+  }
+
+  async listShuttleRouteRelations(shuttlePointId: string): Promise<GateShuttleRelation[]> {
+    return this.read().shuttleRelations
+      .filter((item) => item.shuttlePointId === shuttlePointId)
+      .map(cloneShuttle)
+  }
+
+  async replaceParkingLotRelations(
+    parkingLotId: string,
+    bindings: readonly ParkingLotGateBindingInput[],
+  ): Promise<GateParkingRelation[]> {
+    const gateIds = new Set<string>()
+    for (const binding of bindings) {
+      if (!binding.gateId.trim()) throw new TicketGateRelationServiceError('请选择检票口')
+      if (gateIds.has(binding.gateId)) throw new TicketGateRelationServiceError('同一检票口不能重复绑定')
+      if (!Number.isInteger(binding.walkingMinutes) || binding.walkingMinutes <= 0) {
+        throw new TicketGateRelationServiceError('步行时间必须是大于 0 的整数')
+      }
+      gateIds.add(binding.gateId)
+    }
+
+    const envelope = this.read()
+    const previous = envelope.parkingRelations.filter((item) => item.parkingLotId === parkingLotId)
+    const previousByGate = new Map(previous.map((item) => [item.gateId, item]))
+    const timestamp = this.now().toISOString()
+    const next = bindings.map((binding): GateParkingRelation => {
+      const existing = previousByGate.get(binding.gateId)
+      if (existing) {
+        return {
+          ...existing,
+          walkingMinutes: binding.walkingMinutes,
+          updatedAt: existing.walkingMinutes === binding.walkingMinutes ? existing.updatedAt : timestamp,
+        }
+      }
+      const relation: GateParkingRelation = {
+        id: this.createId(),
+        gateId: binding.gateId,
+        parkingLotId,
+        walkingMinutes: binding.walkingMinutes,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }
+      this.audit(envelope, binding.gateId, 'bind-parking', parkingLotId)
+      return relation
+    })
+
+    for (const relation of previous) {
+      if (!gateIds.has(relation.gateId)) this.audit(envelope, relation.gateId, 'unbind-parking', parkingLotId)
+    }
+    envelope.parkingRelations = [
+      ...envelope.parkingRelations.filter((item) => item.parkingLotId !== parkingLotId),
+      ...next,
+    ]
+    this.write(envelope)
+    return next.map(cloneParking)
+  }
+
   async bindParking(input: GateParkingRelationInput): Promise<GateParkingRelation> {
     validateWalkingMinutes(input.walkingMinutes)
     const envelope = this.read()
@@ -243,6 +306,17 @@ export class LocalTicketGateRelationService implements TicketGateRelationService
     envelope.parkingRelations = envelope.parkingRelations.filter((item) => item.parkingLotId !== parkingLotId)
     for (const relation of relations) {
       this.audit(envelope, relation.gateId, 'unbind-parking', parkingLotId)
+    }
+    this.write(envelope)
+  }
+
+  async cleanupShuttleRoute(shuttlePointId: string): Promise<void> {
+    const envelope = this.read()
+    const relations = envelope.shuttleRelations.filter((item) => item.shuttlePointId === shuttlePointId)
+    if (!relations.length) return
+    envelope.shuttleRelations = envelope.shuttleRelations.filter((item) => item.shuttlePointId !== shuttlePointId)
+    for (const relation of relations) {
+      this.audit(envelope, relation.gateId, 'unbind-shuttle', `${shuttlePointId}:${relation.stationId}`)
     }
     this.write(envelope)
   }

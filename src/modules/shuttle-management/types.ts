@@ -9,6 +9,7 @@ export interface ShuttleStation {
   point: GeoPoint | null
   navigationAddress: string
   arrivalOffsetMinutes: number | null
+  arrivalGateIds: string[]
 }
 
 export interface ShuttleRoute {

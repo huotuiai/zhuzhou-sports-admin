@@ -2,6 +2,8 @@ export const LEGACY_MOCK_STORAGE_KEYS = [
   'zz-sports-operation-logs:v1',
   'zz-sports-rbac:v2',
   'zz-sports-user-services:v1',
+  'zz-sports-venue-seats:v1',
+  'zz-sports-seat-planning:v1',
 ] as const
 
 export function clearLegacyMockStorage(storage?: Storage): void {

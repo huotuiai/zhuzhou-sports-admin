@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   LEGACY_PARKING_LOT_STORAGE_KEY,
   LEGACY_V2_PARKING_LOT_STORAGE_KEY,
+  LEGACY_V3_PARKING_LOT_STORAGE_KEY,
   PARKING_LOT_SCHEMA_VERSION,
   PARKING_LOT_STORAGE_KEY,
   LocalParkingLotService,
@@ -27,6 +28,7 @@ function input(overrides: Partial<ParkingLotCreateInput> = {}): ParkingLotCreate
     point: { lng: 113.1462, lat: 27.8165 },
     navigationAddress: '株洲市天元区',
     totalSpaces: 120,
+    availabilityUpdateMethod: 'manual',
     feeType: 'free',
     feeStandard: '',
     openStatus: 'open',
@@ -124,6 +126,7 @@ describe('LocalParkingLotService', () => {
       navigationAddress: '旧地址',
       totalSpaces: 1,
       availableSpaces: 1,
+      availabilityUpdateMethod: 'manual',
       point: null,
       feeType: 'free',
       sortOrder: 1,
@@ -163,6 +166,38 @@ describe('LocalParkingLotService', () => {
     storage.setItem(LEGACY_V2_PARKING_LOT_STORAGE_KEY, JSON.stringify(legacyV2))
     const [record] = await new LocalParkingLotService({ storage }).list()
     expect(record?.feeStandard).toBe('5.5 元/小时')
+    expect(record?.availabilityUpdateMethod).toBe('manual')
+    expect(storage.getItem(PARKING_LOT_STORAGE_KEY)).not.toBeNull()
+  })
+
+  it('migrates v3 parking lots to manual availability updates', async () => {
+    const storage = new MemoryStorage()
+    storage.setItem(LEGACY_V3_PARKING_LOT_STORAGE_KEY, JSON.stringify({
+      schemaVersion: 3,
+      records: [{
+        id: 'v3-1',
+        code: 'P-03',
+        name: '旧版停车场',
+        locationDescription: '北门',
+        point: { lng: 113.1462, lat: 27.8165 },
+        navigationAddress: '',
+        totalSpaces: 100,
+        availableSpaces: 80,
+        feeType: 'free',
+        feeStandard: '',
+        openStatus: 'open',
+        enabled: true,
+        recommendationWeight: 50,
+        sortOrder: 1,
+        remark: '',
+        coordinateSystem: 'GCJ-02',
+        availabilityUpdatedAt: '2026-01-01T00:00:00.000Z',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    }))
+    const [record] = await new LocalParkingLotService({ storage }).list()
+    expect(record?.availabilityUpdateMethod).toBe('manual')
     expect(storage.getItem(PARKING_LOT_STORAGE_KEY)).not.toBeNull()
   })
 

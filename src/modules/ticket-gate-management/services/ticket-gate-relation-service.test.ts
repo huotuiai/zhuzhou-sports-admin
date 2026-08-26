@@ -63,6 +63,44 @@ describe('LocalTicketGateRelationService', () => {
     expect((await service.listRelations('gate-1')).parkingRelations.map((item) => item.parkingLotId)).toEqual(['parking-2'])
   })
 
+  it('lists and cleans only relations for the deleted shuttle route', async () => {
+    const service = new LocalTicketGateRelationService({ storage: new MemoryStorage() })
+    await service.bindShuttle({ gateId: 'gate-1', shuttlePointId: 'line-1', stationId: 'station-1', direction: 'entry', walkingMinutes: 5 })
+    await service.bindShuttle({ gateId: 'gate-2', shuttlePointId: 'line-1', stationId: 'station-2', direction: 'exit', walkingMinutes: 8 })
+    await service.bindShuttle({ gateId: 'gate-1', shuttlePointId: 'line-2', stationId: 'station-3', direction: 'bidirectional', walkingMinutes: null })
+
+    expect(await service.listShuttleRouteRelations('line-1')).toHaveLength(2)
+    await service.cleanupShuttleRoute('line-1')
+    expect(await service.listShuttleRouteRelations('line-1')).toEqual([])
+    expect(await service.listShuttleRouteRelations('line-2')).toHaveLength(1)
+  })
+
+  it('lists and replaces all nearby gates for a parking lot with required walking minutes', async () => {
+    const storage = new MemoryStorage()
+    let id = 0
+    const service = new LocalTicketGateRelationService({ storage, createId: () => `rel-${++id}` })
+    await service.replaceParkingLotRelations('parking-1', [
+      { gateId: 'gate-1', walkingMinutes: 5 },
+      { gateId: 'gate-2', walkingMinutes: 8 },
+    ])
+    expect(await service.listParkingLotRelations('parking-1')).toEqual([
+      expect.objectContaining({ gateId: 'gate-1', walkingMinutes: 5 }),
+      expect.objectContaining({ gateId: 'gate-2', walkingMinutes: 8 }),
+    ])
+
+    const replaced = await service.replaceParkingLotRelations('parking-1', [
+      { gateId: 'gate-1', walkingMinutes: 6 },
+      { gateId: 'gate-3', walkingMinutes: 10 },
+    ])
+    expect(replaced.map((item) => [item.gateId, item.walkingMinutes])).toEqual([
+      ['gate-1', 6],
+      ['gate-3', 10],
+    ])
+    await expect(service.replaceParkingLotRelations('parking-1', [
+      { gateId: 'gate-1', walkingMinutes: 0 },
+    ])).rejects.toThrow('大于 0')
+  })
+
   it('estimates walking time using 80 metres per minute', () => {
     expect(estimateWalkingMinutes(null, { lng: 113, lat: 27 })).toBeNull()
     const minutes = estimateWalkingMinutes({ lng: 113.1462, lat: 27.8165 }, { lng: 113.147, lat: 27.8165 })

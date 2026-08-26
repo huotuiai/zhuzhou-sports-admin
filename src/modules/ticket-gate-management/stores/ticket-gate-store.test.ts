@@ -51,12 +51,16 @@ class StubRelationService implements TicketGateRelationService {
   async listSeatZoneBindings(): Promise<SeatZoneGateBinding[]> { return structuredClone(this.bindings) }
   async countSeatZoneBindings(gateId: string): Promise<number> { return this.bindings.filter((item) => item.gateId === gateId).length }
   async listRelations(): Promise<{ parkingRelations: [], shuttleRelations: [] }> { return { parkingRelations: [], shuttleRelations: [] } }
+  async listParkingLotRelations(): Promise<GateParkingRelation[]> { return [] }
+  async listShuttleRouteRelations(): Promise<GateShuttleRelation[]> { return [] }
+  async replaceParkingLotRelations(): Promise<GateParkingRelation[]> { return [] }
   async bindParking(): Promise<GateParkingRelation> { throw new Error('not used') }
   async unbindParking(): Promise<void> {}
   async bindShuttle(): Promise<GateShuttleRelation> { throw new Error('not used') }
   async unbindShuttle(): Promise<void> {}
   async cleanupGate(gateId: string): Promise<void> { this.cleanedGateId = gateId }
   async cleanupParkingLot(): Promise<void> {}
+  async cleanupShuttleRoute(): Promise<void> {}
   async reconcile(): Promise<void> {}
 }
 

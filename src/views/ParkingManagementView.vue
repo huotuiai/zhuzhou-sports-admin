@@ -6,9 +6,11 @@ import type {
   ParkingLotQuery,
   ParkingLotValidationIssue,
 } from '@/modules/parking-management/types'
+import type { TicketGate } from '@/modules/ticket-gate-management/types'
 import {
   AlertTriangle,
   CircleDollarSign,
+  Clock3,
   List,
   Map as MapIcon,
   PencilLine,
@@ -57,8 +59,15 @@ import {
   parkingLotToFormValue,
 } from '@/modules/parking-management/lib/form-value'
 import { useParkingLotStore } from '@/modules/parking-management/stores/parking-lot-store'
-import { PARKING_FEE_TYPES, PARKING_OPEN_STATUSES, parkingFeeTypeLabel } from '@/modules/parking-management/types'
+import {
+  PARKING_AVAILABILITY_UPDATE_METHODS,
+  PARKING_FEE_TYPES,
+  PARKING_OPEN_STATUSES,
+  parkingAvailabilityUpdateMethodLabel,
+  parkingFeeTypeLabel,
+} from '@/modules/parking-management/types'
 import { ticketGateRelationService } from '@/modules/ticket-gate-management/services/ticket-gate-relation-service'
+import { ticketGateService } from '@/modules/ticket-gate-management/services/ticket-gate-service'
 import { useThemeStore } from '@/stores/theme'
 
 type ViewMode = 'list' | 'map'
@@ -72,6 +81,7 @@ const columns: readonly DataTableColumn<ParkingLot>[] = [
   { key: 'feeType', label: '收费类型', width: '108px', align: 'center' },
   { key: 'openStatus', label: '开放状态', width: '108px', align: 'center' },
   { key: 'enabled', label: '状态', width: '96px', align: 'center' },
+  { key: 'availabilityUpdateMethod', label: '更新方式', minWidth: '150px' },
   { key: 'recommendationWeight', label: '推荐权重', width: '96px', align: 'center' },
   { key: 'actions', label: '操作', width: '330px', align: 'right' },
 ]
@@ -97,6 +107,10 @@ const availabilityInitial = ref('')
 const availabilityError = ref('')
 const availabilityDiscardConfirmOpen = ref(false)
 const loadError = ref('')
+const ticketGates = ref<TicketGate[]>([])
+const ticketGatesLoading = ref(false)
+const ticketGatesError = ref('')
+const loadingRelationsId = ref<string | null>(null)
 
 const formDirty = computed(() => JSON.stringify(formValue.value) !== JSON.stringify(initialFormValue.value))
 const availabilityDirty = computed(() => availabilityOpen.value && availabilityValue.value !== availabilityInitial.value)
@@ -104,7 +118,7 @@ const hasQuery = computed(() => Boolean(
   store.query.keyword ||
   store.query.feeType !== 'all' ||
   store.query.openStatus !== 'all' ||
-  store.query.enabled !== 'all',
+  store.query.availabilityUpdateMethod !== 'all',
 ))
 const emptyText = computed(() => hasQuery.value ? '当前查询条件下暂无停车场' : '尚未新增停车场')
 
@@ -116,6 +130,7 @@ function emptyForm(): ParkingLotFormValue {
     coordinateInput: '',
     navigationAddress: '',
     totalSpaces: Number.NaN,
+    availabilityUpdateMethod: 'manual',
     feeType: 'free',
     feeStandard: '',
     openStatus: 'open',
@@ -123,11 +138,15 @@ function emptyForm(): ParkingLotFormValue {
     recommendationWeight: 50,
     sortOrder: 0,
     remark: '',
+    nearbyGateBindings: [],
   }
 }
 
 function cloneForm(value: ParkingLotFormValue): ParkingLotFormValue {
-  return { ...value }
+  return {
+    ...value,
+    nearbyGateBindings: value.nearbyGateBindings.map((binding) => ({ ...binding })),
+  }
 }
 
 function nextSortOrder(): number {
@@ -145,15 +164,28 @@ function openCreate(): void {
   sheetOpen.value = true
 }
 
-function openEdit(record: ParkingLot): void {
+async function openEdit(record: ParkingLot): Promise<void> {
   store.resetError()
-  sheetMode.value = 'edit'
-  editingId.value = record.id
-  const value = parkingLotToFormValue(record)
-  formValue.value = cloneForm(value)
-  initialFormValue.value = cloneForm(value)
-  formIssues.value = []
-  sheetOpen.value = true
+  loadingRelationsId.value = record.id
+  try {
+    const relations = await ticketGateRelationService.listParkingLotRelations(record.id)
+    sheetMode.value = 'edit'
+    editingId.value = record.id
+    const value = parkingLotToFormValue(record, relations.map((relation) => ({
+      gateId: relation.gateId,
+      walkingMinutes: relation.walkingMinutes,
+    })))
+    formValue.value = cloneForm(value)
+    initialFormValue.value = cloneForm(value)
+    formIssues.value = []
+    sheetOpen.value = true
+  }
+  catch (error) {
+    toast.error(error instanceof Error ? error.message : '附近检票口绑定加载失败')
+  }
+  finally {
+    loadingRelationsId.value = null
+  }
 }
 
 function updateForm(value: ParkingLotFormValue): void {
@@ -198,6 +230,17 @@ async function persistForm(clampAvailableSpaces = false): Promise<void> {
       : null
   if (!saved) {
     toast.error(store.error ?? '停车场保存失败，当前填写内容已保留。')
+    return
+  }
+  try {
+    await ticketGateRelationService.replaceParkingLotRelations(saved.id, formValue.value.nearbyGateBindings.map((binding) => ({
+      gateId: binding.gateId,
+      walkingMinutes: Number(binding.walkingMinutes),
+    })))
+  }
+  catch (error) {
+    closeSheet()
+    toast.warning(`停车场信息已保存，但附近检票口绑定保存失败：${error instanceof Error ? error.message : '请稍后重试'}`)
     return
   }
   closeSheet()
@@ -333,7 +376,37 @@ async function loadParkingLots(): Promise<void> {
   }
 }
 
-onMounted(loadParkingLots)
+async function loadTicketGates(): Promise<void> {
+  ticketGatesLoading.value = true
+  ticketGatesError.value = ''
+  try {
+    ticketGates.value = await ticketGateService.list()
+  }
+  catch (error) {
+    ticketGatesError.value = error instanceof Error ? error.message : '检票口数据加载失败'
+  }
+  finally {
+    ticketGatesLoading.value = false
+  }
+}
+
+async function initializePage(): Promise<void> {
+  await Promise.all([loadParkingLots(), loadTicketGates()])
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
+}
+
+onMounted(initializePage)
 onBeforeRouteLeave(confirmLeave)
 useEventListener(window, 'beforeunload', beforeUnload)
 </script>
@@ -394,13 +467,12 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </Select>
         </div>
         <div class="space-y-2">
-          <Label for="parking-query-enabled">启用状态</Label>
-          <Select v-model="queryDraft.enabled">
-            <SelectTrigger id="parking-query-enabled" class="h-11 w-full bg-background"><SelectValue /></SelectTrigger>
+          <Label for="parking-query-update-method">更新方式</Label>
+          <Select v-model="queryDraft.availabilityUpdateMethod">
+            <SelectTrigger id="parking-query-update-method" class="h-11 w-full bg-background"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">全部启用状态</SelectItem>
-              <SelectItem value="enabled">启用</SelectItem>
-              <SelectItem value="disabled">停用</SelectItem>
+              <SelectItem value="all">全部更新方式</SelectItem>
+              <SelectItem v-for="item in PARKING_AVAILABILITY_UPDATE_METHODS" :key="item.value" :value="item.value">{{ item.label }}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -442,14 +514,20 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </template>
           <template #cell-openStatus="{ row }"><ParkingOpenStatusBadge :status="row.openStatus" /></template>
           <template #cell-enabled="{ row }"><ParkingLotStatusBadge :enabled="row.enabled" /></template>
+          <template #cell-availabilityUpdateMethod="{ row }">
+            <div class="space-y-1">
+              <Badge variant="outline" :class="row.availabilityUpdateMethod === 'integrated' ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border bg-muted/45 text-muted-foreground'">{{ parkingAvailabilityUpdateMethodLabel(row.availabilityUpdateMethod) }}</Badge>
+              <p class="flex items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground"><Clock3 class="size-3" aria-hidden="true" />{{ formatDateTime(row.availabilityUpdatedAt) }}</p>
+            </div>
+          </template>
           <template #cell-recommendationWeight="{ row }"><span class="font-semibold tabular-nums">{{ row.recommendationWeight }}</span></template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button variant="ghost" size="sm" class="h-9 px-2.5" :aria-label="`更新${row.name}余位`" @click="openAvailability(row)">
                 <RefreshCw aria-hidden="true" />更新余位
               </Button>
-              <Button variant="ghost" size="sm" class="h-9 px-2.5" :aria-label="`编辑${row.name}`" @click="openEdit(row)">
-                <PencilLine aria-hidden="true" />编辑
+              <Button variant="ghost" size="sm" class="h-9 px-2.5" :disabled="loadingRelationsId === row.id" :aria-label="`编辑${row.name}`" @click="openEdit(row)">
+                <RefreshCw v-if="loadingRelationsId === row.id" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><PencilLine v-else aria-hidden="true" />{{ loadingRelationsId === row.id ? '加载中' : '编辑' }}
               </Button>
               <Button variant="ghost" size="sm" class="h-9 px-2.5" :disabled="store.isSaving" :aria-label="`${row.enabled ? '停用' : '启用'}${row.name}`" @click="toggleParkingLot(row)">
                 <Power aria-hidden="true" />{{ row.enabled ? '停用' : '启用' }}
@@ -493,6 +571,9 @@ useEventListener(window, 'beforeunload', beforeUnload)
         :value="formValue"
         :issues="formIssues"
         :saving="store.isSaving"
+        :ticket-gates="ticketGates"
+        :ticket-gates-loading="ticketGatesLoading"
+        :ticket-gates-error="ticketGatesError"
         @update:value="updateForm"
       />
     </CrudSheet>
@@ -505,6 +586,15 @@ useEventListener(window, 'beforeunload', beforeUnload)
             <DialogDescription>{{ availabilityTarget?.code }} · {{ availabilityTarget?.name }}</DialogDescription>
           </DialogHeader>
           <div class="space-y-4 px-5 py-5">
+            <div class="rounded-xl border bg-muted/25 p-3 text-sm">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs text-muted-foreground">更新方式</span>
+                <Badge variant="outline">{{ availabilityTarget ? parkingAvailabilityUpdateMethodLabel(availabilityTarget.availabilityUpdateMethod) : '—' }}</Badge>
+              </div>
+              <p class="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"><Clock3 class="size-3.5" aria-hidden="true" />最近更新：{{ availabilityTarget ? formatDateTime(availabilityTarget.availabilityUpdatedAt) : '—' }}</p>
+              <Button type="button" variant="outline" class="mt-3 h-10 w-full" disabled><RefreshCw aria-hidden="true" />手动同步（接口接入后开放）</Button>
+              <p class="mt-2 text-xs leading-5 text-muted-foreground">{{ availabilityTarget?.availabilityUpdateMethod === 'manual' ? '该停车场未接入系统接口，请使用下方手动更新。' : '系统同步接口尚未接入，当前可使用手动更新兜底。' }}</p>
+            </div>
             <div class="grid grid-cols-2 gap-3 rounded-xl border bg-muted/25 p-3 text-sm">
               <div><p class="text-xs text-muted-foreground">总车位</p><p class="mt-1 font-semibold tabular-nums">{{ availabilityTarget?.totalSpaces ?? 0 }}</p></div>
               <div><p class="text-xs text-muted-foreground">当前空余</p><p class="mt-1 font-semibold tabular-nums">{{ availabilityTarget?.availableSpaces ?? 0 }}</p></div>

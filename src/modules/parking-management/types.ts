@@ -2,6 +2,7 @@ import type { GeoPoint } from '@/components/map/types'
 
 export type ParkingFeeType = 'free' | 'paid'
 export type ParkingOpenStatus = 'open' | 'closed'
+export type ParkingAvailabilityUpdateMethod = 'integrated' | 'manual'
 export type ParkingAvailabilityLevel = 'ample' | 'tight' | 'nearly-full'
 
 export interface ParkingLot {
@@ -13,6 +14,7 @@ export interface ParkingLot {
   navigationAddress: string
   totalSpaces: number
   availableSpaces: number
+  availabilityUpdateMethod: ParkingAvailabilityUpdateMethod
   feeType: ParkingFeeType
   feeStandard: string
   openStatus: ParkingOpenStatus
@@ -32,6 +34,7 @@ export interface ParkingLotBaseInput {
   point: GeoPoint | null
   navigationAddress: string
   totalSpaces: number
+  availabilityUpdateMethod: ParkingAvailabilityUpdateMethod
   feeType: ParkingFeeType
   feeStandard: string
   openStatus: ParkingOpenStatus
@@ -47,8 +50,14 @@ export interface ParkingLotCreateInput extends ParkingLotBaseInput {
 
 export type ParkingLotUpdateInput = ParkingLotBaseInput
 
+export interface ParkingLotGateBindingValue {
+  gateId: string
+  walkingMinutes: number | null
+}
+
 export interface ParkingLotFormValue extends Omit<ParkingLotCreateInput, 'point'> {
   coordinateInput: string
+  nearbyGateBindings: ParkingLotGateBindingValue[]
 }
 
 export interface ParkingLotUpdateOptions {
@@ -67,7 +76,7 @@ export interface ParkingLotQuery {
   keyword: string
   feeType: ParkingFeeType | 'all'
   openStatus: ParkingOpenStatus | 'all'
-  enabled: 'all' | 'enabled' | 'disabled'
+  availabilityUpdateMethod: ParkingAvailabilityUpdateMethod | 'all'
 }
 
 export type ParkingLotValidationField = keyof ParkingLotCreateInput
@@ -93,10 +102,19 @@ export const PARKING_OPEN_STATUSES: readonly { value: ParkingOpenStatus, label: 
   { value: 'closed', label: '关闭' },
 ]
 
+export const PARKING_AVAILABILITY_UPDATE_METHODS: readonly { value: ParkingAvailabilityUpdateMethod, label: string }[] = [
+  { value: 'integrated', label: '系统对接' },
+  { value: 'manual', label: '手动' },
+]
+
 export function parkingFeeTypeLabel(value: ParkingFeeType): string {
   return PARKING_FEE_TYPES.find((item) => item.value === value)?.label ?? '未知收费类型'
 }
 
 export function parkingOpenStatusLabel(value: ParkingOpenStatus): string {
   return PARKING_OPEN_STATUSES.find((item) => item.value === value)?.label ?? '未知开放状态'
+}
+
+export function parkingAvailabilityUpdateMethodLabel(value: ParkingAvailabilityUpdateMethod): string {
+  return PARKING_AVAILABILITY_UPDATE_METHODS.find((item) => item.value === value)?.label ?? '未知更新方式'
 }

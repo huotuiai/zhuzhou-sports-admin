@@ -1,12 +1,13 @@
-import type { TicketGate } from '@/modules/ticket-gate-management/types'
-
 export type SeatZoneStatus = 'enabled' | 'disabled'
 export type SeatZoneStatusFilter = 'all' | SeatZoneStatus
+export type SeatGateOpenStatus = 'open' | 'closed' | 'restricted'
 
 export interface SeatFloor {
   id: string
   name: string
   sortOrder: number
+  status: SeatZoneStatus
+  zoneCount: number
   createdAt: string
   updatedAt: string
 }
@@ -21,18 +22,30 @@ export interface SeatZone {
   sortOrder: number
   status: SeatZoneStatus
   remark: string
+  gateIds: string[]
+  gateNames: string[]
+  openGateIds: string[]
+  openGateNames: string[]
   createdAt: string
   updatedAt: string
 }
 
-export interface SeatZoneGateBinding {
+export interface SeatGateOption {
   id: string
-  zoneCode: string
-  gateId: string
+  code: string
+  name: string
+  openStatus: SeatGateOpenStatus
+  enabled: boolean
+  matchOpen: boolean
 }
 
 export interface SeatFloorWriteInput {
   name: string
+}
+
+export interface SeatFloorCreateInput extends SeatFloorWriteInput {
+  sortOrder: number
+  status: SeatZoneStatus
 }
 
 export interface SeatZoneWriteInput {
@@ -47,41 +60,23 @@ export interface SeatZoneWriteInput {
   remark: string
 }
 
-export interface SeatPlanningSnapshot {
-  floors: SeatFloor[]
+export interface SeatZonePage {
   zones: SeatZone[]
-  bindings: SeatZoneGateBinding[]
-  ticketGates: TicketGate[]
-}
-
-export type SeatPlanningAuditAction =
-  | 'create-floor'
-  | 'delete-floor'
-  | 'create-zone'
-  | 'update-zone'
-  | 'status-update'
-  | 'delete-zone'
-  | 'bind-gate'
-  | 'unbind-gate'
-
-export interface SeatPlanningAuditLog {
-  id: string
-  action: SeatPlanningAuditAction
-  entityId: string
-  entityCode: string
-  targetId: string | null
-  createdAt: string
+  total: number
+  page: number
+  pageSize: number
 }
 
 export interface SeatPlanningService {
-  load(): Promise<SeatPlanningSnapshot>
-  listAuditLogs(): Promise<SeatPlanningAuditLog[]>
-  createFloor(input: SeatFloorWriteInput): Promise<SeatFloor>
-  removeFloor(id: string): Promise<void>
-  createZone(input: SeatZoneWriteInput): Promise<SeatPlanningSnapshot>
-  updateZone(id: string, input: SeatZoneWriteInput): Promise<SeatPlanningSnapshot>
-  updateZoneStatus(id: string, status: SeatZoneStatus): Promise<SeatZone>
-  removeZone(id: string): Promise<SeatPlanningSnapshot>
+  listFloors(): Promise<SeatFloor[]>
+  createFloor(input: SeatFloorCreateInput): Promise<SeatFloor>
+  deleteFloor(id: string): Promise<void>
+  listZones(page: number, pageSize: number): Promise<SeatZonePage>
+  getZone(id: string): Promise<SeatZone>
+  createZone(input: SeatZoneWriteInput): Promise<SeatZone>
+  updateZone(id: string, input: SeatZoneWriteInput): Promise<SeatZone>
+  deleteZone(id: string): Promise<void>
+  listGateOptions(): Promise<SeatGateOption[]>
 }
 
 export interface SeatPlanningQuery {

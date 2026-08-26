@@ -22,7 +22,7 @@ const DEFAULT_QUERY: ParkingLotQuery = {
   keyword: '',
   feeType: 'all',
   openStatus: 'all',
-  enabled: 'all',
+  availabilityUpdateMethod: 'all',
 }
 
 function errorMessage(error: unknown): string {
@@ -51,8 +51,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
         if (keyword && ![record.code, record.name].some((value) => includes(value, keyword))) return false
         if (query.feeType !== 'all' && record.feeType !== query.feeType) return false
         if (query.openStatus !== 'all' && record.openStatus !== query.openStatus) return false
-        if (query.enabled === 'enabled' && !record.enabled) return false
-        if (query.enabled === 'disabled' && record.enabled) return false
+        if (query.availabilityUpdateMethod !== 'all' && record.availabilityUpdateMethod !== query.availabilityUpdateMethod) return false
         return true
       }))
     })

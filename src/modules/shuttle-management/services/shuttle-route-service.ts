@@ -13,15 +13,19 @@ import type {
 import { isValidGeoPoint } from '@/components/map/geometry'
 import { createClientId } from '@/lib/id'
 
-export const SHUTTLE_ROUTE_STORAGE_KEY = 'zz-sports-shuttle-routes:v1'
+export const SHUTTLE_ROUTE_STORAGE_KEY = 'zz-sports-shuttle-routes:v2'
+export const LEGACY_SHUTTLE_ROUTE_STORAGE_KEY = 'zz-sports-shuttle-routes:v1'
 export const LEGACY_SHUTTLE_POINT_STORAGE_KEY = 'zz-sports-shuttle-points:v1'
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 2
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/
 
 interface StoredShuttleRoutes {
   schemaVersion: typeof SCHEMA_VERSION
   records: ShuttleRoute[]
 }
+
+type LegacyShuttleStation = Omit<ShuttleStation, 'arrivalGateIds'>
+type LegacyShuttleRoute = Omit<ShuttleRoute, 'stations'> & { stations: LegacyShuttleStation[] }
 
 export interface LocalShuttleRouteServiceOptions {
   storage?: Storage
@@ -57,7 +61,7 @@ function isOperatingStatus(value: unknown): value is ShuttleOperatingStatus {
   return value === 'operating' || value === 'suspended' || value === 'partial'
 }
 
-function isStation(value: unknown): value is ShuttleStation {
+function isLegacyStation(value: unknown): value is LegacyShuttleStation {
   if (!value || typeof value !== 'object') return false
   const station = value as Record<string, unknown>
   return typeof station.id === 'string' && typeof station.name === 'string' &&
@@ -66,7 +70,13 @@ function isStation(value: unknown): value is ShuttleStation {
     (station.arrivalOffsetMinutes === null || (Number.isInteger(station.arrivalOffsetMinutes) && Number(station.arrivalOffsetMinutes) >= 0))
 }
 
-function isRoute(value: unknown): value is ShuttleRoute {
+function isStation(value: unknown): value is ShuttleStation {
+  if (!isLegacyStation(value)) return false
+  const station = value as unknown as Record<string, unknown>
+  return Array.isArray(station.arrivalGateIds) && station.arrivalGateIds.every((id) => typeof id === 'string' && Boolean(id.trim()))
+}
+
+function isRouteRecord(value: unknown, stationGuard: (station: unknown) => boolean): boolean {
   if (!value || typeof value !== 'object') return false
   const route = value as Record<string, unknown>
   return typeof route.id === 'string' && typeof route.code === 'string' && /^[A-Z0-9]{2,10}$/i.test(route.code) &&
@@ -77,12 +87,20 @@ function isRoute(value: unknown): value is ShuttleRoute {
     Number.isInteger(route.durationMinutes) && Number(route.durationMinutes) > 0 && isOperatingStatus(route.operatingStatus) &&
     (route.realtimeStatusText === undefined || typeof route.realtimeStatusText === 'string') &&
     Number.isInteger(route.sortOrder) && Number(route.sortOrder) >= 0 && typeof route.enabled === 'boolean' &&
-    Array.isArray(route.stations) && route.stations.length <= 20 && route.stations.every(isStation) &&
+    Array.isArray(route.stations) && route.stations.length <= 20 && route.stations.every(stationGuard) &&
     route.coordinateSystem === 'GCJ-02' && typeof route.createdAt === 'string' && typeof route.updatedAt === 'string'
 }
 
+function isRoute(value: unknown): value is ShuttleRoute {
+  return isRouteRecord(value, isStation)
+}
+
+function isLegacyRoute(value: unknown): value is LegacyShuttleRoute {
+  return isRouteRecord(value, isLegacyStation)
+}
+
 function cloneStation(station: ShuttleStation): ShuttleStation {
-  return { ...station, point: station.point ? { ...station.point } : null }
+  return { ...station, point: station.point ? { ...station.point } : null, arrivalGateIds: [...station.arrivalGateIds] }
 }
 
 function cloneRoute(route: ShuttleRoute): ShuttleRoute {
@@ -122,6 +140,19 @@ export function sanitizeShuttleStations(stations: readonly ShuttleStation[]): Sh
     point: station.point ? { lng: Number(station.point.lng), lat: Number(station.point.lat) } : null,
     navigationAddress: normalizeText(station.navigationAddress),
     arrivalOffsetMinutes: station.arrivalOffsetMinutes === null ? null : Number(station.arrivalOffsetMinutes),
+    arrivalGateIds: [...new Set(station.arrivalGateIds.map((id) => id.trim()).filter(Boolean))],
+  }))
+}
+
+function migrateLegacy(records: readonly LegacyShuttleRoute[]): ShuttleRoute[] {
+  return records.map((route) => ({
+    ...route,
+    realtimeStatusText: route.realtimeStatusText ?? '',
+    stations: route.stations.map((station) => ({
+      ...station,
+      point: station.point ? { ...station.point } : null,
+      arrivalGateIds: [],
+    })),
   }))
 }
 
@@ -199,16 +230,32 @@ export class LocalShuttleRouteService implements ShuttleRouteService {
 
   private read(): ShuttleRoute[] {
     const raw = this.storage.getItem(SHUTTLE_ROUTE_STORAGE_KEY)
-    if (!raw) return []
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredShuttleRoutes>
-      if (parsed.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.records) || !parsed.records.every(isRoute)) {
-        throw new Error('Invalid shuttle route data')
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<StoredShuttleRoutes>
+        if (parsed.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.records) || !parsed.records.every(isRoute)) {
+          throw new Error('Invalid shuttle route data')
+        }
+        return parsed.records.map(cloneRoute)
       }
-      return parsed.records.map(cloneRoute)
+      catch (error) {
+        throw new ShuttleRouteServiceError('本地接驳线路数据无法解析', { cause: error })
+      }
+    }
+
+    const legacyRaw = this.storage.getItem(LEGACY_SHUTTLE_ROUTE_STORAGE_KEY)
+    if (!legacyRaw) return []
+    try {
+      const parsed = JSON.parse(legacyRaw) as { schemaVersion?: unknown, records?: unknown }
+      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.records) || !parsed.records.every(isLegacyRoute)) {
+        throw new Error('Invalid legacy shuttle route data')
+      }
+      const migrated = migrateLegacy(parsed.records)
+      this.write(migrated)
+      return migrated.map(cloneRoute)
     }
     catch (error) {
-      throw new ShuttleRouteServiceError('本地接驳线路数据无法解析', { cause: error })
+      throw new ShuttleRouteServiceError('旧版接驳线路数据无法迁移', { cause: error })
     }
   }
 

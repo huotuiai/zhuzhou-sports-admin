@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { createShuttleMapItems, shuttleRouteColor } from './map-items'
 
 function station(id: string, point: ShuttleStation['point']): ShuttleStation {
-  return { id, name: `站点 ${id}`, point, navigationAddress: '', arrivalOffsetMinutes: null }
+  return { id, name: `站点 ${id}`, point, navigationAddress: '', arrivalOffsetMinutes: null, arrivalGateIds: [] }
 }
 
 function route(stations: ShuttleStation[]): ShuttleRoute {

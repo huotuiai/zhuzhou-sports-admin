@@ -1,6 +1,7 @@
 import type { ShuttleRouteCreateInput, ShuttleRouteUpdateInput, ShuttleStation } from '../types'
 import { describe, expect, it } from 'vitest'
 import {
+  LEGACY_SHUTTLE_ROUTE_STORAGE_KEY,
   LEGACY_SHUTTLE_POINT_STORAGE_KEY,
   LocalShuttleRouteService,
   SHUTTLE_ROUTE_STORAGE_KEY,
@@ -62,6 +63,7 @@ function station(id: string, overrides: Partial<ShuttleStation> = {}): ShuttleSt
     point: { lng: 113.1462, lat: 27.8165 },
     navigationAddress: '',
     arrivalOffsetMinutes: null,
+    arrivalGateIds: [],
     ...overrides,
   }
 }
@@ -83,9 +85,12 @@ describe('LocalShuttleRouteService', () => {
     const updated = await service.update(created.id, { ...updateInput({ name: '更新线路' }), code: 'CHANGED' } as ShuttleRouteUpdateInput)
     expect(updated).toMatchObject({ code: 'L1', name: '更新线路' })
 
-    const savedStations = await service.replaceStations(created.id, [station('S1', { point: { lng: 113.1462, lat: 27.8165 } })])
+    const savedStations = await service.replaceStations(created.id, [station('S1', { point: { lng: 113.1462, lat: 27.8165 }, arrivalGateIds: [' gate-1 ', 'gate-1', 'gate-2'] })])
+    expect(savedStations.stations[0]?.arrivalGateIds).toEqual(['gate-1', 'gate-2'])
     savedStations.stations[0]!.name = '外部修改'
+    savedStations.stations[0]!.arrivalGateIds.push('gate-3')
     expect((await service.list())[0]?.stations[0]?.name).toBe('站点 S1')
+    expect((await service.list())[0]?.stations[0]?.arrivalGateIds).toEqual(['gate-1', 'gate-2'])
 
     await service.remove(created.id)
     expect(await service.list()).toEqual([])
@@ -112,5 +117,30 @@ describe('LocalShuttleRouteService', () => {
 
     storage.setItem(SHUTTLE_ROUTE_STORAGE_KEY, '{invalid')
     await expect(service.list()).rejects.toThrow('本地接驳线路数据无法解析')
+  })
+
+  it('migrates v1 stations with an empty arrival-gate selection', async () => {
+    const storage = new MemoryStorage()
+    storage.setItem(LEGACY_SHUTTLE_ROUTE_STORAGE_KEY, JSON.stringify({
+      schemaVersion: 1,
+      records: [{
+        id: 'route-1',
+        ...createInput(),
+        stations: [{
+          id: 'station-1',
+          name: '体育中心站',
+          point: { lng: 113.1462, lat: 27.8165 },
+          navigationAddress: '',
+          arrivalOffsetMinutes: 12,
+        }],
+        coordinateSystem: 'GCJ-02',
+        createdAt: '2026-08-18T00:00:00.000Z',
+        updatedAt: '2026-08-18T00:00:00.000Z',
+      }],
+    }))
+    const service = new LocalShuttleRouteService({ storage })
+
+    expect((await service.list())[0]?.stations[0]?.arrivalGateIds).toEqual([])
+    expect(JSON.parse(storage.getItem(SHUTTLE_ROUTE_STORAGE_KEY)!).schemaVersion).toBe(2)
   })
 })

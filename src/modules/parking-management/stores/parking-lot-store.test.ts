@@ -19,6 +19,7 @@ function lot(id: string, overrides: Partial<ParkingLot> = {}): ParkingLot {
     navigationAddress: '',
     totalSpaces: 100,
     availableSpaces: 100,
+    availabilityUpdateMethod: 'manual',
     feeType: 'free',
     feeStandard: '',
     openStatus: 'open',
@@ -89,6 +90,7 @@ function input(overrides: Partial<ParkingLotCreateInput> = {}): ParkingLotCreate
     point: { lng: 113.1462, lat: 27.8165 },
     navigationAddress: '',
     totalSpaces: 100,
+    availabilityUpdateMethod: 'manual',
     feeType: 'free',
     feeStandard: '',
     openStatus: 'open',
@@ -108,6 +110,7 @@ function updateInput(overrides: Partial<ParkingLotUpdateInput> = {}): ParkingLot
     point: value.point,
     navigationAddress: value.navigationAddress,
     totalSpaces: value.totalSpaces,
+    availabilityUpdateMethod: value.availabilityUpdateMethod,
     feeType: value.feeType,
     feeStandard: value.feeStandard,
     openStatus: value.openStatus,
@@ -128,13 +131,13 @@ describe('parking lot store', () => {
 
   it('combines keyword and status filters and keeps map results independent of pagination', async () => {
     service.records = [
-      lot('A-001', { name: '东区停车场', feeType: 'paid', feeStandard: '5 元/小时', sortOrder: 1 }),
+      lot('A-001', { name: '东区停车场', feeType: 'paid', feeStandard: '5 元/小时', availabilityUpdateMethod: 'integrated', sortOrder: 1 }),
       lot('B-001', { name: '西区停车场', openStatus: 'closed', enabled: false, sortOrder: 2 }),
       lot('A-002', { name: '东区备用停车场', sortOrder: 3 }),
     ]
     const store = createParkingLotStore(service, 'parking-filter')()
     await store.load()
-    store.setQuery({ keyword: '东区', feeType: 'paid', openStatus: 'open', enabled: 'enabled' })
+    store.setQuery({ keyword: '东区', feeType: 'paid', openStatus: 'open', availabilityUpdateMethod: 'integrated' })
     expect(store.filteredRecords.map((record) => record.id)).toEqual(['A-001'])
     store.resetQuery()
     expect(store.filteredRecords).toHaveLength(3)

@@ -12,14 +12,16 @@ class MemoryStorage implements Storage {
 }
 
 describe('legacy mock storage cleanup', () => {
-  it('removes only the obsolete operation-log, RBAC, and user-service mock entries', () => {
+  it('removes obsolete module mocks without touching auth or the shared gate binding cache', () => {
     const storage = new MemoryStorage()
     for (const key of LEGACY_MOCK_STORAGE_KEYS) storage.setItem(key, 'mock')
     storage.setItem('zz-sports-auth-session:v1', 'session')
+    storage.setItem('zz-sports-seat-zone-gate-bindings:v1', 'shared-gate-bindings')
 
     clearLegacyMockStorage(storage)
 
     for (const key of LEGACY_MOCK_STORAGE_KEYS) expect(storage.getItem(key)).toBeNull()
     expect(storage.getItem('zz-sports-auth-session:v1')).toBe('session')
+    expect(storage.getItem('zz-sports-seat-zone-gate-bindings:v1')).toBe('shared-gate-bindings')
   })
 })

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import type { CrudDialogMode } from '@/components/common'
+import type { TicketGate } from '@/modules/ticket-gate-management/types'
 import type {
+  ParkingAvailabilityUpdateMethod,
   ParkingFeeType,
   ParkingLotFormValue,
   ParkingLotValidationField,
   ParkingLotValidationIssue,
   ParkingOpenStatus,
 } from '../types'
-import { AlertTriangle, MapPin, ParkingSquare } from '@lucide/vue'
+import { AlertTriangle, Clock3, Link2, MapPin, ParkingSquare, Plus, Unlink } from '@lucide/vue'
 import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import {
   AlertDialog,
@@ -21,27 +23,39 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { parkingLotFormToCreateInput, parkingLotFormToUpdateInput } from '../lib/form-value'
 import { validateParkingLotBaseInput, validateParkingLotCreateInput } from '../services/parking-lot-service'
-import { PARKING_FEE_TYPES, PARKING_OPEN_STATUSES } from '../types'
+import { PARKING_AVAILABILITY_UPDATE_METHODS, PARKING_FEE_TYPES, PARKING_OPEN_STATUSES } from '../types'
 
 const props = withDefaults(defineProps<{
   mode: CrudDialogMode
   value: ParkingLotFormValue
   issues?: readonly ParkingLotValidationIssue[]
   saving?: boolean
+  ticketGates?: readonly TicketGate[]
+  ticketGatesLoading?: boolean
+  ticketGatesError?: string
 }>(), {
   issues: () => [],
   saving: false,
+  ticketGates: () => [],
+  ticketGatesLoading: false,
+  ticketGatesError: '',
 })
 
 const emit = defineEmits<{ 'update:value': [value: ParkingLotFormValue] }>()
 const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const container = ref<HTMLElement | null>(null)
+const bindingSection = ref<HTMLElement | null>(null)
 const feeClearConfirmOpen = ref(false)
+const gateDraftId = ref('')
+const walkingMinutesDraft = ref('')
+const bindingDraftError = ref('')
 const fields: ParkingLotValidationField[] = [
   'code',
   'name',
@@ -49,6 +63,7 @@ const fields: ParkingLotValidationField[] = [
   'point',
   'navigationAddress',
   'totalSpaces',
+  'availabilityUpdateMethod',
   'feeType',
   'feeStandard',
   'openStatus',
@@ -82,6 +97,20 @@ const allIssues = computed(() => {
   return [...merged.values()]
 })
 
+const gateById = computed(() => new Map(props.ticketGates.map((gate) => [gate.id, gate])))
+const boundGateIds = computed(() => new Set(props.value.nearbyGateBindings.map((binding) => binding.gateId)))
+const selectableGates = computed(() => props.ticketGates.filter((gate) => !boundGateIds.value.has(gate.id)))
+const bindingValidationError = computed(() => {
+  if (props.value.nearbyGateBindings.some((binding) => !Number.isInteger(binding.walkingMinutes) || Number(binding.walkingMinutes) <= 0)) {
+    return '已绑定检票口的步行时间必须是大于 0 的整数'
+  }
+  if (!gateDraftId.value && !walkingMinutesDraft.value.trim()) return ''
+  if (!gateDraftId.value) return '请选择检票口'
+  const minutes = Number(walkingMinutesDraft.value)
+  if (!Number.isInteger(minutes) || minutes <= 0) return '步行时间必须是大于 0 的整数'
+  return ''
+})
+
 function inputId(field: ParkingLotValidationField): string {
   return `parking-lot-${instanceId}-${String(field)}`
 }
@@ -109,6 +138,30 @@ function numeric(
   patch({ [field]: source ? Number(source) : Number.NaN })
 }
 
+function gateLabel(gateId: string): string {
+  const gate = gateById.value.get(gateId)
+  return gate ? `${gate.code} · ${gate.name}` : `检票口 ${gateId}`
+}
+
+function addGateBinding(): void {
+  bindingDraftError.value = bindingValidationError.value || (!gateDraftId.value ? '请选择检票口' : '')
+  if (bindingDraftError.value) return
+  const walkingMinutes = Number(walkingMinutesDraft.value)
+  patch({
+    nearbyGateBindings: [
+      ...props.value.nearbyGateBindings,
+      { gateId: gateDraftId.value, walkingMinutes },
+    ],
+  })
+  gateDraftId.value = ''
+  walkingMinutesDraft.value = ''
+}
+
+function removeGateBinding(gateId: string): void {
+  patch({ nearbyGateBindings: props.value.nearbyGateBindings.filter((binding) => binding.gateId !== gateId) })
+  bindingDraftError.value = ''
+}
+
 function handleFeeType(value: unknown): void {
   const next = value as ParkingFeeType
   if (next === 'free' && props.value.feeStandard.trim()) {
@@ -133,6 +186,11 @@ function validateAndFocus(): boolean {
     nextTick(() => container.value?.querySelector<HTMLElement>(`[data-field="${issue.field}"]`)?.focus())
     return false
   }
+  bindingDraftError.value = bindingValidationError.value
+  if (bindingDraftError.value) {
+    nextTick(() => bindingSection.value?.querySelector<HTMLElement>('button, input')?.focus())
+    return false
+  }
   return !props.saving
 }
 
@@ -140,6 +198,9 @@ defineExpose({ validateAndFocus })
 watch(() => props.mode, () => {
   for (const field of fields) touched[field] = false
   feeClearConfirmOpen.value = false
+  gateDraftId.value = ''
+  walkingMinutesDraft.value = ''
+  bindingDraftError.value = ''
 }, { flush: 'sync' })
 </script>
 
@@ -259,6 +320,15 @@ watch(() => props.mode, () => {
     </div>
 
     <div class="space-y-2">
+      <Label :for="inputId('availabilityUpdateMethod')">车位更新方式 <span class="text-destructive" aria-hidden="true">*</span></Label>
+      <Select :model-value="value.availabilityUpdateMethod" :disabled="saving" @update:model-value="patch({ availabilityUpdateMethod: $event as ParkingAvailabilityUpdateMethod }); touched.availabilityUpdateMethod = true">
+        <SelectTrigger :id="inputId('availabilityUpdateMethod')" data-field="availabilityUpdateMethod" class="h-11 w-full"><SelectValue /></SelectTrigger>
+        <SelectContent><SelectItem v-for="item in PARKING_AVAILABILITY_UPDATE_METHODS" :key="item.value" :value="item.value">{{ item.label }}</SelectItem></SelectContent>
+      </Select>
+      <p class="text-xs leading-5 text-muted-foreground">系统对接的同步能力将在接口接入后启用，当前仍可手动维护余位。</p>
+    </div>
+
+    <div class="col-span-2 space-y-2">
       <Label :for="inputId('feeType')">收费类型 <span class="text-destructive" aria-hidden="true">*</span></Label>
       <Select :model-value="value.feeType" :disabled="saving" @update:model-value="handleFeeType">
         <SelectTrigger :id="inputId('feeType')" data-field="feeType" class="h-11 w-full"><SelectValue /></SelectTrigger>
@@ -329,6 +399,46 @@ watch(() => props.mode, () => {
       />
       <p v-if="issueFor('sortOrder')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('sortOrder')?.message }}</p>
       <p v-else class="text-xs text-muted-foreground">数值越小在列表中越靠前。</p>
+    </div>
+
+    <div ref="bindingSection" class="col-span-2 rounded-xl border border-dashed bg-muted/15 p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <p class="flex items-center gap-2 text-sm font-semibold"><Link2 class="size-4 text-primary" aria-hidden="true" />附近检票口绑定 <span class="font-normal text-muted-foreground">（可选）</span></p>
+          <p class="mt-1 text-xs leading-5 text-muted-foreground">可绑定多个附近检票口；添加后步行时间必填。</p>
+        </div>
+        <Badge variant="secondary">{{ value.nearbyGateBindings.length }} 个</Badge>
+      </div>
+
+      <div v-if="value.nearbyGateBindings.length" class="mt-4 space-y-2">
+        <div v-for="binding in value.nearbyGateBindings" :key="binding.gateId" class="flex min-h-12 items-center gap-3 rounded-lg border bg-card/75 px-3 py-2">
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-medium">{{ gateLabel(binding.gateId) }}</p>
+            <p class="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><Clock3 class="size-3.5" aria-hidden="true" />{{ binding.walkingMinutes ? `步行约 ${binding.walkingMinutes} 分钟` : '步行时间待补充' }}</p>
+          </div>
+          <Button type="button" variant="ghost" size="sm" class="h-9 text-destructive hover:text-destructive" :disabled="saving" @click="removeGateBinding(binding.gateId)"><Unlink aria-hidden="true" />移除</Button>
+        </div>
+      </div>
+      <div v-else class="mt-4 rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂未绑定附近检票口</div>
+
+      <div class="mt-4 grid grid-cols-[minmax(0,1fr)_140px_auto] items-end gap-3">
+        <div class="space-y-2">
+          <Label for="parking-nearby-gate">选择检票口</Label>
+          <Select v-model="gateDraftId" :disabled="saving || ticketGatesLoading" @update:model-value="bindingDraftError = ''">
+            <SelectTrigger id="parking-nearby-gate" class="h-11 w-full"><SelectValue :placeholder="ticketGatesLoading ? '正在加载检票口' : '请选择检票口'" /></SelectTrigger>
+            <SelectContent><SelectItem v-for="gate in selectableGates" :key="gate.id" :value="gate.id">{{ gate.code }} · {{ gate.name }}</SelectItem></SelectContent>
+          </Select>
+        </div>
+        <div class="space-y-2">
+          <Label for="parking-nearby-walking-minutes">步行分钟</Label>
+          <Input id="parking-nearby-walking-minutes" v-model="walkingMinutesDraft" type="number" min="1" step="1" class="h-11" placeholder="必填" :disabled="saving" @input="bindingDraftError = ''" />
+        </div>
+        <Button type="button" class="h-11" :disabled="saving || ticketGatesLoading || !selectableGates.length" @click="addGateBinding"><Plus aria-hidden="true" />添加</Button>
+      </div>
+      <p v-if="bindingDraftError || bindingValidationError" class="field-error mt-2" role="alert"><AlertTriangle />{{ bindingDraftError || bindingValidationError }}</p>
+      <p v-else-if="ticketGatesError" class="mt-2 text-xs text-warning">{{ ticketGatesError }}</p>
+      <p v-else-if="!ticketGatesLoading && !selectableGates.length && ticketGates.length" class="mt-2 text-xs text-muted-foreground">所有检票口均已绑定。</p>
+      <p v-else-if="!ticketGatesLoading && !ticketGates.length" class="mt-2 text-xs text-muted-foreground">暂无可选检票口，请先在检票口管理中新增。</p>
     </div>
 
     <div class="col-span-2 space-y-2">

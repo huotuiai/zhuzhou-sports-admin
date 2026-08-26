@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import type { ShuttleStation } from '../types'
+import type { TicketGate } from '@/modules/ticket-gate-management/types'
 import { computed, reactive, ref, watch } from 'vue'
-import { AlertTriangle, ArrowDown, ArrowUp, Check, MapPin, PencilLine, Plus, Trash2, X } from '@lucide/vue'
+import { AlertTriangle, ArrowDown, ArrowUp, Check, LoaderCircle, MapPin, PencilLine, Plus, Trash2, X } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClientId } from '@/lib/id'
@@ -13,8 +15,11 @@ import { validateShuttleStations } from '../services/shuttle-route-service'
 const props = withDefaults(defineProps<{
   value: readonly ShuttleStation[]
   routeId: string
+  ticketGates?: readonly TicketGate[]
+  ticketGatesLoading?: boolean
+  ticketGatesError?: string
   saving?: boolean
-}>(), { saving: false })
+}>(), { ticketGates: () => [], ticketGatesLoading: false, ticketGatesError: '', saving: false })
 
 const emit = defineEmits<{
   'update:value': [value: ShuttleStation[]]
@@ -27,9 +32,10 @@ interface StationEditor {
   coordinate: string
   navigationAddress: string
   arrivalOffsetMinutes: string
+  arrivalGateIds: string[]
 }
 
-const emptyEditor = (): StationEditor => ({ name: '', coordinate: '', navigationAddress: '', arrivalOffsetMinutes: '' })
+const emptyEditor = (): StationEditor => ({ name: '', coordinate: '', navigationAddress: '', arrivalOffsetMinutes: '', arrivalGateIds: [] })
 const editorMode = ref<EditorMode | null>(null)
 const editingId = ref<string | null>(null)
 const editor = reactive<StationEditor>(emptyEditor())
@@ -38,10 +44,25 @@ const editorError = ref('')
 const editorErrorField = ref<keyof StationEditor | ''>('')
 const editorDirty = computed(() => editorMode.value !== null && JSON.stringify(editor) !== JSON.stringify(editorInitial.value))
 const missingCoordinateCount = computed(() => props.value.filter((station) => !station.point).length)
+const ticketGateById = computed(() => new Map(props.ticketGates.map((gate) => [gate.id, gate])))
+const unavailableArrivalGateIds = computed(() => editor.arrivalGateIds.filter((id) => !ticketGateById.value.has(id)))
+
+function cloneEditor(value: StationEditor): StationEditor {
+  return { ...value, arrivalGateIds: [...value.arrivalGateIds] }
+}
+
+function cloneStation(station: ShuttleStation): ShuttleStation {
+  return { ...station, point: station.point ? { ...station.point } : null, arrivalGateIds: [...station.arrivalGateIds] }
+}
+
+function gateLabel(id: string): string {
+  const gate = ticketGateById.value.get(id)
+  return gate ? `${gate.code} ${gate.name}` : `检票口 ${id}`
+}
 
 function setEditor(value: StationEditor): void {
-  Object.assign(editor, value)
-  editorInitial.value = { ...value }
+  Object.assign(editor, cloneEditor(value))
+  editorInitial.value = cloneEditor(value)
   editorError.value = ''
   editorErrorField.value = ''
 }
@@ -61,7 +82,15 @@ function beginEdit(station: ShuttleStation): void {
     coordinate: station.point ? serializeGeoPoint(station.point) : '',
     navigationAddress: station.navigationAddress,
     arrivalOffsetMinutes: station.arrivalOffsetMinutes === null ? '' : String(station.arrivalOffsetMinutes),
+    arrivalGateIds: [...station.arrivalGateIds],
   })
+}
+
+function toggleArrivalGate(gateId: string, checked: boolean | 'indeterminate'): void {
+  const next = new Set(editor.arrivalGateIds)
+  if (checked === true) next.add(gateId)
+  else next.delete(gateId)
+  editor.arrivalGateIds = [...next]
 }
 
 function cancelEditor(): void {
@@ -106,10 +135,11 @@ function commitEditor(): boolean {
     point,
     navigationAddress: editor.navigationAddress.trim(),
     arrivalOffsetMinutes: offset,
+    arrivalGateIds: [...editor.arrivalGateIds],
   }
   const next = editorMode.value === 'edit'
-    ? props.value.map((item) => item.id === editingId.value ? station : { ...item, point: item.point ? { ...item.point } : null })
-    : [...props.value.map((item) => ({ ...item, point: item.point ? { ...item.point } : null })), station]
+    ? props.value.map((item) => item.id === editingId.value ? station : cloneStation(item))
+    : [...props.value.map(cloneStation), station]
   const validation = validateShuttleStations(next)
   if (!validation.valid) {
     editorError.value = validation.issues[0]!.message
@@ -123,7 +153,7 @@ function commitEditor(): boolean {
 function move(index: number, offset: -1 | 1): void {
   const target = index + offset
   if (target < 0 || target >= props.value.length) return
-  const next = props.value.map((station) => ({ ...station, point: station.point ? { ...station.point } : null }))
+  const next = props.value.map(cloneStation)
   const current = next[index]!
   next[index] = next[target]!
   next[target] = current
@@ -131,7 +161,7 @@ function move(index: number, offset: -1 | 1): void {
 }
 
 function remove(station: ShuttleStation): void {
-  emit('update:value', props.value.filter((item) => item.id !== station.id).map((item) => ({ ...item, point: item.point ? { ...item.point } : null })))
+  emit('update:value', props.value.filter((item) => item.id !== station.id).map(cloneStation))
   if (editingId.value === station.id) cancelEditor()
 }
 
@@ -177,6 +207,7 @@ watch(() => props.routeId, cancelEditor)
             <div class="flex flex-wrap items-center gap-2"><p class="font-medium">{{ station.name }}</p><Badge v-if="station.point" variant="outline" class="text-success">已定位</Badge><Badge v-else variant="secondary">缺少坐标</Badge></div>
             <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ station.point ? serializeGeoPoint(station.point) : '未配置坐标' }}<span v-if="station.navigationAddress" class="font-sans"> · {{ station.navigationAddress }}</span></p>
             <p v-if="station.arrivalOffsetMinutes !== null" class="mt-1 text-xs text-muted-foreground">从首发站约 {{ station.arrivalOffsetMinutes }} 分钟到达</p>
+            <p class="mt-1 truncate text-xs text-muted-foreground" :title="station.arrivalGateIds.map(gateLabel).join('、')">到达检票口：{{ station.arrivalGateIds.length ? station.arrivalGateIds.map(gateLabel).join('、') : '未绑定' }}</p>
           </div>
           <div class="flex shrink-0 items-center justify-end gap-1">
             <Button type="button" variant="ghost" size="icon-lg" class="h-11 w-11" :disabled="saving || index === 0" :aria-label="`上移${station.name}`" @click="move(index, -1)"><ArrowUp aria-hidden="true" /></Button>
@@ -203,6 +234,20 @@ watch(() => props.routeId, cancelEditor)
         <div class="space-y-2 sm:col-span-2"><Label for="station-coordinate">定位（经度,纬度） <span class="text-destructive">*</span></Label><Input id="station-coordinate" v-model="editor.coordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'coordinate'" /><p class="text-xs text-muted-foreground">坐标系为 GCJ-02，用于地图点位、距离计算和导航。</p></div>
         <div class="space-y-2"><Label for="station-address">导航地址</Label><Input id="station-address" v-model="editor.navigationAddress" class="h-11" placeholder="选填导航位置说明" :disabled="saving" /></div>
         <div class="space-y-2"><Label for="station-offset">到达偏移（分钟）</Label><Input id="station-offset" v-model="editor.arrivalOffsetMinutes" type="number" min="0" step="1" class="h-11 tabular-nums" placeholder="选填" :disabled="saving" :aria-invalid="editorErrorField === 'arrivalOffsetMinutes'" /></div>
+        <div class="space-y-2 sm:col-span-2">
+          <Label>到达检票口</Label>
+          <p class="text-xs text-muted-foreground">可多选，作为 H5 从接驳站前往检票口的路线依据。</p>
+          <div v-if="ticketGatesLoading" class="flex items-center gap-2 rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground"><LoaderCircle class="size-4 animate-spin" aria-hidden="true" />检票口加载中</div>
+          <div v-else-if="ticketGatesError" class="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive" role="alert">{{ ticketGatesError }}</div>
+          <div v-else-if="!ticketGates.length" class="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">暂无可选检票口，可先保存站点。</div>
+          <div v-else class="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-lg border bg-background/70 p-3 sm:grid-cols-2">
+            <label v-for="gate in ticketGates" :key="gate.id" class="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 hover:bg-muted/40">
+              <Checkbox :model-value="editor.arrivalGateIds.includes(gate.id)" :disabled="saving" :aria-label="`选择到达检票口：${gate.code} ${gate.name}`" @update:model-value="toggleArrivalGate(gate.id, $event)" />
+              <span class="min-w-0"><span class="block truncate text-sm font-medium">{{ gate.code }} · {{ gate.name }}</span><span class="block text-xs text-muted-foreground">{{ gate.floor }} · {{ gate.status === 'open' ? '开放' : gate.status === 'restricted' ? '受限' : '关闭' }}</span></span>
+            </label>
+          </div>
+          <p v-if="unavailableArrivalGateIds.length" class="text-xs text-warning">已保留 {{ unavailableArrivalGateIds.length }} 个当前不可选的历史检票口关联。</p>
+        </div>
       </div>
       <p v-if="editorError" class="mt-3 flex items-center gap-2 text-xs text-destructive" role="alert"><AlertTriangle class="size-4 shrink-0" aria-hidden="true" />{{ editorError }}</p>
       <div class="mt-4 flex justify-end gap-2"><Button type="button" variant="outline" class="h-11" :disabled="saving" @click="cancelEditor">取消编辑</Button><Button type="button" class="h-11" :disabled="saving" @click="commitEditor"><Check aria-hidden="true" />{{ editorMode === 'create' ? '添加到列表' : '更新站点' }}</Button></div>

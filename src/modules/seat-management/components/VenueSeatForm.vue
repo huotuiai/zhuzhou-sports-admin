@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import type { TicketGate } from '@/modules/ticket-gate-management/types'
-import type { SeatFloor, SeatZone, SeatZoneValidationIssue, SeatZoneWriteInput } from '../types'
+import type { SeatFloor, SeatGateOption, SeatZone, SeatZoneValidationIssue, SeatZoneWriteInput } from '../types'
 import { AlertTriangle, Ban, CircleCheck, ShieldAlert } from '@lucide/vue'
 import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +19,7 @@ const props = withDefaults(defineProps<{
   value: SeatZoneWriteInput
   floors: readonly SeatFloor[]
   zones: readonly SeatZone[]
-  ticketGates: readonly TicketGate[]
+  ticketGates: readonly SeatGateOption[]
   editingId?: string
   issues?: readonly SeatZoneValidationIssue[]
   saving?: boolean
@@ -68,8 +67,9 @@ function toggleGate(gateId: string, checked: boolean | 'indeterminate'): void {
   patch({ gateIds: [...next] })
 }
 
-function gateStatus(gate: TicketGate): string {
-  return ({ open: '开放', closed: '关闭', restricted: '管制' })[gate.status]
+function gateStatus(gate: SeatGateOption): string {
+  if (!gate.enabled) return '停用'
+  return ({ open: '开放', closed: '关闭', restricted: '管制' })[gate.openStatus]
 }
 
 function issueFor(field: Field): SeatZoneValidationIssue | undefined {
@@ -181,16 +181,16 @@ watch(() => [props.mode, props.editingId], () => {
             <span class="flex min-w-0 items-center gap-2"><code class="shrink-0 text-xs font-semibold">{{ gate.code }}</code><span class="truncate text-sm font-medium">{{ gate.name }}</span></span>
             <Badge
               variant="outline"
-              :class="['mt-1.5 h-5 gap-1 px-1.5 text-[10px]', gate.status === 'open' ? 'border-success/30 text-success' : gate.status === 'restricted' ? 'border-destructive/30 text-destructive' : 'border-warning/30 text-warning']"
+              :class="['mt-1.5 h-5 gap-1 px-1.5 text-[10px]', !gate.enabled ? 'border-muted-foreground/30 text-muted-foreground' : gate.openStatus === 'open' ? 'border-success/30 text-success' : gate.openStatus === 'restricted' ? 'border-destructive/30 text-destructive' : 'border-warning/30 text-warning']"
             >
-              <CircleCheck v-if="gate.status === 'open'" class="size-3" /><ShieldAlert v-else-if="gate.status === 'restricted'" class="size-3" /><Ban v-else class="size-3" />{{ gateStatus(gate) }}
+              <Ban v-if="!gate.enabled || gate.openStatus === 'closed'" class="size-3" /><ShieldAlert v-else-if="gate.openStatus === 'restricted'" class="size-3" /><CircleCheck v-else class="size-3" />{{ gateStatus(gate) }}
             </Badge>
           </span>
         </label>
         <p v-if="ticketGates.length === 0" class="col-span-2 py-5 text-center text-sm text-muted-foreground">暂无可选择的检票口，请先维护检票口数据。</p>
       </div>
       <p v-if="issueFor('gateIds')" :id="errorId('gateIds')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('gateIds')?.message }}</p>
-      <p v-else class="text-xs leading-5 text-muted-foreground">关闭或管制中的检票口仍可绑定，但不会参与 H5 的开放入口推荐。</p>
+      <p v-else class="text-xs leading-5 text-muted-foreground">关闭、管制或停用的检票口仍可绑定，但不会参与 H5 的开放入口推荐。</p>
     </div>
 
     <div class="space-y-2">

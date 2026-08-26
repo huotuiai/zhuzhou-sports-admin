@@ -1,58 +1,93 @@
-import type { TicketGate, TicketGateService } from '@/modules/ticket-gate-management/types'
+import type { SignedRequestConfig } from '@/lib/http'
 import type {
   SeatFloor,
+  SeatFloorCreateInput,
   SeatFloorValidationIssue,
   SeatFloorValidationResult,
   SeatFloorWriteInput,
-  SeatPlanningAuditAction,
-  SeatPlanningAuditLog,
+  SeatGateOpenStatus,
+  SeatGateOption,
   SeatPlanningService,
-  SeatPlanningSnapshot,
   SeatZone,
-  SeatZoneGateBinding,
+  SeatZonePage,
   SeatZoneStatus,
   SeatZoneValidationIssue,
   SeatZoneValidationResult,
   SeatZoneWriteInput,
 } from '../types'
-import { createClientId } from '@/lib/id'
-import { SEAT_ZONE_GATE_BINDING_STORAGE_KEY } from '@/modules/ticket-gate-management/services/ticket-gate-relation-service'
-import { ticketGateService } from '@/modules/ticket-gate-management/services/ticket-gate-service'
+import { ApiError, requestData } from '@/lib/http'
 
-export const LEGACY_VENUE_SEAT_STORAGE_KEY = 'zz-sports-venue-seats:v1'
-export const SEAT_PLANNING_STORAGE_KEY = 'zz-sports-seat-planning:v1'
-const SCHEMA_VERSION = 1
-const MAX_AUDIT_LOGS = 500
-
-interface StoredSeatPlanning {
-  schemaVersion: typeof SCHEMA_VERSION
-  floors: SeatFloor[]
-  zones: SeatZone[]
-  auditLogs: SeatPlanningAuditLog[]
+export interface ApiFloorVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  name: string
+  sort_order: number
+  status: number
+  zone_count: number | string
 }
 
-interface StoredSeatZoneBindings {
-  schemaVersion: 1
-  records: SeatZoneGateBinding[]
+export interface ApiZoneVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  code: string
+  name: string
+  floor_id: number | string
+  row_start: number
+  row_end: number
+  sort_order: number
+  remark: string | null
+  status: number
+  floor_name: string
+  gate_ids: Array<number | string>
+  gate_names: string[]
+  open_gate_ids: Array<number | string>
+  open_gate_names: string[]
 }
 
-export interface LocalSeatPlanningServiceOptions {
-  storage?: Storage
-  gateService?: TicketGateService
-  createId?: () => string
-  now?: () => Date
+export interface ApiGateOptionVO {
+  id: number | string
+  code: string
+  name: string
+  open_status: number
+  status: number
+  match_open: boolean | number
 }
 
-export class SeatPlanningServiceError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options)
-    this.name = 'SeatPlanningServiceError'
-  }
+interface ApiPage<T> {
+  list: T[]
+  total: number | string
+  page: number
+  page_size: number
 }
 
-function resolveStorage(): Storage {
-  if (typeof globalThis.localStorage === 'undefined') throw new SeatPlanningServiceError('当前环境不支持本地存储')
-  return globalThis.localStorage
+interface ApiFloorCreateRequest {
+  name: string
+  sort_order: number
+  status: 0 | 1
+}
+
+interface ApiZoneCreateRequest {
+  code: string
+  name: string
+  floor_id: number
+  row_start: number
+  row_end: number
+  sort_order: number
+  remark: string
+  status: 0 | 1
+  gate_ids: number[]
+}
+
+type ApiZoneUpdateRequest = Omit<ApiZoneCreateRequest, 'code'>
+
+export interface SeatPlanningDataRequester {
+  <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+function responseError(message: string): ApiError {
+  return new ApiError(message, { kind: 'response' })
 }
 
 function normalizeText(value: string): string {
@@ -63,65 +98,126 @@ function identity(value: string): string {
   return normalizeText(value).toLocaleLowerCase('zh-CN')
 }
 
-function cloneFloor(item: SeatFloor): SeatFloor {
-  return { ...item }
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
+  return value
 }
 
-function cloneZone(item: SeatZone): SeatZone {
-  return { ...item }
+function integer(value: unknown, fallback = 0): number {
+  const result = Number(value)
+  return Number.isInteger(result) ? result : fallback
 }
 
-function cloneBinding(item: SeatZoneGateBinding): SeatZoneGateBinding {
-  return { ...item }
+function nonNegativeInteger(value: unknown): number {
+  return Math.max(0, integer(value))
 }
 
-function cloneAudit(item: SeatPlanningAuditLog): SeatPlanningAuditLog {
-  return { ...item }
+function stringIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : []
 }
 
-function cloneGate(item: TicketGate): TicketGate {
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === 1
+}
+
+function mapStatus(value: unknown): SeatZoneStatus {
+  return integer(value, 1) === 0 ? 'disabled' : 'enabled'
+}
+
+function mapGateOpenStatus(value: unknown): SeatGateOpenStatus {
+  if (integer(value, 1) === 0) return 'closed'
+  if (integer(value, 1) === 2) return 'restricted'
+  return 'open'
+}
+
+function bodyId(value: string): number {
+  const result = Number(value)
+  if (!Number.isSafeInteger(result) || result <= 0) {
+    throw new ApiError('接口 ID 超出浏览器可安全提交的范围', { kind: 'configuration' })
+  }
+  return result
+}
+
+function endpoint(path: string, id: string): string {
+  return `${path}/${encodeURIComponent(id)}`
+}
+
+function cloneFloor(value: SeatFloor): SeatFloor {
+  return { ...value }
+}
+
+function cloneZone(value: SeatZone): SeatZone {
   return {
-    ...item,
-    mapPoints: item.mapPoints.map((point) => ({ ...point })),
-    navigationPoint: item.navigationPoint ? { ...item.navigationPoint } : null,
+    ...value,
+    gateIds: [...value.gateIds],
+    gateNames: [...value.gateNames],
+    openGateIds: [...value.openGateIds],
+    openGateNames: [...value.openGateNames],
   }
 }
 
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value > 0
+function cloneGate(value: SeatGateOption): SeatGateOption {
+  return { ...value }
 }
 
-function isFloor(value: unknown): value is SeatFloor {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.name === 'string' && isPositiveInteger(item.sortOrder) &&
-    typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
+export function mapApiFloor(value: ApiFloorVO): SeatFloor {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的楼层 ID 不完整')
+  return {
+    id: String(value.id),
+    name: requiredText(value.name, '楼层名称'),
+    sortOrder: integer(value.sort_order),
+    status: mapStatus(value.status),
+    zoneCount: nonNegativeInteger(value.zone_count),
+    createdAt: requiredText(value.create_at, '楼层创建时间'),
+    updatedAt: requiredText(value.update_at, '楼层更新时间'),
+  }
 }
 
-function isZone(value: unknown): value is SeatZone {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.code === 'string' && typeof item.name === 'string' &&
-    typeof item.floorId === 'string' && isPositiveInteger(item.rowStart) && isPositiveInteger(item.rowEnd) &&
-    isPositiveInteger(item.sortOrder) && ['enabled', 'disabled'].includes(String(item.status)) &&
-    typeof item.remark === 'string' && typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
+export function mapApiZone(value: ApiZoneVO): SeatZone {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的分区 ID 不完整')
+  if (value.floor_id === undefined || value.floor_id === null) throw responseError('服务器返回的分区楼层 ID 不完整')
+  return {
+    id: String(value.id),
+    code: requiredText(value.code, '分区编号'),
+    name: requiredText(value.name, '分区名称'),
+    floorId: String(value.floor_id),
+    rowStart: integer(value.row_start),
+    rowEnd: integer(value.row_end),
+    sortOrder: integer(value.sort_order),
+    status: mapStatus(value.status),
+    remark: typeof value.remark === 'string' ? value.remark : '',
+    gateIds: stringIds(value.gate_ids),
+    gateNames: stringList(value.gate_names),
+    openGateIds: stringIds(value.open_gate_ids),
+    openGateNames: stringList(value.open_gate_names),
+    createdAt: requiredText(value.create_at, '分区创建时间'),
+    updatedAt: requiredText(value.update_at, '分区更新时间'),
+  }
 }
 
-function isBinding(value: unknown): value is SeatZoneGateBinding {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.zoneCode === 'string' && typeof item.gateId === 'string'
+export function mapApiGateOption(value: ApiGateOptionVO): SeatGateOption {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的检票口 ID 不完整')
+  return {
+    id: String(value.id),
+    code: requiredText(value.code, '检票口编号'),
+    name: requiredText(value.name, '检票口名称'),
+    openStatus: mapGateOpenStatus(value.open_status),
+    enabled: mapStatus(value.status) === 'enabled',
+    matchOpen: flag(value.match_open),
+  }
 }
 
-function isAudit(value: unknown): value is SeatPlanningAuditLog {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  const actions: SeatPlanningAuditAction[] = [
-    'create-floor', 'delete-floor', 'create-zone', 'update-zone', 'status-update', 'delete-zone', 'bind-gate', 'unbind-gate',
-  ]
-  return typeof item.id === 'string' && actions.includes(item.action as SeatPlanningAuditAction) &&
-    typeof item.entityId === 'string' && typeof item.entityCode === 'string' &&
-    (item.targetId === null || typeof item.targetId === 'string') && typeof item.createdAt === 'string'
+function mapZonePage(value: ApiPage<ApiZoneVO>): SeatZonePage {
+  return {
+    zones: Array.isArray(value.list) ? value.list.map(mapApiZone) : [],
+    total: nonNegativeInteger(value.total),
+    page: Math.max(1, integer(value.page, 1)),
+    pageSize: Math.max(1, integer(value.page_size, 20)),
+  }
 }
 
 export function sanitizeSeatFloorInput(input: SeatFloorWriteInput): SeatFloorWriteInput {
@@ -133,10 +229,10 @@ export function sanitizeSeatZoneInput(input: SeatZoneWriteInput): SeatZoneWriteI
     code: normalizeText(input.code).toUpperCase(),
     name: normalizeText(input.name),
     floorId: normalizeText(input.floorId),
-    rowStart: input.rowStart,
-    rowEnd: input.rowEnd,
+    rowStart: Number(input.rowStart),
+    rowEnd: Number(input.rowEnd),
     gateIds: [...new Set(input.gateIds.map(normalizeText).filter(Boolean))],
-    sortOrder: input.sortOrder,
+    sortOrder: Number(input.sortOrder),
     status: input.status,
     remark: normalizeText(input.remark),
   }
@@ -150,7 +246,7 @@ export function validateSeatFloorInput(
   const issues: SeatFloorValidationIssue[] = []
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入楼层名称' })
   else if (Array.from(value.name).length > 20) issues.push({ field: 'name', code: 'too_long', message: '楼层名称不能超过 20 个字符' })
-  else if (floors.some((item) => identity(item.name) === identity(value.name))) {
+  else if (floors.some(item => identity(item.name) === identity(value.name))) {
     issues.push({ field: 'name', code: 'duplicate', message: '楼层名称不能重复' })
   }
   return { valid: issues.length === 0, issues }
@@ -160,7 +256,7 @@ export function validateSeatZoneInput(
   input: SeatZoneWriteInput,
   zones: readonly SeatZone[] = [],
   floors: readonly SeatFloor[] = [],
-  ticketGates: readonly Pick<TicketGate, 'id'>[] = [],
+  ticketGates: readonly Pick<SeatGateOption, 'id'>[] = [],
   excludedId?: string,
 ): SeatZoneValidationResult {
   const value = sanitizeSeatZoneInput(input)
@@ -169,7 +265,8 @@ export function validateSeatZoneInput(
   if (!value.code) issues.push({ field: 'code', code: 'required', message: '请输入分区编号' })
   else if (!/^[A-Z0-9-]{2,10}$/.test(value.code)) {
     issues.push({ field: 'code', code: 'invalid', message: '分区编号须为 2–10 位字母、数字或连字符' })
-  } else if (zones.some((item) => item.id !== excludedId && identity(item.code) === identity(value.code))) {
+  }
+  else if (zones.some(item => item.id !== excludedId && identity(item.code) === identity(value.code))) {
     issues.push({ field: 'code', code: 'duplicate', message: '分区编号不能重复' })
   }
 
@@ -177,16 +274,15 @@ export function validateSeatZoneInput(
   else if (Array.from(value.name).length > 80) issues.push({ field: 'name', code: 'too_long', message: '区域名称不能超过 80 个字符' })
 
   if (!value.floorId) issues.push({ field: 'floorId', code: 'required', message: '请选择所属楼层' })
-  else if (!floors.some((item) => item.id === value.floorId)) {
-    issues.push({ field: 'floorId', code: 'not_found', message: '所选楼层不存在' })
-  }
+  else if (!floors.some(item => item.id === value.floorId)) issues.push({ field: 'floorId', code: 'not_found', message: '所选楼层不存在' })
 
   if (!Number.isInteger(value.rowStart) || value.rowStart < 1 || value.rowStart > 200) {
     issues.push({ field: 'rowStart', code: 'invalid', message: '起始排号须为 1–200 的整数' })
   }
   if (!Number.isInteger(value.rowEnd) || value.rowEnd < 1 || value.rowEnd > 200) {
     issues.push({ field: 'rowEnd', code: 'invalid', message: '结束排号须为 1–200 的整数' })
-  } else if (Number.isInteger(value.rowStart) && value.rowEnd <= value.rowStart) {
+  }
+  else if (Number.isInteger(value.rowStart) && value.rowEnd <= value.rowStart) {
     issues.push({ field: 'rowEnd', code: 'invalid', message: '结束排号必须大于起始排号' })
   }
 
@@ -196,16 +292,13 @@ export function validateSeatZoneInput(
 
   if (value.gateIds.length === 0) issues.push({ field: 'gateIds', code: 'required', message: '请至少选择一个检票口' })
   else {
-    const validGateIds = new Set(ticketGates.map((item) => item.id))
-    if (value.gateIds.some((id) => !validGateIds.has(id))) {
+    const validGateIds = new Set(ticketGates.map(item => item.id))
+    if (value.gateIds.some(id => !validGateIds.has(id))) {
       issues.push({ field: 'gateIds', code: 'not_found', message: '所选检票口不存在，请重新选择' })
     }
   }
 
-  if (Array.from(value.remark).length > 300) {
-    issues.push({ field: 'remark', code: 'too_long', message: '备注不能超过 300 个字符' })
-  }
-
+  if (Array.from(value.remark).length > 300) issues.push({ field: 'remark', code: 'too_long', message: '备注不能超过 300 个字符' })
   return { valid: issues.length === 0, issues }
 }
 
@@ -223,280 +316,90 @@ export function sortSeatZones(zones: readonly SeatZone[], floors: readonly SeatF
     .map(cloneZone)
 }
 
-function defaultFloors(timestamp: string): SeatFloor[] {
-  return [
-    { id: 'seat-floor-first', name: '一层', sortOrder: 1, createdAt: timestamp, updatedAt: timestamp },
-    { id: 'seat-floor-second', name: '二层', sortOrder: 2, createdAt: timestamp, updatedAt: timestamp },
-  ]
-}
-
-export class LocalSeatPlanningService implements SeatPlanningService {
-  private readonly injectedStorage?: Storage
-  private readonly gateService: TicketGateService
-  private readonly createId: () => string
-  private readonly now: () => Date
-
-  constructor(options: LocalSeatPlanningServiceOptions = {}) {
-    this.injectedStorage = options.storage
-    this.gateService = options.gateService ?? ticketGateService
-    this.createId = options.createId ?? createClientId
-    this.now = options.now ?? (() => new Date())
-  }
-
-  private get storage(): Storage {
-    return this.injectedStorage ?? resolveStorage()
-  }
-
-  private readMain(): StoredSeatPlanning {
-    const raw = this.storage.getItem(SEAT_PLANNING_STORAGE_KEY)
-    if (!raw) {
-      const timestamp = this.now().toISOString()
-      const initial: StoredSeatPlanning = { schemaVersion: SCHEMA_VERSION, floors: defaultFloors(timestamp), zones: [], auditLogs: [] }
-      this.writeMain(initial)
-      return initial
-    }
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredSeatPlanning>
-      if (parsed.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.floors) || !parsed.floors.every(isFloor) ||
-        !Array.isArray(parsed.zones) || !parsed.zones.every(isZone) ||
-        !Array.isArray(parsed.auditLogs) || !parsed.auditLogs.every(isAudit)) throw new Error('Invalid seat planning data')
-      return {
-        schemaVersion: SCHEMA_VERSION,
-        floors: parsed.floors.map(cloneFloor),
-        zones: parsed.zones.map(cloneZone),
-        auditLogs: parsed.auditLogs.map(cloneAudit),
-      }
-    } catch (error) {
-      throw new SeatPlanningServiceError('本地座位规划数据无法解析', { cause: error })
-    }
-  }
-
-  private readBindings(): SeatZoneGateBinding[] {
-    const raw = this.storage.getItem(SEAT_ZONE_GATE_BINDING_STORAGE_KEY)
-    if (!raw) return []
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredSeatZoneBindings>
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.records) || !parsed.records.every(isBinding)) {
-        throw new Error('Invalid seat zone bindings')
-      }
-      return parsed.records.map(cloneBinding)
-    } catch (error) {
-      throw new SeatPlanningServiceError('座位分区与检票口绑定数据无法解析', { cause: error })
-    }
-  }
-
-  private writeMain(envelope: StoredSeatPlanning): void {
-    this.storage.setItem(SEAT_PLANNING_STORAGE_KEY, JSON.stringify({
-      schemaVersion: SCHEMA_VERSION,
-      floors: envelope.floors.map(cloneFloor),
-      zones: envelope.zones.map(cloneZone),
-      auditLogs: envelope.auditLogs.map(cloneAudit),
-    } satisfies StoredSeatPlanning))
-  }
-
-  private writeBindings(bindings: readonly SeatZoneGateBinding[]): void {
-    this.storage.setItem(SEAT_ZONE_GATE_BINDING_STORAGE_KEY, JSON.stringify({
-      schemaVersion: 1,
-      records: bindings.map(cloneBinding),
-    } satisfies StoredSeatZoneBindings))
-  }
-
-  private restore(key: string, raw: string | null): void {
-    try {
-      if (raw === null) this.storage.removeItem(key)
-      else this.storage.setItem(key, raw)
-    } catch {
-      // Best-effort rollback: retain the original failure as the actionable error.
-    }
-  }
-
-  private commit(envelope: StoredSeatPlanning, bindings?: readonly SeatZoneGateBinding[]): void {
-    const previousMain = this.storage.getItem(SEAT_PLANNING_STORAGE_KEY)
-    const previousBindings = bindings ? this.storage.getItem(SEAT_ZONE_GATE_BINDING_STORAGE_KEY) : null
-    try {
-      this.writeMain(envelope)
-      if (bindings) this.writeBindings(bindings)
-    } catch (error) {
-      this.restore(SEAT_PLANNING_STORAGE_KEY, previousMain)
-      if (bindings) this.restore(SEAT_ZONE_GATE_BINDING_STORAGE_KEY, previousBindings)
-      throw new SeatPlanningServiceError('座位规划保存失败，原数据已恢复', { cause: error })
-    }
-  }
-
-  private audit(
-    envelope: StoredSeatPlanning,
-    action: SeatPlanningAuditAction,
-    entityId: string,
-    entityCode: string,
-    targetId: string | null = null,
-  ): void {
-    envelope.auditLogs.push({ id: this.createId(), action, entityId, entityCode, targetId, createdAt: this.now().toISOString() })
-    if (envelope.auditLogs.length > MAX_AUDIT_LOGS) envelope.auditLogs.splice(0, envelope.auditLogs.length - MAX_AUDIT_LOGS)
-  }
-
-  private snapshot(
-    envelope: StoredSeatPlanning,
-    bindings: readonly SeatZoneGateBinding[],
-    ticketGates: readonly TicketGate[],
-  ): SeatPlanningSnapshot {
-    return {
-      floors: sortSeatFloors(envelope.floors),
-      zones: sortSeatZones(envelope.zones, envelope.floors),
-      bindings: bindings.map(cloneBinding),
-      ticketGates: ticketGates.map(cloneGate),
-    }
-  }
-
-  private async gates(): Promise<TicketGate[]> {
-    return (await this.gateService.list()).map(cloneGate)
-  }
-
-  async load(): Promise<SeatPlanningSnapshot> {
-    const envelope = this.readMain()
-    const bindings = this.readBindings()
-    const ticketGates = await this.gates()
-    const zoneCodes = new Set(envelope.zones.map((item) => item.code))
-    const gateIds = new Set(ticketGates.map((item) => item.id))
-    const seen = new Set<string>()
-    const validBindings: SeatZoneGateBinding[] = []
-    const removed: SeatZoneGateBinding[] = []
-
-    for (const binding of bindings) {
-      const key = `${binding.zoneCode}\u0000${binding.gateId}`
-      if (!zoneCodes.has(binding.zoneCode) || !gateIds.has(binding.gateId) || seen.has(key)) removed.push(binding)
-      else {
-        seen.add(key)
-        validBindings.push(binding)
-      }
-    }
-
-    if (removed.length) {
-      removed.forEach((binding) => this.audit(envelope, 'unbind-gate', binding.id, binding.zoneCode, binding.gateId))
-      this.commit(envelope, validBindings)
-    }
-    return this.snapshot(envelope, validBindings, ticketGates)
-  }
-
-  async listAuditLogs(): Promise<SeatPlanningAuditLog[]> {
-    return this.readMain().auditLogs.map(cloneAudit).sort((first, second) => second.createdAt.localeCompare(first.createdAt))
-  }
-
-  async createFloor(input: SeatFloorWriteInput): Promise<SeatFloor> {
-    const envelope = this.readMain()
-    const value = sanitizeSeatFloorInput(input)
-    const validation = validateSeatFloorInput(value, envelope.floors)
-    if (!validation.valid) throw new SeatPlanningServiceError(validation.issues[0]!.message)
-    const timestamp = this.now().toISOString()
-    const floor: SeatFloor = {
-      id: this.createId(),
-      name: value.name,
-      sortOrder: envelope.floors.reduce((max, item) => Math.max(max, item.sortOrder), 0) + 1,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    envelope.floors.push(floor)
-    this.audit(envelope, 'create-floor', floor.id, floor.name)
-    this.commit(envelope)
-    return cloneFloor(floor)
-  }
-
-  async removeFloor(id: string): Promise<void> {
-    const envelope = this.readMain()
-    const floor = envelope.floors.find((item) => item.id === id)
-    if (!floor) throw new SeatPlanningServiceError('未找到要删除的楼层')
-    const zoneCount = envelope.zones.filter((item) => item.floorId === id).length
-    if (zoneCount > 0) throw new SeatPlanningServiceError(`楼层已绑定 ${zoneCount} 个座位分区，无法删除`)
-    envelope.floors = envelope.floors.filter((item) => item.id !== id)
-    this.audit(envelope, 'delete-floor', floor.id, floor.name)
-    this.commit(envelope)
-  }
-
-  async createZone(input: SeatZoneWriteInput): Promise<SeatPlanningSnapshot> {
-    const envelope = this.readMain()
-    const bindings = this.readBindings()
-    const ticketGates = await this.gates()
-    const value = sanitizeSeatZoneInput(input)
-    const validation = validateSeatZoneInput(value, envelope.zones, envelope.floors, ticketGates)
-    if (!validation.valid) throw new SeatPlanningServiceError(validation.issues[0]!.message)
-    const timestamp = this.now().toISOString()
-    const zone: SeatZone = {
-      id: this.createId(), code: value.code, name: value.name, floorId: value.floorId,
-      rowStart: value.rowStart, rowEnd: value.rowEnd, sortOrder: value.sortOrder,
-      status: value.status, remark: value.remark, createdAt: timestamp, updatedAt: timestamp,
-    }
-    const nextBindings = [...bindings]
-    value.gateIds.forEach((gateId) => {
-      const binding: SeatZoneGateBinding = { id: this.createId(), zoneCode: zone.code, gateId }
-      nextBindings.push(binding)
-      this.audit(envelope, 'bind-gate', zone.id, zone.code, gateId)
-    })
-    envelope.zones.push(zone)
-    this.audit(envelope, 'create-zone', zone.id, zone.code)
-    this.commit(envelope, nextBindings)
-    return this.snapshot(envelope, nextBindings, ticketGates)
-  }
-
-  async updateZone(id: string, input: SeatZoneWriteInput): Promise<SeatPlanningSnapshot> {
-    const envelope = this.readMain()
-    const index = envelope.zones.findIndex((item) => item.id === id)
-    if (index < 0) throw new SeatPlanningServiceError('未找到要更新的座位分区')
-    const previous = envelope.zones[index]!
-    const ticketGates = await this.gates()
-    const value = sanitizeSeatZoneInput({ ...input, code: previous.code })
-    const validation = validateSeatZoneInput(value, envelope.zones, envelope.floors, ticketGates, id)
-    if (!validation.valid) throw new SeatPlanningServiceError(validation.issues[0]!.message)
-    const bindings = this.readBindings()
-    const selectedGateIds = new Set(value.gateIds)
-    const currentBindings = bindings.filter((item) => item.zoneCode === previous.code)
-    const currentGateIds = new Set(currentBindings.map((item) => item.gateId))
-    const removedBindings = currentBindings.filter((item) => !selectedGateIds.has(item.gateId))
-    const nextBindings = bindings.filter((item) => item.zoneCode !== previous.code || selectedGateIds.has(item.gateId))
-
-    removedBindings.forEach((binding) => this.audit(envelope, 'unbind-gate', previous.id, previous.code, binding.gateId))
-    value.gateIds.filter((gateId) => !currentGateIds.has(gateId)).forEach((gateId) => {
-      nextBindings.push({ id: this.createId(), zoneCode: previous.code, gateId })
-      this.audit(envelope, 'bind-gate', previous.id, previous.code, gateId)
-    })
-
-    const zone: SeatZone = {
-      id, code: previous.code, name: value.name, floorId: value.floorId,
-      rowStart: value.rowStart, rowEnd: value.rowEnd, sortOrder: value.sortOrder,
-      status: value.status, remark: value.remark, createdAt: previous.createdAt, updatedAt: this.now().toISOString(),
-    }
-    envelope.zones[index] = zone
-    this.audit(envelope, 'update-zone', zone.id, zone.code)
-    this.commit(envelope, nextBindings)
-    return this.snapshot(envelope, nextBindings, ticketGates)
-  }
-
-  async updateZoneStatus(id: string, status: SeatZoneStatus): Promise<SeatZone> {
-    if (!['enabled', 'disabled'].includes(status)) throw new SeatPlanningServiceError('请选择有效的分区状态')
-    const envelope = this.readMain()
-    const index = envelope.zones.findIndex((item) => item.id === id)
-    if (index < 0) throw new SeatPlanningServiceError('未找到要更新状态的座位分区')
-    const previous = envelope.zones[index]!
-    const zone: SeatZone = { ...previous, status, updatedAt: this.now().toISOString() }
-    envelope.zones[index] = zone
-    this.audit(envelope, 'status-update', zone.id, zone.code)
-    this.commit(envelope)
-    return cloneZone(zone)
-  }
-
-  async removeZone(id: string): Promise<SeatPlanningSnapshot> {
-    const envelope = this.readMain()
-    const zone = envelope.zones.find((item) => item.id === id)
-    if (!zone) throw new SeatPlanningServiceError('未找到要删除的座位分区')
-    if (zone.status === 'enabled') throw new SeatPlanningServiceError('启用中的分区需先停用再删除')
-    const ticketGates = await this.gates()
-    const bindings = this.readBindings()
-    const removedBindings = bindings.filter((item) => item.zoneCode === zone.code)
-    const nextBindings = bindings.filter((item) => item.zoneCode !== zone.code)
-    removedBindings.forEach((binding) => this.audit(envelope, 'unbind-gate', zone.id, zone.code, binding.gateId))
-    envelope.zones = envelope.zones.filter((item) => item.id !== id)
-    this.audit(envelope, 'delete-zone', zone.id, zone.code)
-    this.commit(envelope, nextBindings)
-    return this.snapshot(envelope, nextBindings, ticketGates)
+function zoneCreateBody(input: SeatZoneWriteInput): ApiZoneCreateRequest {
+  const value = sanitizeSeatZoneInput(input)
+  return {
+    code: value.code,
+    name: value.name,
+    floor_id: bodyId(value.floorId),
+    row_start: value.rowStart,
+    row_end: value.rowEnd,
+    sort_order: value.sortOrder,
+    remark: value.remark,
+    status: value.status === 'enabled' ? 1 : 0,
+    gate_ids: value.gateIds.map(bodyId),
   }
 }
 
-export const seatPlanningService: SeatPlanningService = new LocalSeatPlanningService()
+function zoneUpdateBody(input: SeatZoneWriteInput): ApiZoneUpdateRequest {
+  const body = zoneCreateBody(input)
+  return {
+    name: body.name,
+    floor_id: body.floor_id,
+    row_start: body.row_start,
+    row_end: body.row_end,
+    sort_order: body.sort_order,
+    remark: body.remark,
+    status: body.status,
+    gate_ids: body.gate_ids,
+  }
+}
+
+export function createSeatPlanningService(
+  request: SeatPlanningDataRequester = requestData,
+): SeatPlanningService {
+  return {
+    async listFloors() {
+      const values = await request<ApiFloorVO[]>({ method: 'GET', url: 'api/v1/admin/floors' })
+      return sortSeatFloors(Array.isArray(values) ? values.map(mapApiFloor) : [])
+    },
+
+    async createFloor(input: SeatFloorCreateInput) {
+      const data: ApiFloorCreateRequest = {
+        name: normalizeText(input.name),
+        sort_order: input.sortOrder,
+        status: input.status === 'enabled' ? 1 : 0,
+      }
+      return mapApiFloor(await request<ApiFloorVO, ApiFloorCreateRequest>({ method: 'POST', url: 'api/v1/admin/floors', data }))
+    },
+
+    async deleteFloor(id: string) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/floors', id) })
+    },
+
+    async listZones(page: number, pageSize: number) {
+      return mapZonePage(await request<ApiPage<ApiZoneVO>>({
+        method: 'GET',
+        url: 'api/v1/admin/zones',
+        params: { page, page_size: pageSize },
+      }))
+    },
+
+    async getZone(id: string) {
+      return mapApiZone(await request<ApiZoneVO>({ method: 'GET', url: endpoint('api/v1/admin/zones', id) }))
+    },
+
+    async createZone(input: SeatZoneWriteInput) {
+      const data = zoneCreateBody(input)
+      return mapApiZone(await request<ApiZoneVO, ApiZoneCreateRequest>({ method: 'POST', url: 'api/v1/admin/zones', data }))
+    },
+
+    async updateZone(id: string, input: SeatZoneWriteInput) {
+      const data = zoneUpdateBody(input)
+      return mapApiZone(await request<ApiZoneVO, ApiZoneUpdateRequest>({ method: 'PATCH', url: endpoint('api/v1/admin/zones', id), data }))
+    },
+
+    async deleteZone(id: string) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/zones', id) })
+    },
+
+    async listGateOptions() {
+      const values = await request<ApiGateOptionVO[]>({ method: 'GET', url: 'api/v1/admin/gates/options' })
+      return (Array.isArray(values) ? values.map(mapApiGateOption) : [])
+        .sort((first, second) => first.code.localeCompare(second.code, 'zh-CN', { numeric: true }))
+        .map(cloneGate)
+    },
+  }
+}
+
+export const seatPlanningService = createSeatPlanningService()

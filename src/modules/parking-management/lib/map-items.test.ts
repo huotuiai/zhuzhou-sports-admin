@@ -19,6 +19,7 @@ function lot(overrides: Partial<ParkingLot> = {}): ParkingLot {
     navigationAddress: '',
     totalSpaces: 100,
     availableSpaces: 31,
+    availabilityUpdateMethod: 'manual',
     feeType: 'free',
     feeStandard: '',
     openStatus: 'open',

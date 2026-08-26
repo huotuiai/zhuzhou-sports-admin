@@ -93,7 +93,7 @@ describe('shuttle route store', () => {
     expect((await store.create(input))?.code).toBe('L2')
     const updated = await store.update('L1', { ...input, name: '更新线路' })
     expect(updated?.name).toBe('更新线路')
-    const station: ShuttleStation = { id: 'S1', name: '体育中心', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', arrivalOffsetMinutes: null }
+    const station: ShuttleStation = { id: 'S1', name: '体育中心', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', arrivalOffsetMinutes: null, arrivalGateIds: ['gate-1'] }
     expect((await store.replaceStations('L1', [station]))?.stations).toHaveLength(1)
     expect(await store.remove('L1')).toBe(true)
   })
