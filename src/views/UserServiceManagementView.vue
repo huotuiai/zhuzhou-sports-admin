@@ -30,8 +30,8 @@ import {
   X,
 } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
-import { computed, nextTick, onMounted, ref } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
 import {
@@ -50,10 +50,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { useAuthStore } from '@/stores/auth'
 import ContactNumberForm from '@/modules/user-service-management/components/ContactNumberForm.vue'
 import FeedbackHandleForm from '@/modules/user-service-management/components/FeedbackHandleForm.vue'
-import { USER_SERVICE_PAGE_SIZE, useUserServiceStore } from '@/modules/user-service-management/stores/user-service-store'
+import { DEFAULT_FEEDBACK_QUERY, USER_SERVICE_PAGE_SIZE, useUserServiceStore } from '@/modules/user-service-management/stores/user-service-store'
+import { useTodoStore } from '@/modules/todo/stores/todo-store'
 
 type ServiceTab = 'feedback' | 'contact'
 type FormKind = 'feedback' | 'contact'
@@ -85,14 +85,16 @@ const feedbackTypeLabels: Record<FeedbackType, string> = {
 }
 
 const store = useUserServiceStore()
-const authStore = useAuthStore()
+const todoStore = useTodoStore()
+const route = useRoute()
+const router = useRouter()
 const activeTab = ref<ServiceTab>('feedback')
 const queryDraft = ref<FeedbackQuery>({ ...store.query })
 const loadError = ref('')
 const detailTarget = ref<UserFeedback | null>(null)
 const handleTarget = ref<UserFeedback | null>(null)
-const handleValue = ref<FeedbackHandleDraft>({ remark: '', markProcessed: true })
-const handleInitial = ref<FeedbackHandleDraft>({ remark: '', markProcessed: true })
+const handleValue = ref<FeedbackHandleDraft>({ remark: '' })
+const handleInitial = ref<FeedbackHandleDraft>({ remark: '' })
 const handleIssues = ref<readonly ValidationIssue<FeedbackHandleValidationField>[]>([])
 const handleFormRef = ref<{ validateAndFocus(): boolean } | null>(null)
 const contactOpen = ref(false)
@@ -105,14 +107,9 @@ const contactFormRef = ref<{ validateAndFocus(): boolean } | null>(null)
 const discardKind = ref<FormKind | null>(null)
 const deleteTarget = ref<ContactNumber | null>(null)
 
-const actor = computed(() => ({
-  id: authStore.user?.id ?? 'user-admin',
-  name: authStore.user?.name ?? '管理员',
-}))
 const handleDirty = computed(() => JSON.stringify(handleValue.value) !== JSON.stringify(handleInitial.value))
 const contactDirty = computed(() => JSON.stringify(contactValue.value) !== JSON.stringify(contactInitial.value))
 const hasFeedbackQuery = computed(() => store.query.type !== 'all' || store.query.status !== 'all' || Boolean(store.query.startDate || store.query.endDate))
-const processedCount = computed(() => store.snapshot.feedbacks.length - store.pendingCount)
 
 function emptyContact(): ContactNumberWriteInput {
   return { name: '', phone: '', sort: 1, displayEnabled: true }
@@ -144,27 +141,38 @@ function feedbackTypeClass(type: FeedbackType): string {
   return 'border-border bg-muted/55 text-muted-foreground'
 }
 
-function applyQuery(): void {
-  if (!store.setQuery({ ...queryDraft.value })) {
+async function applyQuery(): Promise<void> {
+  if (!await store.queryFeedbacks({ ...queryDraft.value })) {
     toast.error(store.queryError ?? '筛选条件有误')
+    return
   }
+  await syncRouteQuery(store.query)
 }
 
-function resetQuery(): void {
-  store.resetQuery()
-  queryDraft.value = { ...store.query }
+async function resetQuery(): Promise<void> {
+  if (await store.resetQuery()) {
+    queryDraft.value = { ...store.query }
+    await syncRouteQuery(store.query)
+  }
+  else toast.error(store.error ?? store.queryError ?? '重置筛选失败')
 }
 
-function openDetail(feedback: UserFeedback): void {
-  detailTarget.value = feedback
+async function openDetail(feedback: UserFeedback): Promise<void> {
+  const detail = await store.getFeedback(feedback.id)
+  if (detail) detailTarget.value = detail
+  else toast.error(store.error ?? '反馈详情加载失败')
 }
 
-function openHandle(feedback: UserFeedback): void {
+async function openHandle(feedback: UserFeedback): Promise<void> {
+  const detail = await store.getFeedback(feedback.id)
+  if (!detail) {
+    toast.error(store.error ?? '反馈详情加载失败')
+    return
+  }
   const value = {
-    remark: feedback.handlingRemark,
-    markProcessed: true,
+    remark: detail.handlingRemark,
   }
-  handleTarget.value = feedback
+  handleTarget.value = detail
   handleValue.value = { ...value }
   handleInitial.value = { ...value }
   handleIssues.value = []
@@ -179,7 +187,7 @@ function closeHandle(): void {
 
 async function saveHandle(): Promise<void> {
   if (!handleTarget.value) return
-  const input = { ...handleValue.value, actor: actor.value }
+  const input = { ...handleValue.value }
   handleIssues.value = store.validateHandle(input)
   await nextTick()
   if (!handleFormRef.value?.validateAndFocus() || handleIssues.value.length) return
@@ -189,8 +197,9 @@ async function saveHandle(): Promise<void> {
     return
   }
   detailTarget.value = detailTarget.value?.id === saved.id ? saved : detailTarget.value
+  await todoStore.refresh()
   closeHandle()
-  toast.success(saved.status === 'processed' ? '反馈已处理并记录操作信息。' : '处理备注已保存，反馈仍为未处理。')
+  toast.success('反馈处理结果已保存。')
 }
 
 function openCreateContact(): void {
@@ -234,9 +243,9 @@ async function saveContact(): Promise<void> {
   if (!contactFormRef.value?.validateAndFocus() || contactIssues.value.length) return
   const created = contactMode.value === 'create'
   const saved = created
-    ? await store.createContact(contactValue.value, actor.value)
+    ? await store.createContact(contactValue.value)
     : editingContactId.value
-      ? await store.updateContact(editingContactId.value, contactValue.value, actor.value)
+      ? await store.updateContact(editingContactId.value, contactValue.value)
       : null
   if (!saved) {
     toast.error(store.error ?? '联系电话保存失败')
@@ -262,7 +271,7 @@ function confirmDiscard(): void {
 async function removeContact(): Promise<void> {
   if (!deleteTarget.value) return
   const name = deleteTarget.value.name
-  if (await store.removeContact(deleteTarget.value.id, actor.value)) {
+  if (await store.deleteContact(deleteTarget.value.id)) {
     deleteTarget.value = null
     toast.success(`“${name}”已删除。`)
   } else {
@@ -270,31 +279,19 @@ async function removeContact(): Promise<void> {
   }
 }
 
-function csvCell(value: unknown): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
-function exportFeedbacks(): void {
-  const headers = ['反馈编号', '类型', '反馈内容', '联系方式', '提交时间', '处理状态', '处理人', '处理时间', '处理备注']
-  const rows = store.filteredFeedbacks.map((item) => [
-    item.code,
-    feedbackTypeLabels[item.type],
-    item.content,
-    item.contact ?? '',
-    formatDateTime(item.submittedAt),
-    item.status === 'processed' ? '已处理' : '未处理',
-    item.handlerName ?? '',
-    formatDateTime(item.handledAt),
-    item.handlingRemark,
-  ])
-  const csv = `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+async function exportFeedbacks(): Promise<void> {
+  const file = await store.exportFeedbacks()
+  if (!file) {
+    toast.error(store.error ?? '反馈导出失败')
+    return
+  }
+  const url = URL.createObjectURL(file.content)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `用户服务-意见反馈-${new Date().toISOString().slice(0, 10)}.csv`
+  anchor.download = file.filename
   anchor.click()
-  URL.revokeObjectURL(url)
-  toast.success(`已导出当前筛选结果，共 ${rows.length} 条。`)
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  toast.success('意见反馈导出已开始。')
 }
 
 function confirmLeave(): boolean {
@@ -309,15 +306,76 @@ function beforeUnload(event: BeforeUnloadEvent): void {
   event.returnValue = ''
 }
 
-async function load(): Promise<void> {
+function routeFeedbackQuery(): FeedbackQuery {
+  const typeValue = String(route.query.type ?? route.query.feedback_type ?? '')
+  const statusValue = String(route.query.status ?? '')
+  const handleStatusValue = String(route.query.handle_status ?? '')
+  const type = typeValue === 'error' || typeValue === 'bug'
+    ? 'error'
+    : typeValue === 'suggestion' || typeValue === 'suggest'
+      ? 'suggestion'
+      : typeValue === 'complaint' || typeValue === 'complain'
+        ? 'complaint'
+        : typeValue === 'other'
+          ? 'other'
+          : 'all'
+  const status = statusValue === 'pending' || handleStatusValue === '0'
+    ? 'pending'
+    : statusValue === 'processed' || handleStatusValue === '1'
+      ? 'processed'
+      : 'all'
+  return {
+    ...DEFAULT_FEEDBACK_QUERY,
+    type,
+    status,
+    startDate: String(route.query.from ?? ''),
+    endDate: String(route.query.to ?? ''),
+  }
+}
+
+async function syncRouteQuery(nextQuery: FeedbackQuery): Promise<void> {
+  const queryParams = { ...route.query }
+  delete queryParams.feedback_type
+  delete queryParams.handle_status
+  if (nextQuery.type === 'all') delete queryParams.type
+  else queryParams.type = nextQuery.type
+  if (nextQuery.status === 'all') delete queryParams.status
+  else queryParams.status = nextQuery.status
+  if (nextQuery.startDate) queryParams.from = nextQuery.startDate
+  else delete queryParams.from
+  if (nextQuery.endDate) queryParams.to = nextQuery.endDate
+  else delete queryParams.to
+  await router.replace({ query: queryParams })
+}
+
+function selectTab(tab: ServiceTab): void {
+  void router.replace({ query: { ...route.query, tab } })
+}
+
+async function load(force = false): Promise<void> {
   loadError.value = ''
-  if (!await store.load()) {
+  if (!await store.initialize({ ...queryDraft.value }, force)) {
     loadError.value = store.error ?? '用户服务数据加载失败'
     toast.error(loadError.value)
   }
 }
 
-onMounted(load)
+watch(
+  () => [route.query.tab, route.query.status, route.query.handle_status] as const,
+  async () => {
+    activeTab.value = route.query.tab === 'contact' ? 'contact' : 'feedback'
+    const nextQuery = routeFeedbackQuery()
+    queryDraft.value = nextQuery
+    if (store.initialized && JSON.stringify(nextQuery) !== JSON.stringify(store.query)) {
+      if (!await store.queryFeedbacks(nextQuery)) toast.error(store.error ?? store.queryError ?? '反馈筛选失败')
+    }
+  },
+  { immediate: true },
+)
+
+onMounted(() => {
+  void load()
+})
 onBeforeRouteLeave(() => confirmLeave())
 useEventListener(window, 'beforeunload', beforeUnload)
 </script>
@@ -343,7 +401,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
             <span class="text-muted-foreground">未处理</span><strong class="ml-2 tabular-nums text-destructive">{{ store.pendingCount }}</strong>
           </div>
           <div class="rounded-xl border bg-card/70 px-4 py-2.5 text-sm shadow-sm">
-            <span class="text-muted-foreground">已处理</span><strong class="ml-2 tabular-nums text-success">{{ processedCount }}</strong>
+            <span class="text-muted-foreground">已处理</span><strong class="ml-2 tabular-nums text-success">{{ store.processedCount }}</strong>
           </div>
           <div class="rounded-xl border bg-card/70 px-4 py-2.5 text-sm shadow-sm">
             <span class="text-muted-foreground">联系电话</span><strong class="ml-2 tabular-nums text-primary">{{ store.contacts.length }}</strong>
@@ -358,10 +416,10 @@ useEventListener(window, 'beforeunload', beforeUnload)
           class="min-h-11 rounded-lg px-5 text-sm font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
           :class="activeTab === 'feedback' ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'"
           :aria-selected="activeTab === 'feedback'"
-          @click="activeTab = 'feedback'"
+          @click="selectTab('feedback')"
         >
           意见反馈
-          <span class="ml-1 tabular-nums">{{ store.snapshot.feedbacks.length }}</span>
+          <span class="ml-1 tabular-nums">{{ store.overallTotal }}</span>
         </button>
         <button
           type="button"
@@ -369,7 +427,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           class="min-h-11 rounded-lg px-5 text-sm font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
           :class="activeTab === 'contact' ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'"
           :aria-selected="activeTab === 'contact'"
-          @click="activeTab = 'contact'"
+          @click="selectTab('contact')"
         >
           联系我们
           <span class="ml-1 tabular-nums">{{ store.contacts.length }}</span>
@@ -379,7 +437,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert">
         <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" />
         <p class="flex-1 text-sm text-destructive">{{ loadError }}</p>
-        <Button variant="outline" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button>
+        <Button variant="outline" class="h-11" @click="load(true)"><RotateCcw aria-hidden="true" />重新加载</Button>
       </div>
 
       <template v-if="activeTab === 'feedback'">
@@ -417,8 +475,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
             <Input id="feedback-query-end" v-model="queryDraft.endDate" type="date" class="h-11" :min="queryDraft.startDate || undefined" />
           </div>
           <template #actions-after>
-            <Button type="button" variant="outline" size="lg" class="h-11 min-w-24" :disabled="store.isLoading" @click="exportFeedbacks">
-              <Download aria-hidden="true" />导出
+            <Button type="button" variant="outline" size="lg" class="h-11 min-w-24" :disabled="store.isFeedbackLoading || store.isExporting" @click="exportFeedbacks">
+              <Download aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}
             </Button>
           </template>
         </QueryPanel>
@@ -429,9 +487,9 @@ useEventListener(window, 'beforeunload', beforeUnload)
 
         <DataTable
           :columns="feedbackColumns"
-          :rows="store.paginatedFeedbacks"
+          :rows="store.feedbacks"
           row-key="id"
-          :loading="store.isLoading"
+          :loading="store.isFeedbackLoading"
           :empty-text="hasFeedbackQuery ? '当前筛选条件下暂无反馈' : '暂无用户反馈'"
           caption="用户意见反馈列表"
         >
@@ -446,8 +504,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
-              <Button variant="ghost" class="h-11 px-3" @click="openDetail(row)"><Info aria-hidden="true" />详情</Button>
-              <Button variant="ghost" class="h-11 px-3 text-primary hover:text-primary" @click="openHandle(row)"><PencilLine aria-hidden="true" />{{ row.status === 'processed' ? '修改备注' : '处理' }}</Button>
+              <Button variant="ghost" class="h-11 px-3" :disabled="store.detailLoadingId === row.id" @click="openDetail(row)"><Info aria-hidden="true" />详情</Button>
+              <Button variant="ghost" class="h-11 px-3 text-primary hover:text-primary" :disabled="store.detailLoadingId === row.id" @click="openHandle(row)"><PencilLine aria-hidden="true" />{{ row.status === 'processed' ? '修改备注' : '处理' }}</Button>
             </div>
           </template>
         </DataTable>
@@ -456,8 +514,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
           :page-size="USER_SERVICE_PAGE_SIZE"
           :page-sizes="[USER_SERVICE_PAGE_SIZE]"
           :total="store.total"
-          :disabled="store.isLoading"
-          @update:page="store.setPage"
+          :disabled="store.isFeedbackLoading"
+          @update:page="store.changePage"
         />
       </template>
 
@@ -473,7 +531,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </CardContent>
         </Card>
 
-        <DataTable :columns="contactColumns" :rows="store.contacts" row-key="id" :loading="store.isLoading" empty-text="暂无联系方式" caption="联系我们号码列表">
+        <DataTable :columns="contactColumns" :rows="store.contacts" row-key="id" :loading="store.isContactsLoading" empty-text="暂无联系方式" caption="联系我们号码列表">
           <template #empty>
             <div class="flex flex-col items-center text-muted-foreground" role="status">
               <span class="grid size-11 place-items-center rounded-xl border bg-muted/40"><PhoneCall class="size-5" aria-hidden="true" /></span>
@@ -499,7 +557,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </DataTable>
         <div class="flex items-center gap-2 rounded-xl border bg-card/65 px-4 py-3 text-xs text-muted-foreground">
           <ShieldCheck class="size-4 shrink-0 text-primary" aria-hidden="true" />
-          新增、编辑和删除都会写入本模块审计记录；列表默认按排序值升序。
+          新增、编辑和删除由服务端写入操作日志；列表默认按排序值升序。
         </div>
       </template>
     </div>
@@ -545,7 +603,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       mode="edit"
       size="default"
       :title="`处理反馈 · ${handleTarget?.code ?? ''}`"
-      description="填写处理方式或回访结果；已处理反馈不会回退状态。"
+      description="填写处理方式或回访结果；未处理反馈保存后将标记为已处理。"
       submit-label="保存处理结果"
       :saving="store.isSaving"
       :dirty="handleDirty"

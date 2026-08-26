@@ -15,12 +15,15 @@ const props = withDefaults(defineProps<{
   roles: readonly SystemRole[]
   issues?: readonly ValidationIssue<keyof UserBasicInfoInput>[]
   saving?: boolean
-}>(), { issues: () => [], saving: false })
+  statusProtected?: boolean
+}>(), { issues: () => [], saving: false, statusProtected: false })
 
 const emit = defineEmits<{ 'update:value': [value: UserBasicInfoInput] }>()
 const fieldsRef = ref<HTMLDivElement | null>(null)
 const issueMap = computed(() => new Map(props.issues.map(issue => [issue.field, issue.message])))
-const protectedRoleIds = computed(() => props.user.builtIn ? props.roles.filter(role => role.kind === 'super-admin').map(role => role.id) : [])
+const protectedRoleIds = computed(() => props.roles
+  .filter(role => props.user.roleIds.includes(role.id) && (role.kind === 'super-admin' || role.enabled === false))
+  .map(role => role.id))
 function patch(value: Partial<UserBasicInfoInput>): void { emit('update:value', { ...props.value, ...value }) }
 function validateAndFocus(): boolean {
   const issue = props.issues[0]
@@ -58,11 +61,12 @@ defineExpose({ validateAndFocus })
     </div>
     <div class="space-y-2">
       <Label for="edit-user-status">账号状态</Label>
-      <Select :model-value="value.status" :disabled="saving || user.builtIn || user.status === 'locked'" @update:model-value="patch({ status: $event as 'enabled' | 'disabled' })">
+      <Select :model-value="value.status" :disabled="saving || statusProtected || user.builtIn || user.status === 'locked'" @update:model-value="patch({ status: $event as 'enabled' | 'disabled' })">
         <SelectTrigger id="edit-user-status" data-field="status" class="h-11 w-full"><SelectValue /></SelectTrigger>
         <SelectContent><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">禁用</SelectItem><SelectItem v-if="user.status === 'locked'" value="locked" disabled>锁定（需列表解锁）</SelectItem></SelectContent>
       </Select>
       <p v-if="user.status === 'locked'" class="text-xs text-warning">锁定账号只能在列表操作中解锁。</p>
+      <p v-else-if="statusProtected" class="text-xs text-muted-foreground">当前账号或超级管理员账号不能在此修改状态。</p>
     </div>
   </div>
 </template>

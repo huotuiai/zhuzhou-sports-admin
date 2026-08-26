@@ -8,8 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { buildDepartmentTree, getDepartmentDescendantIds } from '../lib/rbac'
-import { validateDepartmentInput } from '../services/rbac-service'
-import { useRbacStore } from '../stores/rbac-store'
+import { validateDepartmentInput } from '../services/user-management-validation'
+import { useUserManagementStore } from '../stores/user-management-store'
 import { useUnsavedDialogGuard } from '../composables/use-unsaved-dialog-guard'
 import DepartmentForm from './DepartmentForm.vue'
 
@@ -19,7 +19,7 @@ type PendingAction = { type: 'close' } | { type: 'cancel' } | { type: 'select'; 
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
-const store = useRbacStore()
+const store = useUserManagementStore()
 const selectedId = ref<string | null>(null)
 const expandedIds = ref(new Set<string>())
 const mode = ref<EditMode>('view')
@@ -48,11 +48,11 @@ const excludedParentIds = computed(() => mode.value === 'edit' && selected.value
   ? [selected.value.id, ...getDepartmentDescendantIds(selected.value.id, store.departments)]
   : [])
 const selectedParent = computed(() => store.departments.find(item => item.id === selected.value?.parentId) ?? null)
-const selectedOwner = computed(() => store.users.find(user => user.id === selected.value?.ownerUserId) ?? null)
-const selectedChildCount = computed(() => store.departments.filter(item => item.parentId === selected.value?.id).length)
-const selectedUserCount = computed(() => store.users.filter(user => selected.value && user.departmentIds.includes(selected.value.id)).length)
-const deleteChildCount = computed(() => store.departments.filter(item => item.parentId === deleteTarget.value?.id).length)
-const deleteUserCount = computed(() => store.users.filter(user => deleteTarget.value && user.departmentIds.includes(deleteTarget.value.id)).length)
+const selectedOwner = computed(() => store.departmentLeaderCandidates.find(user => user.id === selected.value?.ownerUserId) ?? null)
+const selectedChildCount = computed(() => selected.value?.childCount ?? 0)
+const selectedUserCount = computed(() => selected.value?.userCount ?? 0)
+const deleteChildCount = computed(() => deleteTarget.value?.childCount ?? 0)
+const deleteUserCount = computed(() => deleteTarget.value?.userCount ?? 0)
 const deleteBlocked = computed(() => deleteChildCount.value > 0 || deleteUserCount.value > 0)
 
 useUnsavedDialogGuard(() => props.open && mode.value !== 'view', () => formDirty.value, '组织架构')
@@ -64,11 +64,12 @@ watch(() => store.departments.map(item => item.id), (ids) => {
   expandedIds.value = next
 }, { immediate: true })
 
-watch(() => props.open, (open) => {
+watch(() => props.open, async (open) => {
   if (!open) return
   if (!selected.value) selectedId.value = store.departments[0]?.id ?? null
   mode.value = 'view'
   issues.value = []
+  if (!await store.loadDepartmentLeaderCandidates() && props.open) showError('部门主管候选用户加载失败')
 })
 
 function showError(fallback: string): void { toast.error(store.error ?? fallback); store.resetError() }
@@ -124,7 +125,7 @@ function handleEscape(event: Event): void { event.preventDefault(); requestClose
 function handleOutside(event: Event): void { event.preventDefault(); requestClose() }
 async function saveDepartment(): Promise<void> {
   const isCreate = mode.value === 'create'
-  issues.value = validateDepartmentInput(formValue.value, store.snapshot, mode.value === 'edit' ? selected.value?.id : undefined)
+  issues.value = validateDepartmentInput(formValue.value, store.validationContext, mode.value === 'edit' ? selected.value?.id : undefined)
   await nextTick()
   if (!formRef.value?.validateAndFocus() || issues.value.length) return
   const saved = isCreate
@@ -140,7 +141,7 @@ async function removeDepartment(): Promise<void> {
   if (!deleteTarget.value || deleteBlocked.value) return
   const id = deleteTarget.value.id
   const parentId = deleteTarget.value.parentId
-  const removed = await store.removeDepartment(id)
+  const removed = await store.deleteDepartment(id)
   if (!removed) return showError('部门删除失败')
   deleteTarget.value = null
   selectedId.value = parentId ?? store.departments[0]?.id ?? null
@@ -184,7 +185,7 @@ async function removeDepartment(): Promise<void> {
               <div class="flex flex-wrap gap-2"><Button type="button" variant="outline" class="h-11" @click="startCreate(selected.parentId)"><CirclePlus />新增同级</Button><Button type="button" variant="outline" class="h-11" @click="startCreate(selected.id)"><CirclePlus />新增下级</Button><Button type="button" class="h-11" @click="startEdit"><PencilLine />编辑</Button></div>
             </div>
             <div class="mt-5 grid gap-3 sm:grid-cols-2">
-              <div class="rounded-xl border bg-card/70 p-4"><p class="text-xs text-muted-foreground">部门主管</p><div class="mt-3 flex items-center gap-3"><span class="grid size-9 place-items-center rounded-full bg-primary/10 text-primary"><UserRound class="size-4" /></span><div><p class="text-sm font-medium">{{ selectedOwner?.name ?? '暂未设置' }}</p><p class="mt-0.5 text-xs text-muted-foreground">{{ selectedOwner?.username ?? '可在编辑中搜索选择' }}</p></div></div></div>
+              <div class="rounded-xl border bg-card/70 p-4"><p class="text-xs text-muted-foreground">部门主管</p><div class="mt-3 flex items-center gap-3"><span class="grid size-9 place-items-center rounded-full bg-primary/10 text-primary"><UserRound class="size-4" /></span><div><p class="text-sm font-medium">{{ selectedOwner?.name ?? selected.ownerName ?? '暂未设置' }}</p><p class="mt-0.5 text-xs text-muted-foreground">{{ selectedOwner?.username ?? (selected.ownerName ? '主管用户信息加载中' : '可在编辑中搜索选择') }}</p></div></div></div>
               <div class="rounded-xl border bg-card/70 p-4"><p class="text-xs text-muted-foreground">引用概况</p><div class="mt-3 flex items-center gap-3"><span class="grid size-9 place-items-center rounded-full bg-primary/10 text-primary"><Users class="size-4" /></span><div><p class="text-sm font-medium">{{ selectedUserCount }} 个用户</p><p class="mt-0.5 text-xs text-muted-foreground">{{ selectedChildCount }} 个直属下级部门</p></div></div></div>
               <div class="rounded-xl border bg-card/70 p-4"><p class="text-xs text-muted-foreground">同级排序</p><p class="mt-3 text-lg font-semibold tabular-nums">{{ selected.sort }}</p></div>
               <div class="rounded-xl border bg-card/70 p-4"><p class="text-xs text-muted-foreground">最后更新</p><p class="mt-3 text-sm font-medium">{{ new Date(selected.updatedAt).toLocaleString('zh-CN', { hour12: false }) }}</p></div>
@@ -194,7 +195,7 @@ async function removeDepartment(): Promise<void> {
 
           <template v-else-if="mode !== 'view'">
             <div class="mb-5 border-b pb-4"><div class="flex items-center gap-2"><h3 class="text-xl font-semibold">{{ mode === 'create' ? '新增部门' : '编辑部门' }}</h3><Badge v-if="formDirty" class="border-warning/30 bg-warning/10 text-warning hover:bg-warning/10">未保存</Badge></div><p class="mt-2 text-sm text-muted-foreground">{{ mode === 'create' ? '配置部门层级、主管、排序与状态。' : `正在编辑：${selected?.name ?? ''}` }}</p></div>
-            <DepartmentForm ref="formRef" :value="formValue" :departments="store.departments" :users="store.users" :issues="issues" :excluded-ids="excludedParentIds" :saving="store.isSaving" @update:value="formValue = $event; issues = []" />
+            <DepartmentForm ref="formRef" :value="formValue" :departments="store.departments" :users="store.departmentLeaderCandidates" :issues="issues" :excluded-ids="excludedParentIds" :saving="store.isSaving || store.isLoadingLeaderCandidates" @update:value="formValue = $event; issues = []" />
             <div class="mt-6 flex justify-end gap-2 border-t pt-5"><Button type="button" variant="outline" class="h-11 min-w-24" :disabled="store.isSaving" @click="requestCancel">取消</Button><Button type="button" class="h-11 min-w-28" :disabled="store.isSaving" @click="saveDepartment"><LoaderCircle v-if="store.isSaving" class="animate-spin motion-reduce:animate-none" /><Save v-else />{{ store.isSaving ? '保存中' : '保存部门' }}</Button></div>
           </template>
 

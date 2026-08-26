@@ -32,7 +32,7 @@ defineExpose({ validateAndFocus })
   <div ref="fieldsRef" class="grid gap-x-4 gap-y-5 sm:grid-cols-2">
     <div class="space-y-2">
       <Label for="create-user-username">用户名 <span class="text-destructive">*</span></Label>
-      <Input id="create-user-username" data-field="username" :model-value="value.username" class="h-11 font-mono" placeholder="4–20 位字母、数字或下划线" autocomplete="off" :disabled="saving" :aria-invalid="Boolean(issueMap.get('username'))" @update:model-value="patch({ username: String($event) })" />
+      <Input id="create-user-username" data-field="username" :model-value="value.username" class="h-11 font-mono" placeholder="字母开头，4–32 位字母、数字或下划线" autocomplete="off" :disabled="saving" :aria-invalid="Boolean(issueMap.get('username'))" @update:model-value="patch({ username: String($event) })" />
       <FormError :message="issueMap.get('username')" />
     </div>
     <div class="space-y-2">
@@ -57,7 +57,7 @@ defineExpose({ validateAndFocus })
     </div>
     <div class="space-y-2">
       <Label for="create-user-password">初始密码 <span class="text-destructive">*</span></Label>
-      <Input id="create-user-password" data-field="password" type="password" :model-value="value.password" class="h-11" placeholder="8–32 位，包含字母和数字" autocomplete="new-password" :disabled="saving" :aria-invalid="Boolean(issueMap.get('password'))" @update:model-value="patch({ password: String($event) })" />
+      <Input id="create-user-password" data-field="password" type="password" :model-value="value.password" class="h-11" placeholder="8–64 位，包含字母和数字" autocomplete="new-password" :disabled="saving" :aria-invalid="Boolean(issueMap.get('password'))" @update:model-value="patch({ password: String($event) })" />
       <FormError :message="issueMap.get('password')" />
     </div>
     <div class="space-y-2">
@@ -65,6 +65,6 @@ defineExpose({ validateAndFocus })
       <Input id="create-user-confirm-password" data-field="confirmPassword" type="password" :model-value="value.confirmPassword" class="h-11" placeholder="再次输入初始密码" autocomplete="new-password" :disabled="saving" :aria-invalid="Boolean(issueMap.get('confirmPassword'))" @update:model-value="patch({ confirmPassword: String($event) })" />
       <FormError :message="issueMap.get('confirmPassword')" />
     </div>
-    <p class="text-xs leading-5 text-muted-foreground sm:col-span-2">密码仅用于本次创建校验，不会以明文或可恢复形式写入本地存储。</p>
+    <p class="text-xs leading-5 text-muted-foreground sm:col-span-2">密码仅用于本次创建请求，不会以明文或可恢复形式写入浏览器存储。</p>
   </div>
 </template>

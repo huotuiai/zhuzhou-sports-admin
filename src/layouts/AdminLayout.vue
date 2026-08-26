@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import type { TodoItem } from '@/modules/todo/types'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   BellRingIcon,
@@ -8,7 +9,6 @@ import {
   LogOutIcon,
   UserRoundIcon,
 } from '@lucide/vue'
-import type { RouteLocationRaw } from 'vue-router'
 import AppSidebar from '@/components/navigation/AppSidebar.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { Avatar, AvatarBadge, AvatarFallback } from '@/components/ui/avatar'
@@ -27,8 +27,11 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useAuthStore } from '@/stores/auth'
+import { todoRoute, todoSuffix } from '@/modules/todo/lib/navigation'
+import { useTodoStore } from '@/modules/todo/stores/todo-store'
 
 const authStore = useAuthStore()
+const todoStore = useTodoStore()
 const route = useRoute()
 const router = useRouter()
 const currentUserName = computed(() => authStore.user?.name ?? '平台管理员')
@@ -38,29 +41,18 @@ const currentSectionTitle = computed(() => route.meta.sectionTitle
   ? String(route.meta.sectionTitle)
   : '')
 
-interface TodoItem {
-  id: string
-  label: string
-  count: number
-  suffix: string
-  to: RouteLocationRaw
-}
-
-const todoItems: readonly TodoItem[] = [
-  { id: 'feedback', label: '意见反馈未处理', count: 3, suffix: '条', to: { name: 'user-service-management', query: { tab: 'feedback', status: 'pending' } } },
-  { id: 'integration', label: '对接同步失败告警', count: 1, suffix: '项', to: { name: 'external-data-integration', query: { status: 'failed' } } },
-  { id: 'draft', label: '草稿内容待发布', count: 2, suffix: '条', to: { name: 'content-management', query: { status: 'draft' } } },
-]
-const totalTodoCount = computed(() => todoItems.reduce((total, item) => total + item.count, 0))
-
 async function handleTodo(item: TodoItem) {
-  await router.push(item.to)
+  await router.push(todoRoute(item))
 }
 
 async function handleLogout() {
   await authStore.logout()
   await router.replace({ name: 'login' })
 }
+
+onMounted(() => {
+  void todoStore.initialize()
+})
 </script>
 
 <template>
@@ -86,39 +78,39 @@ async function handleLogout() {
         </nav>
 
         <div class="ml-auto flex min-w-0 items-center gap-2">
-          <div class="hidden max-w-[600px] items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-primary/6 p-1 xl:flex" aria-label="运营待办">
+          <div v-if="todoStore.visibleItems.length" class="hidden max-w-[600px] items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-primary/6 p-1 xl:flex" aria-label="运营待办">
             <BellRingIcon class="mx-1 size-4 shrink-0 text-primary" aria-hidden="true" />
             <button
-              v-for="item in todoItems"
-              :key="item.id"
+              v-for="item in todoStore.visibleItems"
+              :key="item.key"
               type="button"
               class="inline-flex min-h-8 shrink-0 cursor-pointer items-center gap-1 rounded-full border border-primary/20 bg-card px-2.5 text-[11px] text-primary transition-colors duration-150 hover:border-primary/45 hover:bg-primary/8 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
               @click="handleTodo(item)"
             >
               {{ item.label }}
-              <strong class="tabular-nums" :class="item.id === 'draft' ? 'text-primary' : 'text-danger'">{{ item.count }}</strong>
-              {{ item.suffix }}
+              <strong class="tabular-nums" :class="item.key === 'content_draft' ? 'text-primary' : 'text-danger'">{{ item.count }}</strong>
+              {{ todoSuffix(item) }}
             </button>
           </div>
 
-          <DropdownMenu>
+          <DropdownMenu v-if="todoStore.visibleItems.length">
             <DropdownMenuTrigger as-child>
-              <Button variant="outline" size="icon" class="relative xl:hidden" :aria-label="`查看 ${totalTodoCount} 项运营待办`">
+              <Button variant="outline" size="icon" class="relative xl:hidden" :aria-label="`查看 ${todoStore.totalCount} 项运营待办`">
                 <BellRingIcon aria-hidden="true" />
-                <span class="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[9px] font-bold leading-4 text-white">{{ totalTodoCount }}</span>
+                <span class="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[9px] font-bold leading-4 text-white">{{ todoStore.totalCount }}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" :side-offset="8" class="w-64">
               <DropdownMenuLabel>运营待办</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                v-for="item in todoItems"
-                :key="item.id"
+                v-for="item in todoStore.visibleItems"
+                :key="item.key"
                 class="min-h-10 cursor-pointer justify-between"
                 @select="handleTodo(item)"
               >
                 <span>{{ item.label }}</span>
-                <strong class="tabular-nums text-danger">{{ item.count }} {{ item.suffix }}</strong>
+                <strong class="tabular-nums text-danger">{{ item.count }} {{ todoSuffix(item) }}</strong>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

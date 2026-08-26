@@ -1,108 +1,145 @@
-import type { UserServiceSnapshot } from '../types'
+import type {
+  ContactNumber,
+  FeedbackPage,
+  FeedbackQuery,
+  UserFeedback,
+  UserServiceService,
+} from '../types'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
-import {
-  createDefaultUserServiceSnapshot,
-  LocalUserService,
-  USER_SERVICE_SCHEMA_VERSION,
-  USER_SERVICE_STORAGE_KEY,
-} from '../services/user-service-service'
-import { createUserServiceStore, toShanghaiDateKey, USER_SERVICE_PAGE_SIZE, validateFeedbackQuery } from './user-service-store'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createUserServiceStore, DEFAULT_FEEDBACK_QUERY, validateFeedbackQuery } from './user-service-store'
 
-class MemoryStorage implements Storage {
-  private readonly values = new Map<string, string>()
+const timestamp = '2026-08-26T08:00:00+08:00'
 
-  get length(): number { return this.values.size }
-  clear(): void { this.values.clear() }
-  getItem(key: string): string | null { return this.values.get(key) ?? null }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null }
-  removeItem(key: string): void { this.values.delete(key) }
-  setItem(key: string, value: string): void { this.values.set(key, value) }
+function feedback(overrides: Partial<UserFeedback> = {}): UserFeedback {
+  return {
+    id: '1', code: 'FK-001', type: 'suggestion', content: '建议增加提醒。', contact: null,
+    submittedAt: timestamp, status: 'pending', handlerId: null, handlerName: null,
+    handledAt: null, handlingRemark: '', ...overrides,
+  }
+}
+
+function contact(overrides: Partial<ContactNumber> = {}): ContactNumber {
+  return {
+    id: '1', name: '服务热线', phone: '0731-22286666', sort: 1, displayEnabled: true,
+    enabled: true, createdAt: timestamp, updatedAt: timestamp, ...overrides,
+  }
+}
+
+function page(
+  feedbacks: UserFeedback[],
+  total = feedbacks.length,
+  currentPage = 1,
+  pageSize = 20,
+): FeedbackPage {
+  return { feedbacks, total, page: currentPage, pageSize }
+}
+
+function createService(overrides: Partial<UserServiceService> = {}): UserServiceService {
+  return {
+    listFeedbacks: async () => page([]),
+    getFeedback: async id => feedback({ id }),
+    handleFeedback: async (id, input) => feedback({
+      id, status: 'processed', handlingRemark: input.remark, handlerId: '9', handlerName: '管理员', handledAt: timestamp,
+    }),
+    exportFeedbacks: async () => ({ content: new Blob(['csv']), filename: 'feedbacks.csv' }),
+    listContacts: async () => [],
+    createContact: async input => contact({ ...input }),
+    updateContact: async (id, input) => contact({ id, ...input }),
+    deleteContact: async () => undefined,
+    ...overrides,
+  }
 }
 
 describe('user service store', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('filters by type, status, and inclusive Shanghai calendar dates', async () => {
-    const service = new LocalUserService({ storage: new MemoryStorage() })
-    const useStore = createUserServiceStore(service, 'user-service-filter-test')
-    const store = useStore()
-    expect(await store.load()).toBe(true)
-
-    expect(store.setQuery({ type: 'suggestion', status: 'pending', startDate: '2026-08-13', endDate: '2026-08-13' })).toBe(true)
-    expect(store.filteredFeedbacks.map((item) => item.code)).toEqual(['FK-001'])
-
-    expect(store.setQuery({ type: 'all', status: 'all', startDate: '2026-08-11', endDate: '2026-08-12' })).toBe(true)
-    expect(store.filteredFeedbacks.map((item) => item.code)).toEqual(['FK-003', 'FK-004'])
-
-    store.resetQuery()
-    expect(store.filteredFeedbacks).toHaveLength(4)
-    expect(store.currentPage).toBe(1)
-  })
-
-  it('rejects reversed date ranges without replacing the applied query', async () => {
-    const useStore = createUserServiceStore(new LocalUserService({ storage: new MemoryStorage() }), 'user-service-date-test')
-    const store = useStore()
-    await store.load()
-    const previous = { ...store.query }
-
-    expect(store.setQuery({ type: 'all', status: 'all', startDate: '2026-08-13', endDate: '2026-08-12' })).toBe(false)
-    expect(store.queryError).toBe('开始日期不能晚于结束日期')
-    expect(store.query).toEqual(previous)
-    expect(validateFeedbackQuery({ type: 'all', status: 'all', startDate: '', endDate: '' })).toBeNull()
-  })
-
-  it('paginates feedback with a fixed page size of 20 and clamps the page', async () => {
-    const storage = new MemoryStorage()
-    const base = createDefaultUserServiceSnapshot()
-    const feedback = base.feedbacks[0]!
-    const snapshot: UserServiceSnapshot = {
-      ...base,
-      feedbacks: Array.from({ length: 25 }, (_, index) => ({
-        ...feedback,
-        id: `feedback-${index + 1}`,
-        code: `FK-${String(index + 1).padStart(3, '0')}`,
-        submittedAt: new Date(Date.UTC(2026, 7, 17, 4, 0, 25 - index)).toISOString(),
-      })),
-    }
-    storage.setItem(USER_SERVICE_STORAGE_KEY, JSON.stringify({ schemaVersion: USER_SERVICE_SCHEMA_VERSION, snapshot }))
-    const useStore = createUserServiceStore(new LocalUserService({ storage }), 'user-service-page-test')
-    const store = useStore()
-    await store.load()
-
-    expect(store.paginatedFeedbacks).toHaveLength(USER_SERVICE_PAGE_SIZE)
-    expect(store.pageCount).toBe(2)
-    store.setPage(2)
-    expect(store.paginatedFeedbacks).toHaveLength(5)
-    store.setPage(99)
-    expect(store.currentPage).toBe(2)
-  })
-
-  it('updates feedback and contacts immediately after service mutations', async () => {
-    let idIndex = 0
-    const service = new LocalUserService({
-      storage: new MemoryStorage(),
-      createId: () => `generated-${++idIndex}`,
-      now: () => new Date('2026-08-17T04:00:00.000Z'),
+  it('initializes feedback, contacts and independent overview counts from the server', async () => {
+    const listFeedbacks = vi.fn(async (query: FeedbackQuery, _page: number, pageSize: number) => {
+      if (pageSize === 1 && query.status === 'pending') return page([], 3, 1, 1)
+      if (pageSize === 1) return page([], 8, 1, 1)
+      return page([feedback()], 8)
     })
-    const useStore = createUserServiceStore(service, 'user-service-mutation-test')
+    const useStore = createUserServiceStore(createService({
+      listFeedbacks,
+      listContacts: async () => [contact({ id: '2', sort: 2 }), contact({ id: '1', sort: 1 })],
+    }), 'user-service-initialize-test')
     const store = useStore()
-    await store.load()
-    const actor = { id: 'user-admin', name: '管理员' }
-    const pending = store.snapshot.feedbacks.find((item) => item.status === 'pending')!
 
-    expect(await store.handleFeedback(pending.id, { remark: '处理完成', markProcessed: true, actor })).toMatchObject({ status: 'processed' })
-    expect(store.pendingCount).toBe(2)
-
-    const created = await store.createContact({ name: '咨询热线', phone: '13800138000', sort: 3, displayEnabled: false }, actor)
-    expect(store.contacts.at(-1)?.id).toBe(created?.id)
-    expect(await store.removeContact(created!.id, actor)).toBe(true)
-    expect(store.contacts.some((item) => item.id === created!.id)).toBe(false)
-    expect(store.snapshot.auditLogs).toHaveLength(3)
+    expect(await store.initialize()).toBe(true)
+    expect(store.feedbacks).toHaveLength(1)
+    expect(store.contacts.map(item => item.id)).toEqual(['1', '2'])
+    expect(store.overallTotal).toBe(8)
+    expect(store.pendingCount).toBe(3)
+    expect(store.processedCount).toBe(5)
   })
 
-  it('converts timestamps to the fixed Asia/Shanghai calendar day', () => {
-    expect(toShanghaiDateKey('2026-08-12T16:30:00.000Z')).toBe('2026-08-13')
-    expect(toShanghaiDateKey('invalid')).toBe('')
+  it('uses server pagination and retains the applied page and query when a request fails', async () => {
+    let fail = false
+    const listFeedbacks = vi.fn(async (_query: FeedbackQuery, requestedPage: number, pageSize: number) => {
+      if (fail) throw new Error('网络异常')
+      return page([feedback({ id: String(requestedPage) })], 41, requestedPage, pageSize)
+    })
+    const useStore = createUserServiceStore(createService({ listFeedbacks }), 'user-service-pagination-test')
+    const store = useStore()
+
+    expect(await store.queryFeedbacks({ ...DEFAULT_FEEDBACK_QUERY, type: 'complaint' })).toBe(true)
+    expect(await store.changePage(2)).toBe(true)
+    expect(store.page).toBe(2)
+    expect(store.feedbacks[0]?.id).toBe('2')
+
+    fail = true
+    expect(await store.queryFeedbacks({ ...DEFAULT_FEEDBACK_QUERY, status: 'processed' })).toBe(false)
+    expect(store.query.type).toBe('complaint')
+    expect(store.page).toBe(2)
+    expect(store.feedbacks[0]?.id).toBe('2')
+  })
+
+  it('rejects reversed dates without sending a request', async () => {
+    const listFeedbacks = vi.fn(async () => page([]))
+    const useStore = createUserServiceStore(createService({ listFeedbacks }), 'user-service-date-test')
+    const store = useStore()
+    const invalid = { ...DEFAULT_FEEDBACK_QUERY, startDate: '2026-08-26', endDate: '2026-08-25' }
+
+    expect(await store.queryFeedbacks(invalid)).toBe(false)
+    expect(listFeedbacks).not.toHaveBeenCalled()
+    expect(store.queryError).toBe('开始日期不能晚于结束日期')
+    expect(validateFeedbackQuery(DEFAULT_FEEDBACK_QUERY)).toBeNull()
+  })
+
+  it('reloads the current feedback page, falls back one page, and refreshes counts after handling', async () => {
+    const listFeedbacks = vi.fn(async (query: FeedbackQuery, requestedPage: number, pageSize: number) => {
+      if (pageSize === 1 && query.status === 'pending') return page([], 19, 1, 1)
+      if (pageSize === 1) return page([], 20, 1, 1)
+      if (requestedPage === 2) return page([], 20, 2, 20)
+      return page([feedback({ id: '2' })], 20, 1, 20)
+    })
+    const handleFeedback = vi.fn(async () => feedback({ id: '21', status: 'processed', handlingRemark: '已回访' }))
+    const useStore = createUserServiceStore(createService({ listFeedbacks, handleFeedback }), 'user-service-handle-test')
+    const store = useStore()
+    store.page = 2
+    store.feedbacks = [feedback({ id: '21' })]
+
+    expect(await store.handleFeedback('21', { remark: '已回访' })).toMatchObject({ status: 'processed' })
+    expect(store.page).toBe(1)
+    expect(store.overallTotal).toBe(20)
+    expect(store.pendingCount).toBe(19)
+    expect(handleFeedback).toHaveBeenCalledWith('21', { remark: '已回访' })
+  })
+
+  it('updates and sorts contacts after real service mutations', async () => {
+    const createContact = vi.fn(async () => contact({ id: '2', name: '咨询热线', sort: 2 }))
+    const updateContact = vi.fn(async () => contact({ id: '2', name: '第一热线', sort: 1 }))
+    const deleteContact = vi.fn(async () => undefined)
+    const useStore = createUserServiceStore(createService({ createContact, updateContact, deleteContact }), 'user-service-contact-test')
+    const store = useStore()
+    store.contacts = [contact({ id: '1', sort: 3 })]
+    const input = { name: '咨询热线', phone: '400-123-4567', sort: 2, displayEnabled: true }
+
+    expect(await store.createContact(input)).toMatchObject({ id: '2' })
+    expect(store.contacts.map(item => item.id)).toEqual(['2', '1'])
+    expect(await store.updateContact('2', { ...input, name: '第一热线', sort: 1 })).toMatchObject({ name: '第一热线' })
+    expect(await store.deleteContact('2')).toBe(true)
+    expect(store.contacts.map(item => item.id)).toEqual(['1'])
   })
 })

@@ -5,7 +5,7 @@ import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { validateContactNumberInput } from '../services/user-service-service'
+import { validateContactNumberInput } from '../services/user-service-validation'
 
 const props = withDefaults(defineProps<{
   mode: 'create' | 'edit'
@@ -131,7 +131,7 @@ watch(() => props.mode, () => {
       <p v-if="issueFor('phone')" :id="`${inputId('phone')}-error`" class="flex items-center gap-1.5 text-xs text-destructive" role="alert">
         <AlertTriangle class="size-3.5" aria-hidden="true" />{{ issueFor('phone')?.message }}
       </p>
-      <p v-else :id="`${inputId('phone')}-hint`" class="text-xs leading-5 text-muted-foreground">支持中国大陆手机号和带区号的固定电话。</p>
+      <p v-else :id="`${inputId('phone')}-hint`" class="text-xs leading-5 text-muted-foreground">支持中国大陆手机号、带区号的固定电话以及 400/800 电话。</p>
     </div>
 
     <div class="col-span-2 flex min-h-20 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-4 py-3">

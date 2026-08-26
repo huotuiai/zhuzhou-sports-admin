@@ -26,7 +26,7 @@ defineExpose({ validateAndFocus })
   <div ref="fieldsRef" class="grid gap-5 sm:grid-cols-2">
     <div class="space-y-2">
       <Label for="reset-user-password">新密码 <span class="text-destructive">*</span></Label>
-      <Input id="reset-user-password" data-field="password" type="password" :model-value="value.password" class="h-11" placeholder="8–32 位，包含字母和数字" autocomplete="new-password" :disabled="saving" :aria-invalid="Boolean(issueMap.get('password'))" @update:model-value="patch({ password: String($event) })" />
+      <Input id="reset-user-password" data-field="password" type="password" :model-value="value.password" class="h-11" placeholder="8–64 位，包含字母和数字" autocomplete="new-password" :disabled="saving" :aria-invalid="Boolean(issueMap.get('password'))" @update:model-value="patch({ password: String($event) })" />
       <FormError :message="issueMap.get('password')" />
     </div>
     <div class="space-y-2">
@@ -35,7 +35,7 @@ defineExpose({ validateAndFocus })
       <FormError :message="issueMap.get('confirmPassword')" />
     </div>
     <div class="rounded-xl border border-warning/25 bg-warning/5 p-4 text-sm leading-6 text-muted-foreground sm:col-span-2">
-      保存后该用户会被标记为“下次登录需修改密码”。当前 mock 登录不执行真实认证拦截，密码内容也不会写入 localStorage。
+      保存后该用户会被标记为“下次登录需修改密码”，密码内容不会写入浏览器存储。
     </div>
   </div>
 </template>

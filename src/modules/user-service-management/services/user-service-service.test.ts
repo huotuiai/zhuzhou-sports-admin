@@ -1,144 +1,170 @@
-import type { ContactNumberWriteInput, FeedbackHandleInput, UserServiceActor } from '../types'
+import type { AxiosResponse } from 'axios'
+import type { SignedRequestConfig } from '@/lib/http'
+import type { FeedbackQuery } from '../types'
+import { AxiosHeaders } from 'axios'
 import { describe, expect, it } from 'vitest'
 import {
-  LocalUserService,
-  USER_SERVICE_SCHEMA_VERSION,
-  USER_SERVICE_STORAGE_KEY,
-  validateContactNumberInput,
-  validateFeedbackHandleInput,
+  createUserService,
+  feedbackExportFilename,
+  mapApiContact,
+  mapApiFeedback,
+} from './user-service-service'
+import type {
+  ApiContactPhone,
+  ApiFeedbackVO,
+  UserServiceDataRequester,
+  UserServiceFileRequester,
 } from './user-service-service'
 
-class MemoryStorage implements Storage {
-  private readonly values = new Map<string, string>()
+const timestamp = '2026-08-26T08:00:00+08:00'
 
-  get length(): number { return this.values.size }
-  clear(): void { this.values.clear() }
-  getItem(key: string): string | null { return this.values.get(key) ?? null }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null }
-  removeItem(key: string): void { this.values.delete(key) }
-  setItem(key: string, value: string): void { this.values.set(key, value) }
+function apiFeedback(overrides: Partial<ApiFeedbackVO> = {}): ApiFeedbackVO {
+  return {
+    id: '9007199254740993',
+    create_at: timestamp,
+    update_at: timestamp,
+    code: 'FK-20260826-001',
+    feedback_type: 'suggest',
+    content: '建议增加路线提醒。',
+    contact: '13800138000',
+    handle_status: 0,
+    handler_id: null,
+    handled_at: null,
+    handle_remark: null,
+    type_label: '建议',
+    handler_name: '',
+    ...overrides,
+  }
 }
 
-const actor: UserServiceActor = { id: 'user-admin', name: '管理员' }
-
-function contactInput(overrides: Partial<ContactNumberWriteInput> = {}): ContactNumberWriteInput {
-  return { name: '场馆总机', phone: '0731-22286666', sort: 3, displayEnabled: true, ...overrides }
+function apiContact(overrides: Partial<ApiContactPhone> = {}): ApiContactPhone {
+  return {
+    id: 8,
+    create_at: timestamp,
+    update_at: timestamp,
+    name: '服务热线',
+    phone: '0731-22286666',
+    sort_order: 2,
+    visible: 1,
+    status: 1,
+    ...overrides,
+  }
 }
 
-function feedbackInput(overrides: Partial<FeedbackHandleInput> = {}): FeedbackHandleInput {
-  return { remark: '已完成电话回访并记录处理结果。', markProcessed: true, actor, ...overrides }
+const defaultQuery: FeedbackQuery = { type: 'all', status: 'all', startDate: '', endDate: '' }
+
+function queuedRequester(responses: unknown[]) {
+  const configs: SignedRequestConfig[] = []
+  const request: UserServiceDataRequester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+    configs.push(config as SignedRequestConfig)
+    return responses.shift() as T
+  }
+  return { configs, request }
 }
 
-describe('LocalUserService', () => {
-  it('seeds and persists the prototype snapshot with a schema version', async () => {
-    const storage = new MemoryStorage()
-    const service = new LocalUserService({ storage })
-
-    const snapshot = await service.load()
-    expect(snapshot.feedbacks).toHaveLength(4)
-    expect(snapshot.contacts.map((item) => item.name)).toEqual(['服务热线', '紧急求助'])
-    expect(snapshot.feedbacks.map((item) => item.code)).toEqual(['FK-001', 'FK-002', 'FK-003', 'FK-004'])
-
-    const stored = JSON.parse(storage.getItem(USER_SERVICE_STORAGE_KEY) ?? '{}') as { schemaVersion?: number }
-    expect(stored.schemaVersion).toBe(USER_SERVICE_SCHEMA_VERSION)
-    expect(await new LocalUserService({ storage }).load()).toEqual(snapshot)
-  })
-
-  it('handles pending feedback, records the actor, and never reopens processed feedback', async () => {
-    const storage = new MemoryStorage()
-    const timestamps = [
-      new Date('2026-08-17T02:00:00.000Z'),
-      new Date('2026-08-17T03:00:00.000Z'),
-    ]
-    let timeIndex = 0
-    let idIndex = 0
-    const service = new LocalUserService({
-      storage,
-      now: () => timestamps[timeIndex++]!,
-      createId: () => `audit-${++idIndex}`,
+describe('user service API service', () => {
+  it('maps feedback enums, nullable fields and int64 identifiers', () => {
+    expect(mapApiFeedback(apiFeedback())).toEqual({
+      id: '9007199254740993',
+      code: 'FK-20260826-001',
+      type: 'suggestion',
+      content: '建议增加路线提醒。',
+      contact: '13800138000',
+      submittedAt: timestamp,
+      status: 'pending',
+      handlerId: null,
+      handlerName: null,
+      handledAt: null,
+      handlingRemark: '',
     })
-    const pending = (await service.load()).feedbacks.find((item) => item.code === 'FK-001')!
-
-    const processed = await service.handleFeedback(pending.id, feedbackInput())
-    expect(processed).toMatchObject({
-      status: 'processed',
-      handlerId: actor.id,
-      handlerName: actor.name,
-      handledAt: timestamps[0]!.toISOString(),
+    expect(mapApiFeedback(apiFeedback({
+      feedback_type: 'complain', handle_status: 1, handler_id: '9007199254740995',
+      handler_name: '管理员', handled_at: timestamp, handle_remark: '已回访',
+    }))).toMatchObject({
+      type: 'complaint', status: 'processed', handlerId: '9007199254740995',
+      handlerName: '管理员', handledAt: timestamp, handlingRemark: '已回访',
     })
-
-    const updated = await service.handleFeedback(pending.id, feedbackInput({ remark: '补充回访结果', markProcessed: false }))
-    expect(updated.status).toBe('processed')
-    expect(updated.handlingRemark).toBe('补充回访结果')
-    expect((await service.listAuditLogs()).map((item) => item.action)).toEqual([
-      'update-feedback-remark',
-      'handle-feedback',
-    ])
   })
 
-  it('allows saving a remark while a pending feedback remains pending', async () => {
-    const service = new LocalUserService({ storage: new MemoryStorage(), createId: () => 'audit-1' })
-    const pending = (await service.load()).feedbacks.find((item) => item.code === 'FK-002')!
-    const updated = await service.handleFeedback(pending.id, feedbackInput({ markProcessed: false }))
-
-    expect(updated).toMatchObject({ status: 'pending', handlerId: null, handledAt: null })
-    expect(updated.handlingRemark).toBe(feedbackInput().remark)
-  })
-
-  it('persists contact CRUD in sort order and writes audit records', async () => {
-    const storage = new MemoryStorage()
-    let idIndex = 0
-    let timeIndex = 0
-    const timestamps = [
-      new Date('2026-08-17T01:00:00.000Z'),
-      new Date('2026-08-17T02:00:00.000Z'),
-      new Date('2026-08-17T03:00:00.000Z'),
-    ]
-    const service = new LocalUserService({
-      storage,
-      now: () => timestamps[timeIndex++]!,
-      createId: () => `generated-${++idIndex}`,
+  it('maps contact fields including visibility and backend status', () => {
+    expect(mapApiContact(apiContact({ visible: 0, status: 0 }))).toEqual({
+      id: '8', name: '服务热线', phone: '0731-22286666', sort: 2,
+      displayEnabled: false, enabled: false, createdAt: timestamp, updatedAt: timestamp,
     })
-    await service.load()
-
-    const created = await service.createContact(contactInput({ sort: 1, phone: ' 0731-2228 7777 ' }), actor)
-    expect(created.phone).toBe('0731-2228 7777')
-    expect((await service.load()).contacts[1]?.id).toBe(created.id)
-
-    const updated = await service.updateContact(created.id, contactInput({ name: '咨询热线', sort: 4 }), actor)
-    expect(updated).toMatchObject({ name: '咨询热线', sort: 4, createdAt: created.createdAt })
-
-    await service.removeContact(created.id, actor)
-    expect((await service.load()).contacts.some((item) => item.id === created.id)).toBe(false)
-    expect((await service.listAuditLogs()).map((item) => item.action)).toEqual([
-      'delete-contact',
-      'update-contact',
-      'create-contact',
-    ])
   })
 
-  it('validates required remarks, phone formats, and positive sort values', () => {
-    expect(validateFeedbackHandleInput(feedbackInput({ remark: '  ' }))).toEqual([
-      { field: 'remark', code: 'required', message: '请填写处理备注' },
-    ])
-    expect(validateContactNumberInput(contactInput({ name: '', phone: '12345', sort: 0 }))).toEqual([
-      { field: 'name', code: 'required', message: '请输入号码名称' },
-      { field: 'phone', code: 'invalid', message: '请输入正确的手机号或固定电话' },
-      { field: 'sort', code: 'positive_integer', message: '排序必须是大于 0 的整数' },
-    ])
-    expect(validateContactNumberInput(contactInput({ phone: '13800138000' }))).toEqual([])
+  it('serializes feedback filters and server pagination', async () => {
+    const { configs, request } = queuedRequester([{
+      list: [apiFeedback()], total: '41', page: 2, page_size: 20,
+    }])
+    const service = createUserService(request)
+    const result = await service.listFeedbacks({
+      type: 'error', status: 'processed', startDate: '2026-08-01', endDate: '2026-08-26',
+    }, 2, 20)
+
+    expect(result).toMatchObject({ total: 41, page: 2, pageSize: 20 })
+    expect(configs[0]).toMatchObject({
+      method: 'GET', url: 'api/v1/admin/feedbacks',
+      params: { page: 2, page_size: 20, feedback_type: 'bug', handle_status: 1, from: '2026-08-01', to: '2026-08-26' },
+    })
   })
 
-  it('reports corrupted storage and missing records', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(USER_SERVICE_STORAGE_KEY, '{invalid')
-    const service = new LocalUserService({ storage })
-    await expect(service.load()).rejects.toMatchObject({ code: 'storage_corrupted' })
+  it('requests feedback detail and submits only the normalized handle remark', async () => {
+    const { configs, request } = queuedRequester([apiFeedback(), apiFeedback({ handle_status: 1 })])
+    const service = createUserService(request)
 
-    storage.clear()
-    await service.load()
-    await expect(service.handleFeedback('missing', feedbackInput())).rejects.toMatchObject({ code: 'not_found' })
-    await expect(service.updateContact('missing', contactInput(), actor)).rejects.toMatchObject({ code: 'not_found' })
-    await expect(service.removeContact('missing', actor)).rejects.toMatchObject({ code: 'not_found' })
+    await service.getFeedback('9007199254740993')
+    await service.handleFeedback('9007199254740993', { remark: '  已处理  ' })
+
+    expect(configs[0]).toMatchObject({ method: 'GET', url: 'api/v1/admin/feedbacks/9007199254740993' })
+    expect(configs[1]).toMatchObject({
+      method: 'POST', url: 'api/v1/admin/feedbacks/9007199254740993/handle', data: { handle_remark: '已处理' },
+    })
+  })
+
+  it('creates, updates and deletes contacts with the documented request bodies', async () => {
+    const { configs, request } = queuedRequester([apiContact(), apiContact({ visible: 0 }), { deleted: true }])
+    const service = createUserService(request)
+    const input = { name: ' 咨询热线 ', phone: ' 400-123-4567 ', sort: 3, displayEnabled: false }
+
+    await service.createContact(input)
+    await service.updateContact('8', input)
+    await service.deleteContact('8')
+
+    expect(configs[0]).toMatchObject({
+      method: 'POST', url: 'api/v1/admin/contacts',
+      data: { name: '咨询热线', phone: '400-123-4567', sort_order: 3, visible: 0, status: 1 },
+    })
+    expect(configs[1]).toMatchObject({
+      method: 'PATCH', url: 'api/v1/admin/contacts/8',
+      data: { name: '咨询热线', phone: '400-123-4567', sort_order: 3, visible: 0 },
+    })
+    expect(configs[1]?.data).not.toHaveProperty('status')
+    expect(configs[2]).toMatchObject({ method: 'DELETE', url: 'api/v1/admin/contacts/8' })
+  })
+
+  it('downloads the server CSV using current filters and a safe response filename', async () => {
+    const { request } = queuedRequester([])
+    const fileConfigs: SignedRequestConfig[] = []
+    const csv = new Blob(['\uFEFF反馈编号,类型'], { type: 'text/csv;charset=utf-8' })
+    const requestFile: UserServiceFileRequester = async (config): Promise<AxiosResponse<Blob>> => {
+      fileConfigs.push(config)
+      return {
+        data: csv,
+        status: 200,
+        statusText: 'OK',
+        headers: new AxiosHeaders({ 'content-disposition': "attachment; filename*=UTF-8''feedback%20list.csv" }),
+        config: { ...config, headers: new AxiosHeaders() },
+      }
+    }
+    const service = createUserService(request, requestFile)
+    const file = await service.exportFeedbacks({ ...defaultQuery, status: 'pending' })
+
+    expect(file).toEqual({ content: csv, filename: 'feedback list.csv' })
+    expect(fileConfigs[0]).toMatchObject({
+      method: 'GET', url: 'api/v1/admin/feedbacks/export', params: { handle_status: 0 }, responseType: 'blob',
+    })
+    expect(feedbackExportFilename('attachment; filename="../feedbacks.csv"')).toBe('.._feedbacks.csv')
+    expect(feedbackExportFilename(null)).toBe('feedbacks.csv')
   })
 })

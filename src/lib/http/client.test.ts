@@ -141,4 +141,64 @@ describe('API client', () => {
     await requestData({ url: 'api/v1/admin/example' }, client)
     expect(refreshCount).toBe(1)
   })
+
+  it('parses JSON business errors returned as blobs for file requests', async () => {
+    const adapter: AxiosAdapter = async (config) => ({
+      data: new Blob([JSON.stringify({ code: 40300, message: '没有导出权限', data: {} })], { type: 'application/json' }),
+      status: 200,
+      statusText: 'OK',
+      headers: new AxiosHeaders({ 'content-type': 'application/json' }),
+      config,
+    })
+    const client = createApiClient({
+      adapter,
+      getSignSecret: () => 'test-secret',
+      getSession: () => session('token-1'),
+    })
+
+    await expect(client.request({ url: 'api/v1/admin/audits/export', responseType: 'blob' })).rejects.toMatchObject({
+      code: 40300,
+      message: '没有导出权限',
+      kind: 'business',
+    })
+  })
+
+  it('refreshes and retries when a blob file response carries 40100', async () => {
+    let currentSession = session('old-token')
+    let refreshCount = 0
+    const csv = new Blob(['\uFEFF操作时间,操作者'], { type: 'text/csv' })
+    const adapter: AxiosAdapter = async (config) => {
+      if (String(config.headers.get('Authorization')).includes('old-token')) {
+        return {
+          data: new Blob([JSON.stringify({ code: 40100, message: 'JWT 无效', data: {} })], { type: 'application/json' }),
+          status: 200,
+          statusText: 'OK',
+          headers: new AxiosHeaders({ 'content-type': 'application/json' }),
+          config,
+        }
+      }
+      return {
+        data: csv,
+        status: 200,
+        statusText: 'OK',
+        headers: new AxiosHeaders({ 'content-type': 'text/csv' }),
+        config,
+      }
+    }
+    const client = createApiClient({
+      adapter,
+      getSignSecret: () => 'test-secret',
+      getSession: () => currentSession,
+      authHandlers: {
+        refresh: async () => {
+          refreshCount += 1
+          currentSession = session('new-token')
+        },
+      },
+    })
+
+    const response = await client.request<Blob>({ url: 'api/v1/admin/audits/export', responseType: 'blob' })
+    expect(response.data).toBe(csv)
+    expect(refreshCount).toBe(1)
+  })
 })

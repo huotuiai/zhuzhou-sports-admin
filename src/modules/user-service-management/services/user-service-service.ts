@@ -1,424 +1,282 @@
+import type { AxiosResponse } from 'axios'
+import type { SignedRequestConfig } from '@/lib/http'
 import type {
   ContactNumber,
-  ContactNumberValidationField,
-  ContactNumberWriteInput,
-  FeedbackHandleInput,
-  FeedbackHandleValidationField,
+  FeedbackExportFile,
+  FeedbackPage,
+  FeedbackQuery,
+  FeedbackStatus,
+  FeedbackType,
   UserFeedback,
-  UserServiceActor,
-  UserServiceAuditAction,
-  UserServiceAuditLog,
   UserServiceService,
-  UserServiceSnapshot,
-  ValidationIssue,
 } from '../types'
-import { createClientId } from '@/lib/id'
+import { ApiError, rawHttpClient, requestData } from '@/lib/http'
+import { sanitizeContactNumberInput, sanitizeFeedbackHandleInput } from './user-service-validation'
 
-export const USER_SERVICE_STORAGE_KEY = 'zz-sports-user-services:v1'
-export const USER_SERVICE_SCHEMA_VERSION = 1
-const MAX_AUDIT_LOGS = 200
-
-interface StoredUserServices {
-  schemaVersion: typeof USER_SERVICE_SCHEMA_VERSION
-  snapshot: UserServiceSnapshot
+export interface ApiFeedbackVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  code: string
+  feedback_type: string
+  content: string
+  contact: string | null
+  handle_status: number
+  handler_id: number | string | null
+  handled_at: string | null
+  handle_remark: string | null
+  type_label: string
+  handler_name: string | null
 }
 
-export type UserServiceErrorCode = 'storage_corrupted' | 'not_found' | 'invalid_input'
-
-export class UserServiceError extends Error {
-  readonly code: UserServiceErrorCode
-
-  constructor(
-    code: UserServiceErrorCode,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options)
-    this.name = 'UserServiceError'
-    this.code = code
-  }
+export interface ApiContactPhone {
+  id: number | string
+  create_at: string
+  update_at: string
+  name: string
+  phone: string
+  sort_order: number
+  visible: number
+  status: number
 }
 
-export interface LocalUserServiceOptions {
-  storage?: Storage
-  createId?: () => string
-  now?: () => Date
+interface ApiPage<T> {
+  list: T[]
+  total: number | string
+  page: number
+  page_size: number
 }
 
-function normalizeText(value: string): string {
-  return value.trim().normalize('NFKC')
+interface ApiFeedbackHandleRequest {
+  handle_remark: string
 }
 
-function normalizePhone(value: string): string {
-  return normalizeText(value).replace(/\s+/g, ' ')
+interface ApiContactWriteRequest {
+  name: string
+  phone: string
+  sort_order: number
+  visible: 0 | 1
+  status?: 1
 }
 
-function cloneFeedback(item: UserFeedback): UserFeedback {
-  return { ...item }
+export interface UserServiceDataRequester {
+  <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
 }
 
-function cloneContact(item: ContactNumber): ContactNumber {
-  return { ...item }
+export interface UserServiceFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
-function cloneAudit(item: UserServiceAuditLog): UserServiceAuditLog {
-  return { ...item }
+function responseError(message: string): ApiError {
+  return new ApiError(message, { kind: 'response' })
 }
 
-function cloneSnapshot(snapshot: UserServiceSnapshot): UserServiceSnapshot {
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value) throw responseError(`服务器返回的${field}不完整`)
+  return value
+}
+
+function nullableText(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function integer(value: unknown, fallback = 0): number {
+  const result = Number(value)
+  return Number.isInteger(result) ? result : fallback
+}
+
+function nonNegativeInteger(value: unknown): number {
+  return Math.max(0, integer(value))
+}
+
+function endpoint(path: string, id: string, suffix = ''): string {
+  return `${path}/${encodeURIComponent(id)}${suffix}`
+}
+
+function mapFeedbackType(value: unknown): FeedbackType {
+  if (value === 'bug') return 'error'
+  if (value === 'suggest') return 'suggestion'
+  if (value === 'complain') return 'complaint'
+  if (value === 'other') return 'other'
+  throw responseError('服务器返回的反馈类型无效')
+}
+
+function apiFeedbackType(value: Exclude<FeedbackQuery['type'], 'all'>): string {
+  if (value === 'error') return 'bug'
+  if (value === 'suggestion') return 'suggest'
+  if (value === 'complaint') return 'complain'
+  return 'other'
+}
+
+function mapFeedbackStatus(value: unknown): FeedbackStatus {
+  if (integer(value) === 0) return 'pending'
+  if (integer(value) === 1) return 'processed'
+  throw responseError('服务器返回的反馈处理状态无效')
+}
+
+export function mapApiFeedback(value: ApiFeedbackVO): UserFeedback {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的反馈 ID 不完整')
   return {
-    feedbacks: snapshot.feedbacks.map(cloneFeedback),
-    contacts: snapshot.contacts.map(cloneContact),
-    auditLogs: snapshot.auditLogs.map(cloneAudit),
+    id: String(value.id),
+    code: requiredText(value.code, '反馈编号'),
+    type: mapFeedbackType(value.feedback_type),
+    content: requiredText(value.content, '反馈内容'),
+    contact: nullableText(value.contact),
+    submittedAt: requiredText(value.create_at, '反馈提交时间'),
+    status: mapFeedbackStatus(value.handle_status),
+    handlerId: value.handler_id === undefined || value.handler_id === null ? null : String(value.handler_id),
+    handlerName: nullableText(value.handler_name)?.trim() || null,
+    handledAt: nullableText(value.handled_at),
+    handlingRemark: nullableText(value.handle_remark) || '',
   }
 }
 
-function sortSnapshot(snapshot: UserServiceSnapshot): UserServiceSnapshot {
+export function mapApiContact(value: ApiContactPhone): ContactNumber {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的联系电话 ID 不完整')
   return {
-    feedbacks: [...snapshot.feedbacks]
-      .sort((first, second) => second.submittedAt.localeCompare(first.submittedAt))
-      .map(cloneFeedback),
-    contacts: [...snapshot.contacts]
-      .sort((first, second) => first.sort - second.sort || first.createdAt.localeCompare(second.createdAt))
-      .map(cloneContact),
-    auditLogs: [...snapshot.auditLogs]
-      .sort((first, second) => second.createdAt.localeCompare(first.createdAt))
-      .map(cloneAudit),
+    id: String(value.id),
+    name: requiredText(value.name, '号码名称'),
+    phone: requiredText(value.phone, '联系电话'),
+    sort: integer(value.sort_order),
+    displayEnabled: integer(value.visible) === 1,
+    enabled: integer(value.status) === 1,
+    createdAt: requiredText(value.create_at, '联系电话创建时间'),
+    updatedAt: requiredText(value.update_at, '联系电话更新时间'),
   }
 }
 
-function isNullableString(value: unknown): value is string | null {
-  return value === null || typeof value === 'string'
-}
-
-function isFeedback(value: unknown): value is UserFeedback {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.code === 'string' &&
-    ['error', 'suggestion', 'complaint', 'other'].includes(String(item.type)) &&
-    typeof item.content === 'string' && isNullableString(item.contact) &&
-    typeof item.submittedAt === 'string' && ['pending', 'processed'].includes(String(item.status)) &&
-    isNullableString(item.handlerId) && isNullableString(item.handlerName) &&
-    isNullableString(item.handledAt) && typeof item.handlingRemark === 'string'
-}
-
-function isContact(value: unknown): value is ContactNumber {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.name === 'string' && typeof item.phone === 'string' &&
-    typeof item.sort === 'number' && Number.isInteger(item.sort) && item.sort > 0 &&
-    typeof item.displayEnabled === 'boolean' && typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
-}
-
-function isAudit(value: unknown): value is UserServiceAuditLog {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  const actions: UserServiceAuditAction[] = [
-    'handle-feedback', 'update-feedback-remark', 'create-contact', 'update-contact', 'delete-contact',
-  ]
-  return typeof item.id === 'string' && actions.includes(item.action as UserServiceAuditAction) &&
-    ['feedback', 'contact'].includes(String(item.entityType)) && typeof item.entityId === 'string' &&
-    typeof item.entityLabel === 'string' && typeof item.operatorId === 'string' &&
-    typeof item.operatorName === 'string' && typeof item.summary === 'string' && typeof item.createdAt === 'string'
-}
-
-function isSnapshot(value: unknown): value is UserServiceSnapshot {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return Array.isArray(item.feedbacks) && item.feedbacks.every(isFeedback) &&
-    Array.isArray(item.contacts) && item.contacts.every(isContact) &&
-    Array.isArray(item.auditLogs) && item.auditLogs.every(isAudit)
-}
-
-export function createDefaultUserServiceSnapshot(): UserServiceSnapshot {
+function mapFeedbackPage(value: ApiPage<ApiFeedbackVO>): FeedbackPage {
   return {
-    feedbacks: [
-      {
-        id: 'feedback-fk-001',
-        code: 'FK-001',
-        type: 'suggestion',
-        content: '建议在停车页增加目的地停车场剩余车位趋势图，方便用户出行前判断停车场繁忙程度，减少到场后排队等待。',
-        contact: '138****0000',
-        submittedAt: '2026-08-13T01:20:00.000Z',
-        status: 'pending',
-        handlerId: null,
-        handlerName: null,
-        handledAt: null,
-        handlingRemark: '',
-      },
-      {
-        id: 'feedback-fk-002',
-        code: 'FK-002',
-        type: 'error',
-        content: '座位图页 3D 模型加载较慢，弱网环境下出现白屏，建议增加骨架屏与资源预加载策略，并优化模型压缩体积。',
-        contact: null,
-        submittedAt: '2026-08-13T00:45:00.000Z',
-        status: 'pending',
-        handlerId: null,
-        handlerName: null,
-        handledAt: null,
-        handlingRemark: '',
-      },
-      {
-        id: 'feedback-fk-003',
-        code: 'FK-003',
-        type: 'complaint',
-        content: '8.12 活动日 P3 停车场满位信息更新不及时，用户到场发现满位，现场体验较差。希望活动日提高停车场数据同步频率。',
-        contact: '139****5678',
-        submittedAt: '2026-08-12T13:10:00.000Z',
-        status: 'pending',
-        handlerId: null,
-        handlerName: null,
-        handledAt: null,
-        handlingRemark: '',
-      },
-      {
-        id: 'feedback-fk-004',
-        code: 'FK-004',
-        type: 'suggestion',
-        content: '建议接驳页增加发车时间提醒功能，提前 10 分钟提醒用户前往乘车点，减少错过班次的情况。',
-        contact: null,
-        submittedAt: '2026-08-11T08:30:00.000Z',
-        status: 'processed',
-        handlerId: 'user-admin',
-        handlerName: '管理员',
-        handledAt: '2026-08-11T09:10:00.000Z',
-        handlingRemark: '已转接驳运营确认：将在下一版本加入提醒，预计 9 月初上线。',
-      },
-    ],
-    contacts: [
-      {
-        id: 'contact-service-hotline',
-        name: '服务热线',
-        phone: '0731-2228 6666',
-        sort: 1,
-        displayEnabled: true,
-        createdAt: '2026-08-01T01:00:00.000Z',
-        updatedAt: '2026-08-01T01:00:00.000Z',
-      },
-      {
-        id: 'contact-emergency',
-        name: '紧急求助',
-        phone: '0731-2228 9110',
-        sort: 2,
-        displayEnabled: true,
-        createdAt: '2026-08-01T01:05:00.000Z',
-        updatedAt: '2026-08-01T01:05:00.000Z',
-      },
-    ],
-    auditLogs: [],
+    feedbacks: Array.isArray(value.list) ? value.list.map(mapApiFeedback) : [],
+    total: nonNegativeInteger(value.total),
+    page: Math.max(1, integer(value.page, 1)),
+    pageSize: Math.max(1, integer(value.page_size, 20)),
   }
 }
 
-export function sanitizeContactNumberInput(input: ContactNumberWriteInput): ContactNumberWriteInput {
-  return {
-    name: normalizeText(input.name),
-    phone: normalizePhone(input.phone),
-    sort: Number(input.sort),
-    displayEnabled: Boolean(input.displayEnabled),
-  }
+function queryParams(query: FeedbackQuery, pagination?: { page: number; pageSize: number }): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
+  if (pagination) Object.assign(params, { page: pagination.page, page_size: pagination.pageSize })
+  if (query.type !== 'all') params.feedback_type = apiFeedbackType(query.type)
+  if (query.status !== 'all') params.handle_status = query.status === 'processed' ? 1 : 0
+  if (query.startDate) params.from = query.startDate
+  if (query.endDate) params.to = query.endDate
+  return params
 }
 
-export function validateContactNumberInput(
-  input: ContactNumberWriteInput,
-): ValidationIssue<ContactNumberValidationField>[] {
-  const value = sanitizeContactNumberInput(input)
-  const issues: ValidationIssue<ContactNumberValidationField>[] = []
-  if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入号码名称' })
-  if (!value.phone) issues.push({ field: 'phone', code: 'required', message: '请输入联系电话' })
-  else if (!/^(?:1\d{10}|0\d{2,3}-?\d{7,8})$/.test(value.phone.replace(/\s/g, ''))) {
-    issues.push({ field: 'phone', code: 'invalid', message: '请输入正确的手机号或固定电话' })
-  }
-  if (!Number.isInteger(value.sort) || value.sort <= 0) {
-    issues.push({ field: 'sort', code: 'positive_integer', message: '排序必须是大于 0 的整数' })
-  }
-  return issues
+function sortContacts(contacts: readonly ContactNumber[]): ContactNumber[] {
+  return [...contacts].sort((first, second) => first.sort - second.sort || first.createdAt.localeCompare(second.createdAt))
 }
 
-export function validateFeedbackHandleInput(
-  input: FeedbackHandleInput,
-): ValidationIssue<FeedbackHandleValidationField>[] {
-  const issues: ValidationIssue<FeedbackHandleValidationField>[] = []
-  if (!normalizeText(input.remark)) issues.push({ field: 'remark', code: 'required', message: '请填写处理备注' })
-  return issues
+function headerValue(response: AxiosResponse, name: string): string | null {
+  const direct = response.headers?.[name]
+  if (typeof direct === 'string') return direct
+  const headers = response.headers as { get?: (headerName: string) => unknown }
+  const getter = typeof headers.get === 'function' ? headers.get(name) : null
+  return typeof getter === 'string' ? getter : null
 }
 
-function validateActor(actor: UserServiceActor): void {
-  if (!normalizeText(actor.id) || !normalizeText(actor.name)) {
-    throw new UserServiceError('invalid_input', '当前操作人信息无效')
-  }
+function safeFilename(value: string): string {
+  const withoutControls = Array.from(value, character => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127 ? '_' : character).join('')
+  return withoutControls.replace(/[\\/]/g, '_').trim() || 'feedbacks.csv'
 }
 
-function resolveStorage(): Storage {
-  if (typeof globalThis.localStorage === 'undefined') {
-    throw new UserServiceError('storage_corrupted', '当前环境不支持本地存储')
-  }
-  return globalThis.localStorage
-}
-
-export class LocalUserService implements UserServiceService {
-  private readonly injectedStorage?: Storage
-  private readonly createId: () => string
-  private readonly now: () => Date
-
-  constructor(options: LocalUserServiceOptions = {}) {
-    this.injectedStorage = options.storage
-    this.createId = options.createId ?? createClientId
-    this.now = options.now ?? (() => new Date())
-  }
-
-  private get storage(): Storage {
-    return this.injectedStorage ?? resolveStorage()
-  }
-
-  private read(): UserServiceSnapshot {
-    const raw = this.storage.getItem(USER_SERVICE_STORAGE_KEY)
-    if (!raw) {
-      const snapshot = sortSnapshot(createDefaultUserServiceSnapshot())
-      this.write(snapshot)
-      return snapshot
-    }
+export function feedbackExportFilename(contentDisposition: string | null): string {
+  if (!contentDisposition) return 'feedbacks.csv'
+  const encoded = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
     try {
-      const parsed = JSON.parse(raw) as Partial<StoredUserServices>
-      if (parsed.schemaVersion !== USER_SERVICE_SCHEMA_VERSION || !isSnapshot(parsed.snapshot)) {
-        throw new Error('Invalid user service data')
+      return safeFilename(decodeURIComponent(encoded.replace(/^"|"$/g, '')))
+    }
+    catch {
+      // Fall through to the plain filename when the encoded value is malformed.
+    }
+  }
+  const plain = contentDisposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i)
+  return safeFilename((plain?.[1] ?? plain?.[2] ?? 'feedbacks.csv').trim())
+}
+
+const defaultFileRequester: UserServiceFileRequester = config => rawHttpClient.request<Blob>(config)
+
+export function createUserService(
+  request: UserServiceDataRequester = requestData,
+  requestFile: UserServiceFileRequester = defaultFileRequester,
+): UserServiceService {
+  return {
+    async listFeedbacks(query, page, pageSize) {
+      return mapFeedbackPage(await request<ApiPage<ApiFeedbackVO>>({
+        method: 'GET',
+        url: 'api/v1/admin/feedbacks',
+        params: queryParams(query, { page, pageSize }),
+      }))
+    },
+
+    async getFeedback(id) {
+      return mapApiFeedback(await request<ApiFeedbackVO>({
+        method: 'GET',
+        url: endpoint('api/v1/admin/feedbacks', id),
+      }))
+    },
+
+    async handleFeedback(id, input) {
+      const data: ApiFeedbackHandleRequest = { handle_remark: sanitizeFeedbackHandleInput(input).remark }
+      return mapApiFeedback(await request<ApiFeedbackVO, ApiFeedbackHandleRequest>({
+        method: 'POST',
+        url: endpoint('api/v1/admin/feedbacks', id, '/handle'),
+        data,
+      }))
+    },
+
+    async exportFeedbacks(query): Promise<FeedbackExportFile> {
+      const response = await requestFile({
+        method: 'GET',
+        url: 'api/v1/admin/feedbacks/export',
+        params: queryParams(query),
+        responseType: 'blob',
+        headers: { Accept: 'text/csv' },
+      })
+      return {
+        content: response.data,
+        filename: feedbackExportFilename(headerValue(response, 'content-disposition')),
       }
-      return sortSnapshot(parsed.snapshot)
-    } catch (error) {
-      throw new UserServiceError('storage_corrupted', '本地用户服务数据无法解析', { cause: error })
-    }
-  }
+    },
 
-  private write(snapshot: UserServiceSnapshot): void {
-    const envelope: StoredUserServices = {
-      schemaVersion: USER_SERVICE_SCHEMA_VERSION,
-      snapshot: cloneSnapshot(snapshot),
-    }
-    this.storage.setItem(USER_SERVICE_STORAGE_KEY, JSON.stringify(envelope))
-  }
+    async listContacts() {
+      const result = await request<ApiContactPhone[]>({ method: 'GET', url: 'api/v1/admin/contacts' })
+      return sortContacts(Array.isArray(result) ? result.map(mapApiContact) : [])
+    },
 
-  private audit(
-    snapshot: UserServiceSnapshot,
-    action: UserServiceAuditAction,
-    entityType: UserServiceAuditLog['entityType'],
-    entityId: string,
-    entityLabel: string,
-    actor: UserServiceActor,
-    summary: string,
-    timestamp: string,
-  ): void {
-    snapshot.auditLogs.push({
-      id: this.createId(),
-      action,
-      entityType,
-      entityId,
-      entityLabel,
-      operatorId: normalizeText(actor.id),
-      operatorName: normalizeText(actor.name),
-      summary,
-      createdAt: timestamp,
-    })
-    if (snapshot.auditLogs.length > MAX_AUDIT_LOGS) {
-      snapshot.auditLogs.splice(0, snapshot.auditLogs.length - MAX_AUDIT_LOGS)
-    }
-  }
+    async createContact(input) {
+      const value = sanitizeContactNumberInput(input)
+      const data: ApiContactWriteRequest = {
+        name: value.name,
+        phone: value.phone,
+        sort_order: value.sort,
+        visible: value.displayEnabled ? 1 : 0,
+        status: 1,
+      }
+      return mapApiContact(await request<ApiContactPhone, ApiContactWriteRequest>({
+        method: 'POST', url: 'api/v1/admin/contacts', data,
+      }))
+    },
 
-  async load(): Promise<UserServiceSnapshot> {
-    return cloneSnapshot(this.read())
-  }
+    async updateContact(id, input) {
+      const value = sanitizeContactNumberInput(input)
+      const data: ApiContactWriteRequest = {
+        name: value.name,
+        phone: value.phone,
+        sort_order: value.sort,
+        visible: value.displayEnabled ? 1 : 0,
+      }
+      return mapApiContact(await request<ApiContactPhone, ApiContactWriteRequest>({
+        method: 'PATCH', url: endpoint('api/v1/admin/contacts', id), data,
+      }))
+    },
 
-  async handleFeedback(id: string, input: FeedbackHandleInput): Promise<UserFeedback> {
-    validateActor(input.actor)
-    const issues = validateFeedbackHandleInput(input)
-    if (issues.length) throw new UserServiceError('invalid_input', issues[0]!.message)
-    const snapshot = this.read()
-    const feedback = snapshot.feedbacks.find((item) => item.id === id)
-    if (!feedback) throw new UserServiceError('not_found', '未找到要处理的反馈')
-
-    const timestamp = this.now().toISOString()
-    const wasProcessed = feedback.status === 'processed'
-    const nextStatus = wasProcessed || input.markProcessed ? 'processed' : 'pending'
-    feedback.handlingRemark = normalizeText(input.remark)
-    feedback.status = nextStatus
-    if (nextStatus === 'processed') {
-      feedback.handlerId = normalizeText(input.actor.id)
-      feedback.handlerName = normalizeText(input.actor.name)
-      feedback.handledAt = timestamp
-    }
-    this.audit(
-      snapshot,
-      wasProcessed ? 'update-feedback-remark' : 'handle-feedback',
-      'feedback',
-      feedback.id,
-      feedback.code,
-      input.actor,
-      nextStatus === 'processed' ? '保存处理备注并标记为已处理' : '保存处理备注，保留未处理状态',
-      timestamp,
-    )
-    this.write(snapshot)
-    return cloneFeedback(feedback)
-  }
-
-  async createContact(input: ContactNumberWriteInput, actor: UserServiceActor): Promise<ContactNumber> {
-    validateActor(actor)
-    const issues = validateContactNumberInput(input)
-    if (issues.length) throw new UserServiceError('invalid_input', issues[0]!.message)
-    const snapshot = this.read()
-    const value = sanitizeContactNumberInput(input)
-    const timestamp = this.now().toISOString()
-    const contact: ContactNumber = {
-      ...value,
-      id: this.createId(),
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    snapshot.contacts.push(contact)
-    this.audit(snapshot, 'create-contact', 'contact', contact.id, contact.name, actor, `新增联系电话 ${contact.phone}`, timestamp)
-    this.write(snapshot)
-    return cloneContact(contact)
-  }
-
-  async updateContact(
-    id: string,
-    input: ContactNumberWriteInput,
-    actor: UserServiceActor,
-  ): Promise<ContactNumber> {
-    validateActor(actor)
-    const issues = validateContactNumberInput(input)
-    if (issues.length) throw new UserServiceError('invalid_input', issues[0]!.message)
-    const snapshot = this.read()
-    const index = snapshot.contacts.findIndex((item) => item.id === id)
-    if (index < 0) throw new UserServiceError('not_found', '未找到要更新的联系电话')
-    const previous = snapshot.contacts[index]!
-    const value = sanitizeContactNumberInput(input)
-    const timestamp = this.now().toISOString()
-    const contact: ContactNumber = {
-      ...value,
-      id,
-      createdAt: previous.createdAt,
-      updatedAt: timestamp,
-    }
-    snapshot.contacts[index] = contact
-    this.audit(snapshot, 'update-contact', 'contact', contact.id, contact.name, actor, `更新联系电话 ${contact.phone}`, timestamp)
-    this.write(snapshot)
-    return cloneContact(contact)
-  }
-
-  async removeContact(id: string, actor: UserServiceActor): Promise<void> {
-    validateActor(actor)
-    const snapshot = this.read()
-    const contact = snapshot.contacts.find((item) => item.id === id)
-    if (!contact) throw new UserServiceError('not_found', '未找到要删除的联系电话')
-    snapshot.contacts = snapshot.contacts.filter((item) => item.id !== id)
-    const timestamp = this.now().toISOString()
-    this.audit(snapshot, 'delete-contact', 'contact', contact.id, contact.name, actor, `删除联系电话 ${contact.phone}`, timestamp)
-    this.write(snapshot)
-  }
-
-  async listAuditLogs(): Promise<UserServiceAuditLog[]> {
-    return this.read().auditLogs.map(cloneAudit)
+    async deleteContact(id) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/contacts', id) })
+    },
   }
 }
 
-// 后端接口就绪后，实现 UserServiceService 并在此替换实例即可。
-export const userServiceService: UserServiceService = new LocalUserService()
+export const userServiceService = createUserService()

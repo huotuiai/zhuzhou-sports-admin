@@ -1,38 +1,32 @@
 import type {
   ContactNumber,
   ContactNumberWriteInput,
+  FeedbackExportFile,
   FeedbackHandleInput,
   FeedbackQuery,
   UserFeedback,
-  UserServiceActor,
   UserServiceService,
-  UserServiceSnapshot,
 } from '../types'
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { userServiceService, validateContactNumberInput, validateFeedbackHandleInput } from '../services/user-service-service'
+import { userServiceService } from '../services/user-service-service'
+import { validateContactNumberInput, validateFeedbackHandleInput } from '../services/user-service-validation'
 
 export const USER_SERVICE_PAGE_SIZE = 20
 
-export const DEFAULT_FEEDBACK_QUERY: FeedbackQuery = {
+export const DEFAULT_FEEDBACK_QUERY: Readonly<FeedbackQuery> = {
   type: 'all',
   status: 'all',
   startDate: '',
   endDate: '',
 }
 
-function emptySnapshot(): UserServiceSnapshot {
-  return { feedbacks: [], contacts: [], auditLogs: [] }
-}
-
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请稍后重试'
+  return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
 }
 
-export function toShanghaiDateKey(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return new Date(date.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10)
+function sortContacts(records: readonly ContactNumber[]): ContactNumber[] {
+  return [...records].sort((first, second) => first.sort - second.sort || first.createdAt.localeCompare(second.createdAt))
 }
 
 export function validateFeedbackQuery(query: FeedbackQuery): string | null {
@@ -40,61 +34,126 @@ export function validateFeedbackQuery(query: FeedbackQuery): string | null {
   return null
 }
 
-function sortContacts(records: readonly ContactNumber[]): ContactNumber[] {
-  return [...records].sort((first, second) => first.sort - second.sort || first.createdAt.localeCompare(second.createdAt))
-}
-
-function sortFeedbacks(records: readonly UserFeedback[]): UserFeedback[] {
-  return [...records].sort((first, second) => second.submittedAt.localeCompare(first.submittedAt))
-}
-
 export function createUserServiceStore(service: UserServiceService, storeId = 'user-service-management') {
   return defineStore(storeId, () => {
-    const snapshot = ref<UserServiceSnapshot>(emptySnapshot())
+    const feedbacks = ref<UserFeedback[]>([])
+    const contacts = ref<ContactNumber[]>([])
     const query = reactive<FeedbackQuery>({ ...DEFAULT_FEEDBACK_QUERY })
     const page = ref(1)
-    const isLoading = ref(false)
+    const pageSize = ref(USER_SERVICE_PAGE_SIZE)
+    const total = ref(0)
+    const overallTotal = ref(0)
+    const pendingCount = ref(0)
+    const initialized = ref(false)
+    const isFeedbackLoading = ref(false)
+    const isContactsLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
     const deletingId = ref<string | null>(null)
+    const detailLoadingId = ref<string | null>(null)
     const error = ref<string | null>(null)
     const queryError = ref<string | null>(null)
+    let initializePromise: Promise<boolean> | null = null
 
-    const filteredFeedbacks = computed(() => sortFeedbacks(snapshot.value.feedbacks.filter((item) => {
-      if (query.type !== 'all' && item.type !== query.type) return false
-      if (query.status !== 'all' && item.status !== query.status) return false
-      const dateKey = toShanghaiDateKey(item.submittedAt)
-      if (query.startDate && dateKey < query.startDate) return false
-      if (query.endDate && dateKey > query.endDate) return false
-      return true
-    })))
-    const total = computed(() => filteredFeedbacks.value.length)
-    const pageCount = computed(() => Math.max(1, Math.ceil(total.value / USER_SERVICE_PAGE_SIZE)))
+    const processedCount = computed(() => Math.max(0, overallTotal.value - pendingCount.value))
+    const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
     const currentPage = computed(() => Math.min(Math.max(page.value, 1), pageCount.value))
-    const paginatedFeedbacks = computed(() => {
-      const start = (currentPage.value - 1) * USER_SERVICE_PAGE_SIZE
-      return filteredFeedbacks.value.slice(start, start + USER_SERVICE_PAGE_SIZE)
-    })
-    const contacts = computed(() => sortContacts(snapshot.value.contacts))
-    const pendingCount = computed(() => snapshot.value.feedbacks.filter((item) => item.status === 'pending').length)
+    const isLoading = computed(() => isFeedbackLoading.value || isContactsLoading.value)
 
-    function setQuery(next: FeedbackQuery): boolean {
-      const validation = validateFeedbackQuery(next)
+    function applyFeedbackPage(result: Awaited<ReturnType<UserServiceService['listFeedbacks']>>): void {
+      feedbacks.value = result.feedbacks
+      total.value = result.total
+      page.value = result.page
+      pageSize.value = result.pageSize
+    }
+
+    async function loadFeedbackPage(nextQuery: FeedbackQuery, nextPage: number): Promise<boolean> {
+      isFeedbackLoading.value = true
+      error.value = null
+      try {
+        applyFeedbackPage(await service.listFeedbacks(nextQuery, nextPage, pageSize.value))
+        return true
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return false
+      }
+      finally {
+        isFeedbackLoading.value = false
+      }
+    }
+
+    async function refreshOverview(): Promise<boolean> {
+      try {
+        const [all, pending] = await Promise.all([
+          service.listFeedbacks({ ...DEFAULT_FEEDBACK_QUERY }, 1, 1),
+          service.listFeedbacks({ ...DEFAULT_FEEDBACK_QUERY, status: 'pending' }, 1, 1),
+        ])
+        overallTotal.value = all.total
+        pendingCount.value = pending.total
+        return true
+      }
+      catch {
+        return false
+      }
+    }
+
+    async function loadContacts(): Promise<boolean> {
+      isContactsLoading.value = true
+      error.value = null
+      try {
+        contacts.value = sortContacts(await service.listContacts())
+        return true
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return false
+      }
+      finally {
+        isContactsLoading.value = false
+      }
+    }
+
+    async function initialize(initialQuery: FeedbackQuery = { ...query }, force = false): Promise<boolean> {
+      if (initialized.value && !force) return true
+      if (initializePromise) return initializePromise
+      const validation = validateFeedbackQuery(initialQuery)
       queryError.value = validation
       if (validation) return false
-      Object.assign(query, next)
-      page.value = 1
-      return true
+      initializePromise = Promise.all([
+        loadFeedbackPage(initialQuery, 1),
+        loadContacts(),
+        refreshOverview(),
+      ]).then(([feedbackLoaded, contactsLoaded, overviewLoaded]) => {
+        if (feedbackLoaded) Object.assign(query, initialQuery)
+        if (!overviewLoaded && !error.value) error.value = '反馈统计加载失败，请稍后重试'
+        initialized.value = feedbackLoaded && contactsLoaded && overviewLoaded
+        return initialized.value
+      }).finally(() => {
+        initializePromise = null
+      })
+      return initializePromise
     }
 
-    function resetQuery(): void {
-      Object.assign(query, DEFAULT_FEEDBACK_QUERY)
-      queryError.value = null
-      page.value = 1
+    async function queryFeedbacks(nextQuery: FeedbackQuery): Promise<boolean> {
+      const validation = validateFeedbackQuery(nextQuery)
+      queryError.value = validation
+      if (validation) return false
+      const loaded = await loadFeedbackPage(nextQuery, 1)
+      if (loaded) Object.assign(query, nextQuery)
+      return loaded
     }
 
-    function setPage(next: number): void {
-      if (!Number.isFinite(next)) return
-      page.value = Math.min(Math.max(Math.trunc(next), 1), pageCount.value)
+    async function resetQuery(): Promise<boolean> {
+      const loaded = await queryFeedbacks({ ...DEFAULT_FEEDBACK_QUERY })
+      if (loaded) queryError.value = null
+      return loaded
+    }
+
+    async function changePage(nextPage: number): Promise<boolean> {
+      const normalized = Number.isFinite(nextPage) ? Math.trunc(nextPage) : 1
+      const target = Math.min(Math.max(normalized, 1), pageCount.value)
+      return loadFeedbackPage({ ...query }, target)
     }
 
     function validateHandle(input: FeedbackHandleInput) {
@@ -105,17 +164,25 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       return validateContactNumberInput(input)
     }
 
-    async function load(): Promise<boolean> {
-      isLoading.value = true
+    async function getFeedback(id: string): Promise<UserFeedback | null> {
+      detailLoadingId.value = id
       error.value = null
       try {
-        snapshot.value = await service.load()
-        return true
-      } catch (cause) {
+        return await service.getFeedback(id)
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
-        return false
-      } finally {
-        isLoading.value = false
+        return null
+      }
+      finally {
+        detailLoadingId.value = null
+      }
+    }
+
+    async function refreshFeedbackAfterMutation(): Promise<void> {
+      const loaded = await loadFeedbackPage({ ...query }, page.value)
+      if (loaded && feedbacks.value.length === 0 && page.value > 1) {
+        await loadFeedbackPage({ ...query }, page.value - 1)
       }
     }
 
@@ -129,24 +196,37 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       error.value = null
       try {
         const feedback = await service.handleFeedback(id, input)
-        snapshot.value.feedbacks = sortFeedbacks([
-          ...snapshot.value.feedbacks.filter((item) => item.id !== id),
-          feedback,
-        ])
-        snapshot.value.auditLogs = await service.listAuditLogs()
+        feedbacks.value = feedbacks.value.map(item => item.id === feedback.id ? feedback : item)
+        await refreshFeedbackAfterMutation()
+        await refreshOverview()
         return feedback
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
       }
     }
 
-    async function createContact(
-      input: ContactNumberWriteInput,
-      actor: UserServiceActor,
-    ): Promise<ContactNumber | null> {
+    async function exportFeedbacks(): Promise<FeedbackExportFile | null> {
+      if (isExporting.value) return null
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.exportFeedbacks({ ...query })
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        isExporting.value = false
+      }
+    }
+
+    async function createContact(input: ContactNumberWriteInput): Promise<ContactNumber | null> {
       const issues = validateContact(input)
       if (issues.length) {
         error.value = issues[0]!.message
@@ -155,23 +235,20 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       isSaving.value = true
       error.value = null
       try {
-        const contact = await service.createContact(input, actor)
-        snapshot.value.contacts = sortContacts([...snapshot.value.contacts, contact])
-        snapshot.value.auditLogs = await service.listAuditLogs()
+        const contact = await service.createContact(input)
+        contacts.value = sortContacts([...contacts.value, contact])
         return contact
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
       }
     }
 
-    async function updateContact(
-      id: string,
-      input: ContactNumberWriteInput,
-      actor: UserServiceActor,
-    ): Promise<ContactNumber | null> {
+    async function updateContact(id: string, input: ContactNumberWriteInput): Promise<ContactNumber | null> {
       const issues = validateContact(input)
       if (issues.length) {
         error.value = issues[0]!.message
@@ -180,33 +257,32 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       isSaving.value = true
       error.value = null
       try {
-        const contact = await service.updateContact(id, input, actor)
-        snapshot.value.contacts = sortContacts([
-          ...snapshot.value.contacts.filter((item) => item.id !== id),
-          contact,
-        ])
-        snapshot.value.auditLogs = await service.listAuditLogs()
+        const contact = await service.updateContact(id, input)
+        contacts.value = sortContacts([...contacts.value.filter(item => item.id !== id), contact])
         return contact
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
       }
     }
 
-    async function removeContact(id: string, actor: UserServiceActor): Promise<boolean> {
+    async function deleteContact(id: string): Promise<boolean> {
       deletingId.value = id
       error.value = null
       try {
-        await service.removeContact(id, actor)
-        snapshot.value.contacts = snapshot.value.contacts.filter((item) => item.id !== id)
-        snapshot.value.auditLogs = await service.listAuditLogs()
+        await service.deleteContact(id)
+        contacts.value = contacts.value.filter(item => item.id !== id)
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return false
-      } finally {
+      }
+      finally {
         deletingId.value = null
       }
     }
@@ -217,31 +293,41 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
     }
 
     return {
-      snapshot,
+      feedbacks,
+      contacts,
       query,
       page,
-      isLoading,
-      isSaving,
-      deletingId,
-      error,
-      queryError,
-      filteredFeedbacks,
+      pageSize,
       total,
+      overallTotal,
+      pendingCount,
+      processedCount,
       pageCount,
       currentPage,
-      paginatedFeedbacks,
-      contacts,
-      pendingCount,
-      setQuery,
+      initialized,
+      isLoading,
+      isFeedbackLoading,
+      isContactsLoading,
+      isSaving,
+      isExporting,
+      deletingId,
+      detailLoadingId,
+      error,
+      queryError,
+      initialize,
+      queryFeedbacks,
       resetQuery,
-      setPage,
-      validateHandle,
-      validateContact,
-      load,
+      changePage,
+      refreshOverview,
+      getFeedback,
       handleFeedback,
+      exportFeedbacks,
+      loadContacts,
       createContact,
       updateContact,
-      removeContact,
+      deleteContact,
+      validateHandle,
+      validateContact,
       resetError,
     }
   })

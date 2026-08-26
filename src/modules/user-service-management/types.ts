@@ -16,28 +16,34 @@ export interface UserFeedback {
   handlingRemark: string
 }
 
+export interface FeedbackPage {
+  feedbacks: UserFeedback[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface FeedbackExportFile {
+  content: Blob
+  filename: string
+}
+
 export interface ContactNumber {
   id: string
   name: string
   phone: string
   sort: number
   displayEnabled: boolean
+  enabled: boolean
   createdAt: string
   updatedAt: string
 }
 
-export interface UserServiceActor {
-  id: string
-  name: string
-}
-
 export interface FeedbackHandleInput {
   remark: string
-  markProcessed: boolean
-  actor: UserServiceActor
 }
 
-export type FeedbackHandleDraft = Omit<FeedbackHandleInput, 'actor'>
+export type FeedbackHandleDraft = FeedbackHandleInput
 
 export interface ContactNumberWriteInput {
   name: string
@@ -46,45 +52,22 @@ export interface ContactNumberWriteInput {
   displayEnabled: boolean
 }
 
-export type UserServiceAuditAction =
-  | 'handle-feedback'
-  | 'update-feedback-remark'
-  | 'create-contact'
-  | 'update-contact'
-  | 'delete-contact'
-
-export interface UserServiceAuditLog {
-  id: string
-  action: UserServiceAuditAction
-  entityType: 'feedback' | 'contact'
-  entityId: string
-  entityLabel: string
-  operatorId: string
-  operatorName: string
-  summary: string
-  createdAt: string
-}
-
-export interface UserServiceSnapshot {
-  feedbacks: UserFeedback[]
-  contacts: ContactNumber[]
-  auditLogs: UserServiceAuditLog[]
-}
-
-export interface UserServiceService {
-  load(): Promise<UserServiceSnapshot>
-  handleFeedback(id: string, input: FeedbackHandleInput): Promise<UserFeedback>
-  createContact(input: ContactNumberWriteInput, actor: UserServiceActor): Promise<ContactNumber>
-  updateContact(id: string, input: ContactNumberWriteInput, actor: UserServiceActor): Promise<ContactNumber>
-  removeContact(id: string, actor: UserServiceActor): Promise<void>
-  listAuditLogs(): Promise<UserServiceAuditLog[]>
-}
-
 export interface FeedbackQuery {
   type: 'all' | FeedbackType
   status: 'all' | FeedbackStatus
   startDate: string
   endDate: string
+}
+
+export interface UserServiceService {
+  listFeedbacks(query: FeedbackQuery, page: number, pageSize: number): Promise<FeedbackPage>
+  getFeedback(id: string): Promise<UserFeedback>
+  handleFeedback(id: string, input: FeedbackHandleInput): Promise<UserFeedback>
+  exportFeedbacks(query: FeedbackQuery): Promise<FeedbackExportFile>
+  listContacts(): Promise<ContactNumber[]>
+  createContact(input: ContactNumberWriteInput): Promise<ContactNumber>
+  updateContact(id: string, input: ContactNumberWriteInput): Promise<ContactNumber>
+  deleteContact(id: string): Promise<void>
 }
 
 export type FeedbackHandleValidationField = 'remark'

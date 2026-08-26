@@ -57,7 +57,8 @@ export function departmentNamesForUser(
   departments: readonly SystemDepartment[],
 ): string[] {
   const departmentMap = new Map(departments.map((item) => [item.id, item.name]))
-  return user.departmentIds.map((id) => departmentMap.get(id)).filter((name): name is string => Boolean(name))
+  const names = user.departmentIds.map((id) => departmentMap.get(id)).filter((name): name is string => Boolean(name))
+  return names.length ? names : (user.departmentNames ?? [])
 }
 
 export function buildPermissionTree(
@@ -110,7 +111,8 @@ export function normalizePermissionIds(
 
 export function roleNamesForUser(user: SystemUser, roles: readonly SystemRole[]): string[] {
   const roleMap = new Map(roles.map((role) => [role.id, role.name]))
-  return user.roleIds.map((id) => roleMap.get(id)).filter((name): name is string => Boolean(name))
+  const names = user.roleIds.map((id) => roleMap.get(id)).filter((name): name is string => Boolean(name))
+  return names.length ? names : (user.roleNames ?? [])
 }
 
 export function summarizeRolePermissions(

@@ -1,72 +1,139 @@
+import type { AxiosResponse } from 'axios'
+import type { SignedRequestConfig } from '@/lib/http'
+import type { OperationLogQuery } from '../types'
+import { AxiosHeaders } from 'axios'
 import { describe, expect, it } from 'vitest'
 import {
-  LocalOperationLogService,
-  OPERATION_LOG_SCHEMA_VERSION,
-  OPERATION_LOG_STORAGE_KEY,
+  auditExportFilename,
+  createOperationLogService,
+  mapApiAuditLog,
+} from './operation-log-service'
+import type {
+  ApiAuditLogVO,
+  OperationLogDataRequester,
+  OperationLogFileRequester,
 } from './operation-log-service'
 
-class MemoryStorage implements Storage {
-  private readonly values = new Map<string, string>()
+const timestamp = '2026-08-26T08:00:00+08:00'
 
-  get length(): number { return this.values.size }
-  clear(): void { this.values.clear() }
-  getItem(key: string): string | null { return this.values.get(key) ?? null }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null }
-  removeItem(key: string): void { this.values.delete(key) }
-  setItem(key: string, value: string): void { this.values.set(key, value) }
+function apiAudit(overrides: Partial<ApiAuditLogVO> = {}): ApiAuditLogVO {
+  return {
+    id: '9007199254740993',
+    create_at: timestamp,
+    update_at: timestamp,
+    user_id: 31,
+    operator_name: '场馆管理员',
+    dept_name: '场馆运营部',
+    module: 'control',
+    action: 'update',
+    resource_type: 'traffic_control',
+    resource_id: 51,
+    result: 'success',
+    detail_json: '{"status":"published"}',
+    ip: '10.0.0.8',
+    ...overrides,
+  }
 }
 
-describe('LocalOperationLogService', () => {
-  it('seeds, versions, persists, and sorts the P13 demonstration logs', async () => {
-    const storage = new MemoryStorage()
-    const service = new LocalOperationLogService({ storage })
+const defaultQuery: OperationLogQuery = {
+  keyword: '', module: '', action: '', result: 'all', from: '', to: '',
+}
 
-    const logs = await service.load()
-    expect(logs).toHaveLength(6)
-    expect(logs.map(log => log.code)).toEqual([
-      'LOG-001',
-      'LOG-002',
-      'LOG-003',
-      'LOG-004',
-      'LOG-005',
-      'LOG-006',
-    ])
-    expect(logs[4]).toMatchObject({ action: 'sync', result: 'failure' })
+function queuedDataRequester(responses: unknown[]) {
+  const configs: SignedRequestConfig[] = []
+  const request: OperationLogDataRequester = async <T>(config: SignedRequestConfig): Promise<T> => {
+    configs.push(config)
+    return responses.shift() as T
+  }
+  return { configs, request }
+}
 
-    const stored = JSON.parse(storage.getItem(OPERATION_LOG_STORAGE_KEY) ?? '{}') as {
-      schemaVersion?: number
-      logs?: unknown[]
+describe('operation log API service', () => {
+  it('maps API fields, int64 identifiers and parsed detail JSON', () => {
+    expect(mapApiAuditLog(apiAudit())).toEqual({
+      id: '9007199254740993',
+      operatorId: '31',
+      operatorName: '场馆管理员',
+      departmentName: '场馆运营部',
+      module: 'control',
+      action: 'update',
+      targetType: 'traffic_control',
+      targetId: '51',
+      performedAt: timestamp,
+      ipAddress: '10.0.0.8',
+      result: 'success',
+      detailJson: '{"status":"published"}',
+      details: { status: 'published' },
+    })
+  })
+
+  it('keeps malformed detail text and maps nullable system audit fields', () => {
+    expect(mapApiAuditLog(apiAudit({
+      id: 2,
+      user_id: null,
+      operator_name: null,
+      dept_name: null,
+      module: null,
+      resource_type: null,
+      resource_id: null,
+      result: 'fail',
+      detail_json: '{invalid',
+      ip: null,
+    }))).toMatchObject({
+      id: '2', operatorId: null, operatorName: '系统任务', departmentName: '', module: '',
+      targetType: '', targetId: null, result: 'failure', details: '{invalid', ipAddress: '',
+    })
+  })
+
+  it('serializes server pagination and every supported filter', async () => {
+    const { configs, request } = queuedDataRequester([{ list: [apiAudit()], total: '41', page: 2, page_size: 20 }])
+    const service = createOperationLogService(request)
+    const query: OperationLogQuery = {
+      keyword: ' 管理员 ', module: ' control ', action: ' update ', result: 'failure',
+      from: '2026-08-01', to: '2026-08-26',
     }
-    expect(stored.schemaVersion).toBe(OPERATION_LOG_SCHEMA_VERSION)
-    expect(stored.logs).toHaveLength(6)
-    expect(await new LocalOperationLogService({ storage }).load()).toEqual(logs)
+
+    const result = await service.listLogs(query, 2, 20)
+
+    expect(result).toMatchObject({ total: 41, page: 2, pageSize: 20 })
+    expect(configs[0]).toMatchObject({
+      method: 'GET',
+      url: 'api/v1/admin/audits',
+      params: {
+        page: 2, page_size: 20, keyword: '管理员', module: 'control', action: 'update',
+        result: 'fail', from: '2026-08-01', to: '2026-08-26',
+      },
+    })
   })
 
-  it('returns defensive copies of nested operation details', async () => {
-    const storage = new MemoryStorage()
-    const service = new LocalOperationLogService({ storage })
-    const firstLoad = await service.load()
-    firstLoad[0]!.operatorName = '被修改的名称'
-    const details = firstLoad[0]!.details as { changes: Array<{ to: boolean }> }
-    details.changes[0]!.to = false
+  it('omits empty filters and downloads the server CSV with its filename', async () => {
+    const { configs, request } = queuedDataRequester([{ list: [], total: 0, page: 1, page_size: 20 }])
+    const fileConfigs: SignedRequestConfig[] = []
+    const csv = new Blob(['\uFEFF操作时间,操作者'], { type: 'text/csv;charset=utf-8' })
+    const requestFile: OperationLogFileRequester = async (config): Promise<AxiosResponse<Blob>> => {
+      fileConfigs.push(config)
+      return {
+        data: csv,
+        status: 200,
+        statusText: 'OK',
+        headers: new AxiosHeaders({ 'content-disposition': "attachment; filename*=UTF-8''audit%20logs.csv" }),
+        config: { ...config, headers: new AxiosHeaders() },
+      }
+    }
+    const service = createOperationLogService(request, requestFile)
 
-    const secondLoad = await service.load()
-    expect(secondLoad[0]!.operatorName).toBe('管理员')
-    expect((secondLoad[0]!.details as { changes: Array<{ to: boolean }> }).changes[0]!.to).toBe(true)
+    await service.listLogs(defaultQuery, 1, 20)
+    const file = await service.exportLogs(defaultQuery)
+
+    expect(configs[0]?.params).toEqual({ page: 1, page_size: 20 })
+    expect(file).toEqual({ content: csv, filename: 'audit logs.csv' })
+    expect(fileConfigs[0]).toMatchObject({
+      method: 'GET', url: 'api/v1/admin/audits/export', params: {}, responseType: 'blob',
+    })
   })
 
-  it('reports malformed JSON and invalid schema without overwriting storage', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(OPERATION_LOG_STORAGE_KEY, '{invalid')
-    await expect(new LocalOperationLogService({ storage }).load()).rejects.toMatchObject({
-      code: 'storage_corrupted',
-      message: '本地操作日志数据无法解析',
-    })
-    expect(storage.getItem(OPERATION_LOG_STORAGE_KEY)).toBe('{invalid')
-
-    storage.setItem(OPERATION_LOG_STORAGE_KEY, JSON.stringify({ schemaVersion: 99, logs: [] }))
-    await expect(new LocalOperationLogService({ storage }).load()).rejects.toMatchObject({
-      code: 'storage_corrupted',
-    })
+  it('uses a safe fallback for absent or unsafe response filenames', () => {
+    expect(auditExportFilename(null)).toBe('audit_logs.csv')
+    expect(auditExportFilename('attachment; filename="../audit.csv"')).toBe('.._audit.csv')
   })
 })

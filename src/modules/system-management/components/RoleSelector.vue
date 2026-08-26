@@ -42,6 +42,7 @@ function toggleRole(roleId: string, checked: boolean | 'indeterminate'): void {
         <span class="flex items-center gap-2">
           <span class="truncate text-sm font-medium">{{ role.name }}</span>
           <Badge variant="outline" class="h-5 px-1.5 text-[10px]">{{ ROLE_KIND_LABELS[role.kind] }}</Badge>
+          <Badge v-if="role.enabled === false" variant="outline" class="h-5 px-1.5 text-[10px]">已停用</Badge>
         </span>
         <span class="mt-1 block truncate text-[11px] text-muted-foreground">{{ role.description || '暂无描述' }}</span>
       </span>

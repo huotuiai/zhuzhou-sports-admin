@@ -11,8 +11,13 @@ export interface SystemUser {
   phone: string
   departmentIds: string[]
   roleIds: string[]
+  roleNames?: string[]
+  departmentNames?: string[]
   status: UserStatus
   builtIn: boolean
+  email?: string | null
+  remark?: string | null
+  loginFailCount?: number
   mustChangePassword: boolean
   passwordUpdatedAt: string
   lastLoginAt: string | null
@@ -49,8 +54,12 @@ export interface SystemDepartment {
   parentId: string | null
   name: string
   ownerUserId: string | null
+  ownerName?: string | null
   sort: number
   status: DepartmentStatus
+  remark?: string | null
+  userCount?: number
+  childCount?: number
   createdAt: string
   updatedAt: string
 }
@@ -65,8 +74,13 @@ export interface DepartmentWriteInput {
 
 export interface SystemRole {
   id: string
+  code?: string
   name: string
   kind: RoleKind
+  enabled?: boolean
+  preset?: boolean
+  sort?: number
+  userCount?: number
   permissionIds: string[]
   description: string
   createdAt: string
@@ -99,9 +113,55 @@ export interface SystemPermission {
 
 export interface UserQuery {
   keyword: string
-  departmentIds: string[]
-  roleIds: string[]
+  departmentId: string
+  roleId: string
   status: UserStatusFilter
+}
+
+export interface UserPage {
+  users: SystemUser[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface UserUpdateOptions {
+  includeStatus?: boolean
+}
+
+export interface RolePage {
+  roles: SystemRole[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface RoleManagementService {
+  listRoles(query: RoleQuery, page: number, pageSize: number): Promise<RolePage>
+  getRole(id: string): Promise<SystemRole>
+  createRole(input: RoleCreateInput): Promise<SystemRole>
+  updateRole(id: string, input: RoleBasicInfoInput): Promise<SystemRole>
+  deleteRole(id: string): Promise<void>
+  listMenus(): Promise<SystemPermission[]>
+  replaceRoleMenus(id: string, input: RolePermissionInput): Promise<SystemRole>
+  listRoleUsers(id: string): Promise<SystemUser[]>
+  replaceRoleUsers(id: string, userIds: readonly string[]): Promise<void>
+}
+
+export interface UserManagementService {
+  listUsers(query: UserQuery, page: number, pageSize: number): Promise<UserPage>
+  getUser(id: string): Promise<SystemUser>
+  createUser(input: UserCreateInput): Promise<SystemUser>
+  updateUser(id: string, input: UserBasicInfoInput, options?: UserUpdateOptions): Promise<SystemUser>
+  changeUserStatus(id: string, status: Exclude<UserStatus, 'locked'>): Promise<SystemUser>
+  resetUserPassword(id: string, input: UserPasswordResetInput): Promise<void>
+  unlockUser(id: string): Promise<void>
+  deleteUser(id: string): Promise<void>
+  listDepartments(): Promise<SystemDepartment[]>
+  createDepartment(input: DepartmentWriteInput): Promise<SystemDepartment>
+  updateDepartment(id: string, input: DepartmentWriteInput): Promise<SystemDepartment>
+  deleteDepartment(id: string): Promise<void>
+  listRoles(page: number, pageSize: number): Promise<RolePage>
 }
 
 export interface RoleQuery {
@@ -122,29 +182,10 @@ export type RoleCreateValidationField = keyof RoleCreateInput
 export type RoleBasicInfoValidationField = keyof RoleBasicInfoInput
 export type RolePermissionValidationField = keyof RolePermissionInput
 
-export interface RbacSnapshot {
+export interface UserManagementValidationContext {
   users: SystemUser[]
   departments: SystemDepartment[]
   roles: SystemRole[]
-  permissions: SystemPermission[]
-}
-
-export interface RbacService {
-  load(): Promise<RbacSnapshot>
-  createUser(input: UserCreateInput): Promise<SystemUser>
-  updateUserInfo(id: string, input: UserBasicInfoInput): Promise<SystemUser>
-  resetUserPassword(id: string, input: UserPasswordResetInput): Promise<SystemUser>
-  setUserStatus(id: string, status: Exclude<UserStatus, 'locked'>): Promise<SystemUser>
-  unlockUser(id: string): Promise<SystemUser>
-  removeUser(id: string): Promise<void>
-  createDepartment(input: DepartmentWriteInput): Promise<SystemDepartment>
-  updateDepartment(id: string, input: DepartmentWriteInput): Promise<SystemDepartment>
-  removeDepartment(id: string): Promise<void>
-  createRole(input: RoleCreateInput): Promise<SystemRole>
-  updateRoleInfo(id: string, input: RoleBasicInfoInput): Promise<SystemRole>
-  updateRolePermissions(id: string, input: RolePermissionInput): Promise<SystemRole>
-  assignRoleUsers(id: string, userIds: readonly string[]): Promise<SystemUser[]>
-  removeRole(id: string): Promise<void>
 }
 
 export interface PermissionTreeNode extends SystemPermission {

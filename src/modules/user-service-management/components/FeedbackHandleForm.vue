@@ -3,7 +3,6 @@ import type { FeedbackHandleDraft, FeedbackHandleValidationField, UserFeedback, 
 import { AlertTriangle, CheckCircle2, Clock3, MessageSquareText, Phone } from '@lucide/vue'
 import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -97,28 +96,19 @@ watch(() => props.feedback.id, () => { touched.remark = false }, { flush: 'sync'
       <p v-else class="text-xs leading-5 text-muted-foreground">有联系方式时可线下回访，并在备注中记录结果。</p>
     </div>
 
-    <div class="flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-3.5 py-3">
+    <div class="flex min-h-16 items-start gap-3 rounded-xl border bg-muted/25 px-3.5 py-3">
+      <CheckCircle2 class="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
       <div class="min-w-0">
-        <Label :for="`feedback-handle-${instanceId}-processed`" :class="processed ? '' : 'cursor-pointer'">
-          <CheckCircle2 class="size-4 text-success" aria-hidden="true" />
-          标记为已处理
-        </Label>
+        <p class="text-sm font-medium">{{ processed ? '已处理反馈' : '保存后将标记为已处理' }}</p>
         <p class="mt-1 text-xs leading-5 text-muted-foreground">
-          {{ processed ? '该反馈已完成处理，只允许补充或修改备注，状态不会回退。' : '取消勾选时仅保存备注，反馈继续保留在未处理队列。' }}
+          {{ processed ? '本次保存只更新处理备注，反馈状态不会回退。' : '真实接口会同步写入处理人、处理时间和处理备注。' }}
         </p>
       </div>
-      <Checkbox
-        :id="`feedback-handle-${instanceId}-processed`"
-        :model-value="processed ? true : value.markProcessed"
-        :disabled="processed || saving"
-        :aria-label="processed ? '反馈已处理，不可回退' : '保存后标记为已处理'"
-        @update:model-value="patchValue({ markProcessed: $event === true })"
-      />
     </div>
 
     <div class="flex gap-3 rounded-xl border border-primary/25 bg-primary/8 p-3 text-primary">
       <MessageSquareText class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-      <p class="text-xs leading-5">保存后会记录当前操作人和操作时间，并写入本模块的审计记录。</p>
+      <p class="text-xs leading-5">保存后由服务端记录当前操作人和操作时间，可在操作日志中查询。</p>
     </div>
   </div>
 </template>

@@ -64,6 +64,27 @@ function readRequestId(response?: AxiosResponse): string | undefined {
   return typeof value === 'string' && value ? value : undefined
 }
 
+function responseContentType(response: AxiosResponse): string {
+  const header = response.headers?.['content-type']
+  if (typeof header === 'string') return header.toLocaleLowerCase('en-US')
+  const data = response.data
+  return typeof Blob !== 'undefined' && data instanceof Blob ? data.type.toLocaleLowerCase('en-US') : ''
+}
+
+async function readApiResponse(response: AxiosResponse): Promise<ApiResponse<unknown> | null> {
+  if (isApiResponse(response.data)) return response.data
+  if (!responseContentType(response).includes('json')) return null
+  const data = response.data
+  if (typeof Blob === 'undefined' || !(data instanceof Blob)) return null
+  try {
+    const parsed = JSON.parse(await data.text()) as unknown
+    return isApiResponse(parsed) ? parsed : null
+  }
+  catch {
+    return null
+  }
+}
+
 function messageForBusinessError(code: number, backendMessage: string): string {
   if (code === 40110) return '请求验签信息不完整，请联系管理员'
   if (code === 40111) return '系统时间与服务器不同步，请校准时间后重试'
@@ -71,8 +92,11 @@ function messageForBusinessError(code: number, backendMessage: string): string {
   return backendMessage || '请求失败，请稍后重试'
 }
 
-function apiErrorFromResponse(response: AxiosResponse, cause?: unknown): ApiError {
-  const envelope = isApiResponse(response.data) ? response.data : null
+function apiErrorFromResponse(
+  response: AxiosResponse,
+  envelope: ApiResponse<unknown> | null,
+  cause?: unknown,
+): ApiError {
   const code = envelope?.code
   return new ApiError(
     code === undefined
@@ -171,10 +195,11 @@ export function createApiClient(options: ApiClientOptions = {}): AxiosInstance {
   async function retryAfterUnauthorized(
     config: InternalAxiosRequestConfig,
     response: AxiosResponse,
+    envelope: ApiResponse<unknown> | null,
   ): Promise<AxiosResponse> {
     if (config.requiresAuth === false || config.skipAuthRefresh || config._authRetry) {
       if (config.requiresAuth !== false && !config.skipUnauthorizedRedirect) await invalidateSession()
-      throw apiErrorFromResponse(response)
+      throw apiErrorFromResponse(response, envelope)
     }
 
     config._authRetry = true
@@ -190,9 +215,10 @@ export function createApiClient(options: ApiClientOptions = {}): AxiosInstance {
 
   client.interceptors.response.use(
     async (response) => {
-      if (!isApiResponse(response.data) || response.data.code === 0) return response
-      if (response.data.code === 40100) return retryAfterUnauthorized(response.config, response)
-      throw apiErrorFromResponse(response)
+      const envelope = await readApiResponse(response)
+      if (!envelope || envelope.code === 0) return response
+      if (envelope.code === 40100) return retryAfterUnauthorized(response.config, response, envelope)
+      throw apiErrorFromResponse(response, envelope)
     },
     async (error: unknown) => {
       if (error instanceof ApiError) throw error
@@ -201,9 +227,9 @@ export function createApiClient(options: ApiClientOptions = {}): AxiosInstance {
       }
 
       if (error.response) {
-        const code = isApiResponse(error.response.data) ? error.response.data.code : undefined
-        if (code === 40100 && error.config) return retryAfterUnauthorized(error.config, error.response)
-        throw apiErrorFromResponse(error.response, error)
+        const envelope = await readApiResponse(error.response)
+        if (envelope?.code === 40100 && error.config) return retryAfterUnauthorized(error.config, error.response, envelope)
+        throw apiErrorFromResponse(error.response, envelope, error)
       }
 
       if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {

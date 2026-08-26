@@ -7,7 +7,7 @@ import type {
   SystemRole,
   ValidationIssue,
 } from '@/modules/system-management/types'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import {
   CircleEllipsis,
   Download,
@@ -51,13 +51,12 @@ import {
   validateRoleBasicInfoInput,
   validateRoleCreateInput,
   validateRolePermissionInput,
-} from '@/modules/system-management/services/rbac-service'
-import { useRbacStore } from '@/modules/system-management/stores/rbac-store'
+} from '@/modules/system-management/services/role-management-validation'
+import { useRoleManagementStore } from '@/modules/system-management/stores/role-management-store'
 
 type DialogKind = 'create' | 'edit' | 'permission' | 'assignment'
 interface FormHandle { validateAndFocus(): boolean }
 
-const PAGE_SIZE = 20
 const EMPTY_CREATE: RoleCreateInput = { name: '', description: '', permissionIds: [] }
 const EMPTY_BASIC: RoleBasicInfoInput = { name: '', description: '' }
 const EMPTY_PERMISSION: RolePermissionInput = { permissionIds: [] }
@@ -72,10 +71,8 @@ const columns: readonly DataTableColumn<SystemRole>[] = [
   { key: 'actions', label: '操作', width: '176px', align: 'right' },
 ]
 
-const store = useRbacStore()
+const store = useRoleManagementStore()
 const queryDraft = ref('')
-const appliedKeyword = ref('')
-const page = ref(1)
 
 const createOpen = ref(false)
 const createForm = ref<RoleCreateInput>({ ...EMPTY_CREATE, permissionIds: [] })
@@ -103,37 +100,36 @@ const assignmentInitialJson = ref('')
 const pendingDiscard = ref<DialogKind | null>(null)
 const deleteTarget = ref<SystemRole | null>(null)
 
-const filteredRoles = computed(() => {
-  const keyword = appliedKeyword.value.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
-  return store.roles.filter((role) => !keyword || role.name.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword))
-})
-const rows = computed(() => filteredRoles.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+const rows = computed(() => store.roles)
 const createDirty = computed(() => JSON.stringify({ value: createForm.value, referenceRoleId: createReferenceRoleId.value }) !== createInitialJson.value)
 const editDirty = computed(() => JSON.stringify(editForm.value) !== editInitialJson.value)
 const permissionDirty = computed(() => JSON.stringify(permissionForm.value) !== permissionInitialJson.value)
 const assignmentDirty = computed(() => JSON.stringify([...assignmentUserIds.value].sort()) !== assignmentInitialJson.value)
 const anyDialogOpen = computed(() => createOpen.value || Boolean(editRole.value || permissionRole.value || assignmentRole.value))
 const anyDialogDirty = computed(() => createOpen.value ? createDirty.value : editRole.value ? editDirty.value : permissionRole.value ? permissionDirty.value : assignmentRole.value ? assignmentDirty.value : false)
-const deleteBoundCount = computed(() => deleteTarget.value ? userCount(deleteTarget.value.id) : 0)
-
-watch(() => filteredRoles.value.length, (total) => {
-  page.value = Math.min(page.value, Math.max(1, Math.ceil(total / PAGE_SIZE)))
-})
+const deleteBoundCount = computed(() => deleteTarget.value?.userCount ?? 0)
+const assignmentReadOnly = computed(() => assignmentRole.value?.kind === 'super-admin')
+const assignmentProtectedUserIds = computed(() => store.assignmentUsers
+  .filter(user => user.builtIn && assignmentUserIds.value.includes(user.id))
+  .map(user => user.id))
 
 useUnsavedDialogGuard(() => anyDialogOpen.value, () => anyDialogDirty.value, '角色')
 
-function applyQuery(): void {
-  appliedKeyword.value = queryDraft.value
-  page.value = 1
+async function applyQuery(): Promise<void> {
+  if (!await store.queryRoles({ keyword: queryDraft.value })) showStoreError('角色查询失败')
 }
 
-function resetQuery(): void {
+async function resetQuery(): Promise<void> {
   queryDraft.value = ''
-  applyQuery()
+  await applyQuery()
 }
 
-function userCount(roleId: string): number {
-  return store.users.filter((user) => user.roleIds.includes(roleId)).length
+async function changePage(page: number): Promise<void> {
+  if (!await store.changePage(page)) showStoreError('角色列表加载失败')
+}
+
+function userCount(role: SystemRole): number {
+  return role.userCount ?? 0
 }
 
 function formatDate(value: string): string {
@@ -152,7 +148,8 @@ function permissionSummary(role: SystemRole): string {
   return summarizeRolePermissions(role, store.permissions).label
 }
 
-function openCreate(): void {
+async function openCreate(): Promise<void> {
+  if (!await store.loadRoleReferences()) return showStoreError('参考角色加载失败')
   createForm.value = { ...EMPTY_CREATE, permissionIds: [] }
   createReferenceRoleId.value = null
   createIssues.value = []
@@ -160,23 +157,35 @@ function openCreate(): void {
   createOpen.value = true
 }
 
-function openEdit(role: SystemRole): void {
-  editRole.value = role
-  editForm.value = { name: role.name, description: role.description }
+async function openEdit(role: SystemRole): Promise<void> {
+  const [referencesLoaded, detail] = await Promise.all([
+    store.loadRoleReferences(),
+    store.getRole(role.id),
+  ])
+  if (!referencesLoaded || !detail) return showStoreError('角色详情加载失败')
+  editRole.value = detail
+  editForm.value = { name: detail.name, description: detail.description }
   editInitialJson.value = JSON.stringify(editForm.value)
   editIssues.value = []
 }
 
-function openPermission(role: SystemRole): void {
-  permissionRole.value = role
-  permissionForm.value = { permissionIds: [...role.permissionIds] }
+async function openPermission(role: SystemRole): Promise<void> {
+  const detail = await store.getRole(role.id)
+  if (!detail) return showStoreError('角色详情加载失败')
+  permissionRole.value = detail
+  permissionForm.value = {
+    permissionIds: detail.kind === 'super-admin'
+      ? store.permissions.map(permission => permission.id)
+      : [...detail.permissionIds],
+  }
   permissionInitialJson.value = JSON.stringify(permissionForm.value)
   permissionIssues.value = []
 }
 
-function openAssignment(role: SystemRole): void {
+async function openAssignment(role: SystemRole): Promise<void> {
+  if (!await store.loadAssignment(role.id)) return showStoreError('角色用户加载失败')
   assignmentRole.value = role
-  assignmentUserIds.value = store.users.filter((user) => user.roleIds.includes(role.id)).map((user) => user.id)
+  assignmentUserIds.value = [...store.assignmentBoundUserIds]
   assignmentInitialJson.value = JSON.stringify([...assignmentUserIds.value].sort())
 }
 
@@ -207,7 +216,7 @@ function discardChanges(): void {
 }
 
 async function saveCreate(): Promise<void> {
-  createIssues.value = validateRoleCreateInput(createForm.value, store.snapshot)
+  createIssues.value = validateRoleCreateInput(createForm.value, store.roleReferences, store.permissions)
   await nextTick()
   if (!createFormRef.value?.validateAndFocus() || createIssues.value.length) return
   const saved = await store.createRole(createForm.value)
@@ -218,10 +227,10 @@ async function saveCreate(): Promise<void> {
 
 async function saveEdit(): Promise<void> {
   if (!editRole.value) return
-  editIssues.value = validateRoleBasicInfoInput(editForm.value, store.snapshot, editRole.value.id)
+  editIssues.value = validateRoleBasicInfoInput(editForm.value, store.roleReferences, editRole.value.id)
   await nextTick()
   if (!editFormRef.value?.validateAndFocus() || editIssues.value.length) return
-  const saved = await store.updateRoleInfo(editRole.value.id, editForm.value)
+  const saved = await store.updateRole(editRole.value.id, editForm.value)
   if (!saved) return showStoreError('角色更新失败')
   closeDialog('edit')
   toast.success('角色信息已更新。')
@@ -229,18 +238,18 @@ async function saveEdit(): Promise<void> {
 
 async function savePermissions(): Promise<void> {
   if (!permissionRole.value || permissionRole.value.kind === 'super-admin') return
-  permissionIssues.value = validateRolePermissionInput(permissionForm.value)
+  permissionIssues.value = validateRolePermissionInput(permissionForm.value, store.permissions)
   await nextTick()
   if (!permissionFormRef.value?.validateAndFocus() || permissionIssues.value.length) return
-  const saved = await store.updateRolePermissions(permissionRole.value.id, permissionForm.value)
+  const saved = await store.updatePermissions(permissionRole.value.id, permissionForm.value)
   if (!saved) return showStoreError('权限保存失败')
   closeDialog('permission')
   toast.success('角色权限已更新。')
 }
 
 async function saveAssignment(): Promise<void> {
-  if (!assignmentRole.value) return
-  const saved = await store.assignRoleUsers(assignmentRole.value.id, assignmentUserIds.value)
+  if (!assignmentRole.value || assignmentReadOnly.value) return
+  const saved = await store.replaceRoleUsers(assignmentRole.value.id, assignmentUserIds.value)
   if (!saved) return showStoreError('角色分配保存失败')
   closeDialog('assignment')
   toast.success('角色用户绑定已更新。')
@@ -253,7 +262,7 @@ function requestDelete(role: SystemRole): void {
 
 async function removeRole(): Promise<void> {
   if (!deleteTarget.value || deleteBoundCount.value > 0) return
-  const removed = await store.removeRole(deleteTarget.value.id)
+  const removed = await store.deleteRole(deleteTarget.value.id)
   if (!removed) return showStoreError('角色删除失败')
   deleteTarget.value = null
   toast.success('角色已删除。')
@@ -270,10 +279,10 @@ function csvCell(value: unknown): string {
 
 function exportRoles(): void {
   const headers = ['角色名称', '标识', '绑定用户数', '权限范围', '描述', '创建时间']
-  const records = filteredRoles.value.map((role) => [
+  const records = rows.value.map((role) => [
     role.name,
     ROLE_KIND_LABELS[role.kind],
-    userCount(role.id),
+    userCount(role),
     permissionSummary(role),
     role.description,
     formatDate(role.createdAt),
@@ -285,11 +294,11 @@ function exportRoles(): void {
   anchor.download = `角色管理-${new Date().toISOString().slice(0, 10)}.csv`
   anchor.click()
   URL.revokeObjectURL(url)
-  toast.success('已导出当前筛选结果。')
+  toast.success('已导出当前页角色。')
 }
 
 onMounted(async () => {
-  if (!await store.load()) showStoreError('角色数据加载失败')
+  if (!await store.initialize()) showStoreError('角色数据加载失败')
 })
 </script>
 
@@ -307,8 +316,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="lg" class="h-11" @click="exportRoles">
-            <Download aria-hidden="true" />导出
+          <Button variant="outline" size="lg" class="h-11" :disabled="rows.length === 0" @click="exportRoles">
+            <Download aria-hidden="true" />导出当前页
           </Button>
           <Button size="lg" class="h-11" @click="openCreate">
             <Plus aria-hidden="true" />新增角色
@@ -331,7 +340,7 @@ onMounted(async () => {
           <Badge variant="outline" :class="roleKindClass(row)">{{ ROLE_KIND_LABELS[row.kind] }}</Badge>
         </template>
         <template #cell-users="{ row }">
-          <span class="font-semibold tabular-nums">{{ userCount(row.id) }}</span>
+          <span class="font-semibold tabular-nums">{{ userCount(row) }}</span>
         </template>
         <template #cell-permissions="{ row }">
           <span class="whitespace-nowrap text-sm">{{ permissionSummary(row) }}</span>
@@ -369,12 +378,12 @@ onMounted(async () => {
       </DataTable>
 
       <PaginationBar
-        :page="page"
-        :page-size="PAGE_SIZE"
-        :page-sizes="[PAGE_SIZE]"
-        :total="filteredRoles.length"
+        :page="store.page"
+        :page-size="store.pageSize"
+        :page-sizes="[20]"
+        :total="store.total"
         :disabled="store.isLoading"
-        @update:page="page = $event"
+        @update:page="changePage"
       />
     </div>
 
@@ -393,7 +402,7 @@ onMounted(async () => {
         ref="createFormRef"
         :value="createForm"
         :reference-role-id="createReferenceRoleId"
-        :roles="store.roles"
+        :roles="store.roleReferences"
         :permissions="store.permissions"
         :issues="createIssues"
         :saving="store.isSaving"
@@ -451,19 +460,20 @@ onMounted(async () => {
       mode="edit"
       size="wide"
       :title="`角色分配 · ${assignmentRole?.name ?? ''}`"
-      description="用户可同时绑定多个角色，此处仅调整当前角色的绑定关系。"
+      :description="assignmentReadOnly ? '超级管理员的用户绑定仅作只读展示。' : '用户可同时绑定多个角色，此处仅调整当前角色的绑定关系。'"
       submit-label="保存分配"
       :saving="store.isSaving"
       :dirty="assignmentDirty"
+      :submit-disabled="assignmentReadOnly"
       @submit="saveAssignment"
       @request-close="requestClose('assignment', $event)"
     >
       <RoleUserAssignment
-        :users="store.users"
-        :departments="store.departments"
+        :users="store.assignmentUsers"
+        :departments="store.assignmentDepartments"
         :model-value="assignmentUserIds"
-        :protected-user-ids="assignmentRole?.kind === 'super-admin' ? store.users.filter((user) => user.builtIn).map((user) => user.id) : []"
-        :disabled="store.isSaving"
+        :protected-user-ids="assignmentProtectedUserIds"
+        :disabled="store.isSaving || assignmentReadOnly"
         @update:model-value="assignmentUserIds = $event"
       />
     </CrudDialog>

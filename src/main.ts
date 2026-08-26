@@ -5,8 +5,11 @@ import { pinia } from '@/stores'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { configureHttpAuthHandlers } from '@/lib/http'
+import { clearLegacyMockStorage } from '@/lib/legacy-mock-storage'
 import 'vue-sonner/style.css'
 import '@/style.css'
+
+clearLegacyMockStorage()
 
 const app = createApp(App)
 
