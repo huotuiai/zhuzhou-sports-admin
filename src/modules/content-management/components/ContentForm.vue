@@ -29,6 +29,7 @@ const emit = defineEmits<{
 const rootRef = ref<HTMLElement | null>(null)
 const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const isActivity = computed(() => props.value.type === 'activity')
+const isNews = computed(() => props.value.type === 'news')
 const isNotice = computed(() => props.value.type === 'notice')
 
 function patch(patchValue: Partial<ContentWriteInput>): void {
@@ -57,7 +58,7 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
   <div ref="rootRef" class="grid grid-cols-2 gap-x-4 gap-y-5">
     <div v-if="!isActivity" class="col-span-2 space-y-2">
       <Label :for="fieldId('type')">内容类型 <span class="text-destructive" aria-hidden="true">*</span></Label>
-      <Select :model-value="value.type" :disabled="saving" @update:model-value="patch({ type: $event as ContentWriteInput['type'], attachments: $event === 'notice' ? value.attachments : [] })">
+      <Select :model-value="value.type" :disabled="saving" @update:model-value="patch({ type: $event as ContentWriteInput['type'] })">
         <SelectTrigger :id="fieldId('type')" data-content-field="type" class="h-11 w-full bg-background">
           <SelectValue placeholder="选择内容类型" />
         </SelectTrigger>
@@ -87,7 +88,7 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
       <p v-if="errorFor('title')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('title') }}</p>
     </div>
 
-    <div class="col-span-2 space-y-2" data-content-field="cover" tabindex="-1">
+    <div v-if="isActivity || isNews" class="col-span-2 space-y-2" data-content-field="cover" tabindex="-1">
       <Label>
         封面图
         <span v-if="isActivity" class="text-destructive" aria-hidden="true">*</span>
@@ -98,9 +99,8 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
         accept="image/*"
         :max-file-size="2 * 1024 * 1024"
         hint="支持常用图片格式，≤2MB，建议 750×420"
-        :disabled="saving"
+        disabled
         :invalid="Boolean(errorFor('cover'))"
-        @update:model-value="patch({ cover: $event[0] ?? null })"
       />
       <p v-if="errorFor('cover')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('cover') }}</p>
     </div>
@@ -119,8 +119,7 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
         :max-files="10"
         multiple
         hint="支持图片、PDF、DOC、DOCX，单文件 ≤10MB"
-        :disabled="saving"
-        @update:model-value="patch({ attachments: $event })"
+        disabled
       />
     </div>
 
@@ -234,7 +233,7 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
           @update:model-value="patch({ publishAt: String($event) || null })"
         />
       </div>
-      <p class="text-xs text-muted-foreground">未来时间保存为草稿，到点自动发布；留空后可在列表手动发布。</p>
+      <p class="text-xs text-muted-foreground">填写后保存草稿并调用发布接口；留空保存为草稿，可在列表手动发布。</p>
     </div>
 
     <div class="col-span-2 flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-3 py-2.5">

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ArrowDownRight, ArrowUpRight, CircleHelp, Clock3 } from '@lucide/vue'
 import type { DashboardMetric } from '../types'
-import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 const props = defineProps<{
@@ -18,12 +17,6 @@ function formatNumber(value: number): string {
   return new Intl.NumberFormat('zh-CN').format(value)
 }
 
-function comparisonLabel(value: number | null): string {
-  if (value === null) return '—'
-  if (!Number.isFinite(value)) return '新增'
-  if (value === 0) return '持平 0%'
-  return `${Math.abs(value).toFixed(1)}%`
-}
 </script>
 
 <template>
@@ -42,7 +35,6 @@ function comparisonLabel(value: number | null): string {
       <span v-if="selected" class="absolute inset-y-3 left-0 w-0.5 rounded-r-full bg-primary" aria-hidden="true" />
       <span class="flex w-full items-start gap-8">
         <span class="line-clamp-2 text-xs font-medium leading-5 text-muted-foreground">{{ metric.name }}</span>
-        <Badge v-if="metric.availability === 'pending'" variant="secondary" class="ml-auto shrink-0">数据待接入</Badge>
       </span>
 
       <span class="mt-2 flex items-end gap-1.5">
@@ -62,7 +54,7 @@ function comparisonLabel(value: number | null): string {
         >
           <ArrowUpRight v-if="metric.comparisonRate !== null && metric.comparisonRate > 0" class="size-3" aria-hidden="true" />
           <ArrowDownRight v-else-if="metric.comparisonRate !== null && metric.comparisonRate < 0" class="size-3" aria-hidden="true" />
-          {{ comparisonLabel(metric.comparisonRate) }}
+          {{ metric.comparisonText }}
         </span>
       </span>
 

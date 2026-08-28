@@ -1,72 +1,299 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { DashboardMetricDetail, DashboardMetricDimension, DashboardDateRange } from '../types'
-import { MockDashboardService, rangeForPreset } from '../services/dashboard-service'
-import { createDataDashboardStore, DASHBOARD_MAX_EXPORT_ROWS } from './data-dashboard-store'
+import type {
+  DashboardExportFile,
+  DashboardMetric,
+  DashboardOperationsResult,
+  DashboardService,
+  DashboardSnapshot,
+  DashboardStatsQuery,
+  DashboardTrendPoint,
+  DashboardVrSyncResult,
+  MetricDetailPage,
+  VrWorkMetric,
+} from '../types'
+import { createDataDashboardStore, DASHBOARD_DETAIL_PAGE_SIZE } from './data-dashboard-store'
 
-const NOW = new Date('2026-08-17T04:00:00.000Z')
+const QUERY: DashboardStatsQuery = {
+  preset: 'last-7-days',
+  start: '2026-08-11',
+  end: '2026-08-17',
+  activityId: '',
+}
 
-class OversizedExportService extends MockDashboardService {
-  override async getAllMetricDetails(
-    metricId: string,
-    dimension: DashboardMetricDimension,
-    range: DashboardDateRange,
-  ): Promise<DashboardMetricDetail[]> {
-    const seed = await super.getAllMetricDetails(metricId, dimension, range)
-    return Array.from({ length: DASHBOARD_MAX_EXPORT_ROWS + 1 }, (_, index) => ({
-      ...(seed[0] ?? { date: range.start, value: 0, sourceEntry: '测试' }),
-      id: `detail-${index}`,
-    }))
+const METRICS: DashboardMetric[] = [
+  {
+    id: 'IND-1',
+    group: 'entry',
+    name: '访问量',
+    definition: '访问次数',
+    source: '统计埋点',
+    primaryLabel: 'PV',
+    primaryValue: 120,
+    secondaryLabel: 'UV',
+    secondaryValue: 80,
+    previousValue: 100,
+    comparisonRate: 0.2,
+    comparisonText: '较上期 +20%',
+    updatedAt: '2026-08-17 12:00:00',
+    trend: [],
+  },
+  {
+    id: 'IND-2',
+    group: 'page',
+    name: '检票口导航',
+    definition: '检票口导航次数',
+    source: '统计埋点',
+    primaryLabel: '次数',
+    primaryValue: 30,
+    secondaryLabel: null,
+    secondaryValue: null,
+    previousValue: 20,
+    comparisonRate: 0.5,
+    comparisonText: '较上期 +50%',
+    updatedAt: '2026-08-17 12:00:00',
+    trend: [],
+  },
+]
+
+function vrWork(pv = 99): VrWorkMetric {
+  return {
+    id: '90071992547409931',
+    rank: 1,
+    externalId: '720-1',
+    title: '体育场全景',
+    coverUrl: 'https://example.com/cover.jpg',
+    bindingObject: '体育场',
+    pv,
+    uv: 60,
+    likes: 10,
+    shares: 2,
+    comments: 1,
+    phoneClicks: 3,
+    sceneCount: 8,
+    lastSyncedAt: '2026-08-17 12:00:00',
+    isInvalid: false,
+    enabled: true,
+    createdAt: '2026-08-01 09:00:00',
+    updatedAt: '2026-08-17 12:00:00',
+  }
+}
+
+function snapshot(query: DashboardStatsQuery = QUERY): DashboardSnapshot {
+  return {
+    activities: [{ id: '9223372036854775807', name: '八月赛事', start: '2026-08-15', end: '2026-08-18' }],
+    operations: {
+      query: { ...query },
+      range: { start: query.start, end: query.end },
+      metrics: METRICS.map(metric => ({ ...metric, trend: [] })),
+      updatedAt: '2026-08-17 12:00:00',
+    },
+    distributions: [{
+      id: 'parking-charge',
+      title: '停车收费类型分布',
+      description: '停车场收费类型汇总',
+      kind: 'donut',
+      centerText: '1 项',
+      slices: [{ key: 'free', label: '免费', value: 1 }],
+    }],
+    parkingUsage: [{ id: 'P1', name: '东停车场', total: 100, used: 60, available: 40, usageRate: 0.6 }],
+    vrWorks: [vrWork()],
+    currentDataUpdatedAt: '2026-08-17 12:00:00',
+  }
+}
+
+class StubDashboardService implements DashboardService {
+  operationQueries: DashboardStatsQuery[] = []
+  trendCalls: Array<{ metricId: string, query: DashboardStatsQuery }> = []
+  detailCalls: Array<{ metricId: string, query: DashboardStatsQuery, page: number, pageSize: number }> = []
+  exportCalls: Array<{ metricId: string, query: DashboardStatsQuery }> = []
+  syncCalls = 0
+  nextVrWorks = [vrWork(120)]
+  syncResult: DashboardVrSyncResult = { sourceId: '720yun', result: 'success', summary: '同步 1 条', disabled: false }
+  exportError: Error | null = null
+  syncError: Error | null = null
+
+  async loadDashboard(query: DashboardStatsQuery): Promise<DashboardSnapshot> {
+    return snapshot(query)
+  }
+
+  async loadOperations(query: DashboardStatsQuery): Promise<DashboardOperationsResult> {
+    this.operationQueries.push({ ...query })
+    return {
+      activities: snapshot(query).activities,
+      operations: snapshot(query).operations,
+    }
+  }
+
+  async loadMetricTrend(metricId: string, query: DashboardStatsQuery): Promise<DashboardTrendPoint[]> {
+    this.trendCalls.push({ metricId, query: { ...query } })
+    return [{ date: query.start, primary: 12, secondary: metricId === 'IND-1' ? 8 : null }]
+  }
+
+  async getMetricDetails(metricId: string, query: DashboardStatsQuery, page: number, pageSize: number): Promise<MetricDetailPage> {
+    this.detailCalls.push({ metricId, query: { ...query }, page, pageSize })
+    return {
+      items: [{
+        id: `event-${page}`,
+        occurredAt: '2026-08-17 12:00:00',
+        eventName: 'page_view',
+        deviceId: 'device-1',
+        page: '/map',
+        referenceType: 'gate',
+        referenceId: '12',
+        extraJson: null,
+        ip: '127.0.0.1',
+        createdAt: '2026-08-17 12:00:01',
+        updatedAt: '2026-08-17 12:00:01',
+      }],
+      total: 41,
+      page,
+      pageSize,
+    }
+  }
+
+  async exportMetricDetails(metricId: string, query: DashboardStatsQuery): Promise<DashboardExportFile> {
+    this.exportCalls.push({ metricId, query: { ...query } })
+    if (this.exportError) throw this.exportError
+    return { content: new Blob(['event_name\npage_view']), filename: 'stats.csv' }
+  }
+
+  async loadDistributions(): Promise<Pick<DashboardSnapshot, 'distributions' | 'parkingUsage'>> {
+    const current = snapshot()
+    return { distributions: current.distributions, parkingUsage: current.parkingUsage }
+  }
+
+  async loadVrWorks(): Promise<VrWorkMetric[]> {
+    return this.nextVrWorks
+  }
+
+  async syncVrWorks(): Promise<DashboardVrSyncResult> {
+    this.syncCalls += 1
+    if (this.syncError) throw this.syncError
+    return this.syncResult
   }
 }
 
 describe('data dashboard store', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('refreshes only operations and reloads the selected metric detail', async () => {
-    const service = new MockDashboardService({ now: () => NOW, syncDelayMs: 0 })
-    const useStore = createDataDashboardStore(service, 'dashboard-refresh-test')
-    const store = useStore()
-    await store.load(rangeForPreset('last-7-days', NOW))
+  it('loads the three dashboard sections and derives metric group counts', async () => {
+    const store = createDataDashboardStore(new StubDashboardService(), 'dashboard-load-test')()
+
+    expect(await store.load(QUERY)).toBe(true)
+    expect(store.metricGroupCounts).toEqual({ entry: 1, page: 1 })
+    expect(store.visibleMetrics.map(metric => metric.id)).toEqual(['IND-1'])
+    expect(store.snapshot?.vrWorks[0]?.externalId).toBe('720-1')
+  })
+
+  it('lazily loads trend and raw events while PV/UV switching stays local', async () => {
+    const service = new StubDashboardService()
+    const store = createDataDashboardStore(service, 'dashboard-detail-test')()
+    await store.load(QUERY)
+
+    await store.selectMetric('IND-1')
+    expect(service.trendCalls).toHaveLength(1)
+    expect(service.detailCalls[0]).toMatchObject({ metricId: 'IND-1', page: 1, pageSize: DASHBOARD_DETAIL_PAGE_SIZE })
+    expect(store.selectedMetric?.trend).toEqual([{ date: QUERY.start, primary: 12, secondary: 8 }])
+    expect(store.metricDetail.items[0]?.eventName).toBe('page_view')
+
+    store.setDetailDimension('secondary')
+    expect(store.detailDimension).toBe('secondary')
+    expect(service.trendCalls).toHaveLength(1)
+    expect(service.detailCalls).toHaveLength(1)
+
+    await store.setDetailPage(2)
+    expect(service.detailCalls.at(-1)).toMatchObject({ page: 2, pageSize: 20 })
+    expect(store.metricDetail.page).toBe(2)
+  })
+
+  it('refreshes only operations and reloads an open metric with the new query', async () => {
+    const service = new StubDashboardService()
+    const store = createDataDashboardStore(service, 'dashboard-refresh-test')()
+    await store.load(QUERY)
     const distributions = store.snapshot?.distributions
     const vrWorks = store.snapshot?.vrWorks
+    await store.selectMetric('IND-1')
+    const activityQuery: DashboardStatsQuery = { ...QUERY, activityId: '9223372036854775807' }
 
-    await store.selectMetric('IND-3')
-    expect(store.selectedMetric?.id).toBe('IND-3')
-    expect(store.metricDetail.total).toBe(7)
-    await store.refreshOperations(rangeForPreset('last-30-days', NOW))
-
+    expect(await store.refreshOperations(activityQuery)).toBe(true)
     expect(store.snapshot?.distributions).toBe(distributions)
     expect(store.snapshot?.vrWorks).toBe(vrWorks)
-    expect(store.metricDetail.total).toBe(30)
-    await store.setDetailDimension('secondary')
-    expect(store.detailDimension).toBe('secondary')
-    expect(store.metricDetail.items).toHaveLength(20)
+    expect(service.operationQueries).toEqual([activityQuery])
+    expect(service.trendCalls.at(-1)?.query.activityId).toBe(activityQuery.activityId)
+    expect(service.detailCalls.at(-1)?.query.activityId).toBe(activityQuery.activityId)
   })
 
-  it('closes metric details when switching groups and loads distribution details', async () => {
-    const useStore = createDataDashboardStore(new MockDashboardService({ now: () => NOW, syncDelayMs: 0 }), 'dashboard-selection-test')
-    const store = useStore()
-    await store.load(rangeForPreset('last-7-days', NOW))
-    await store.selectMetric('IND-3')
+  it('keeps the newest operations response when requests finish out of order', async () => {
+    const service = new StubDashboardService()
+    const store = createDataDashboardStore(service, 'dashboard-race-test')()
+    await store.load(QUERY)
+    const pending = new Map<string, (value: DashboardOperationsResult) => void>()
+    service.loadOperations = query => new Promise((resolve) => {
+      pending.set(query.activityId || query.preset, resolve)
+    })
+    const olderQuery: DashboardStatsQuery = { ...QUERY, preset: 'last-30-days', start: '2026-07-19' }
+    const latestQuery: DashboardStatsQuery = { ...QUERY, activityId: '9223372036854775807' }
+
+    const olderRequest = store.refreshOperations(olderQuery)
+    const latestRequest = store.refreshOperations(latestQuery)
+    pending.get(latestQuery.activityId)?.({
+      activities: snapshot(latestQuery).activities,
+      operations: snapshot(latestQuery).operations,
+    })
+    await expect(latestRequest).resolves.toBe(true)
+    pending.get(olderQuery.preset)?.({
+      activities: snapshot(olderQuery).activities,
+      operations: snapshot(olderQuery).operations,
+    })
+    await expect(olderRequest).resolves.toBe(false)
+
+    expect(store.snapshot?.operations.query).toEqual(latestQuery)
+    expect(store.isOperationsLoading).toBe(false)
+  })
+
+  it('closes metric details when switching groups', async () => {
+    const store = createDataDashboardStore(new StubDashboardService(), 'dashboard-group-test')()
+    await store.load(QUERY)
+    await store.selectMetric('IND-1')
+
     store.setActiveGroup('page')
     expect(store.selectedMetric).toBeNull()
-    expect(store.visibleMetrics).toHaveLength(6)
-
-    await store.openDistributionDetail({ id: 'parking-charge', title: '停车收费类型分布', sliceKey: 'free', sliceLabel: '免费停车场' })
-    expect(store.distributionDetails).toHaveLength(4)
+    expect(store.visibleMetrics.map(metric => metric.id)).toEqual(['IND-2'])
+    expect(store.metricDetail.items).toEqual([])
   })
 
-  it('updates individual VR rows and enforces the export row limit', async () => {
-    const syncStore = createDataDashboardStore(new MockDashboardService({ now: () => NOW, syncDelayMs: 0 }), 'dashboard-sync-test')()
-    await syncStore.load(rangeForPreset('last-7-days', NOW))
-    const before = syncStore.snapshot?.vrWorks.find((work) => work.id === 'vr-1')?.pv ?? 0
-    expect(await syncStore.syncVrWork('vr-1')).toBe(true)
-    expect(syncStore.snapshot?.vrWorks.find((work) => work.id === 'vr-1')?.pv).toBeGreaterThan(before)
+  it('returns the backend CSV and exposes export errors without a frontend row limit', async () => {
+    const service = new StubDashboardService()
+    const store = createDataDashboardStore(service, 'dashboard-export-test')()
+    await store.load(QUERY)
+    await store.selectMetric('IND-1')
 
-    const exportStore = createDataDashboardStore(new OversizedExportService({ now: () => NOW, syncDelayMs: 0 }), 'dashboard-export-test')()
-    await exportStore.load(rangeForPreset('last-7-days', NOW))
-    await exportStore.selectMetric('IND-1')
-    await expect(exportStore.readMetricExport()).rejects.toThrow('超过 5 万条')
+    await expect(store.exportMetricDetails()).resolves.toMatchObject({ filename: 'stats.csv' })
+    expect(service.exportCalls[0]).toEqual({ metricId: 'IND-1', query: QUERY })
+
+    service.exportError = new Error('导出超过 5000 条，请缩小时间范围')
+    await expect(store.exportMetricDetails()).resolves.toBeNull()
+    expect(store.detailError).toBe('导出超过 5000 条，请缩小时间范围')
+  })
+
+  it('syncs all VR works, refreshes the ranking and preserves backend failure summaries', async () => {
+    const service = new StubDashboardService()
+    const store = createDataDashboardStore(service, 'dashboard-sync-test')()
+    await store.load(QUERY)
+
+    const success = await store.syncVrWorks()
+    expect(success?.result).toBe('success')
+    expect(service.syncCalls).toBe(1)
+    expect(store.snapshot?.vrWorks[0]?.pv).toBe(120)
+
+    service.syncResult = { sourceId: '720yun', result: 'fail', summary: '鉴权失败，对接源已停用', disabled: true }
+    const failure = await store.syncVrWorks()
+    expect(failure?.disabled).toBe(true)
+    expect(store.vrSyncError).toBe('鉴权失败，对接源已停用')
+
+    service.syncError = new Error('无同步权限')
+    await expect(store.syncVrWorks()).resolves.toBeNull()
+    expect(store.vrSyncError).toBe('无同步权限')
   })
 })

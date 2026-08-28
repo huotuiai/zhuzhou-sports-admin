@@ -1,112 +1,172 @@
-import { describe, expect, it } from 'vitest'
+import type { SignedRequestConfig } from '@/lib/http'
 import type { TicketGateWriteInput } from '../types'
+import { describe, expect, it } from 'vitest'
 import {
-  LEGACY_TICKET_GATE_STORAGE_KEY,
-  LocalTicketGateService,
-  TICKET_GATE_STORAGE_KEY,
+  createTicketGateService,
   formatMapCoordinates,
+  mapApiGate,
+  mapApiGateFloor,
   parseMapCoordinates,
-  sortTicketGates,
   validateTicketGateInput,
 } from './ticket-gate-service'
+import type {
+  ApiGateFloorVO,
+  ApiGateVO,
+  TicketGateDataRequester,
+} from './ticket-gate-service'
 
-class MemoryStorage implements Storage {
-  private values = new Map<string, string>()
-  get length(): number { return this.values.size }
-  clear(): void { this.values.clear() }
-  getItem(key: string): string | null { return this.values.get(key) ?? null }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null }
-  removeItem(key: string): void { this.values.delete(key) }
-  setItem(key: string, value: string): void { this.values.set(key, value) }
-}
+const timestamp = '2026-08-26T08:00:00+08:00'
 
-function input(overrides: Partial<TicketGateWriteInput> = {}): TicketGateWriteInput {
+function apiGate(overrides: Partial<ApiGateVO> = {}): ApiGateVO {
   return {
-    code: 'G-1',
+    id: '9007199254740993',
+    create_at: timestamp,
+    update_at: timestamp,
+    code: 'G-01',
     name: '东门入口',
-    floor: '一层',
-    locationDescription: '场馆东侧主入口',
-    mapCoordinates: '113.1462, 27.8165',
-    navigationAddress: '株洲体育中心东门',
-    navigationLongitude: null,
-    navigationLatitude: null,
-    sortOrder: 1,
-    status: 'open',
-    statusRemark: '',
+    floor_id: '9007199254740995',
+    location_desc: null,
+    lng: 113.1462,
+    lat: 27.8165,
+    nav_address: null,
+    open_status: 2,
+    status_remark: '临时管制',
+    sort_order: 2,
+    status: 0,
+    floor_name: '一层',
+    zone_ids: ['9007199254740997', 8],
+    zone_names: ['A-01', 'A-02'],
+    match_open: 0,
     ...overrides,
   }
 }
 
-describe('LocalTicketGateService', () => {
-  it('persists CRUD, keeps code immutable and records audit events', async () => {
-    const storage = new MemoryStorage()
-    let id = 0
-    const service = new LocalTicketGateService({ storage, createId: () => `id-${++id}`, now: () => new Date('2026-08-14T00:00:00.000Z') })
-    const created = await service.create(input({ code: ' g-1 ', name: ' 东门入口 ' }))
-    expect(created).toMatchObject({ code: 'G-1', name: '东门入口', status: 'open', sortOrder: 1 })
-    expect(created.mapPoints).toEqual([{ lng: 113.1462, lat: 27.8165 }])
-    await expect(service.create(input({ code: 'g-1', name: '其他入口' }))).rejects.toThrow('编号不能重复')
-    await expect(service.create(input({ code: 'G-2' }))).rejects.toThrow('名称不能重复')
+function apiFloor(overrides: Partial<ApiGateFloorVO> = {}): ApiGateFloorVO {
+  return { id: '11', name: '一层', sort_order: 1, status: 1, ...overrides }
+}
 
-    const updated = await service.update(created.id, input({ code: 'G-9', name: '东门主入口', sortOrder: 2 }))
-    expect(updated).toMatchObject({ code: 'G-1', name: '东门主入口', sortOrder: 2 })
-    const closed = await service.updateStatus(created.id, { status: 'closed', statusRemark: ' 临时关闭 ' })
-    expect(closed).toMatchObject({ status: 'closed', statusRemark: '临时关闭' })
-    const reopened = await service.updateStatus(created.id, { status: 'open', statusRemark: '不应保留' })
-    expect(reopened.statusRemark).toBe('')
+function input(overrides: Partial<TicketGateWriteInput> = {}): TicketGateWriteInput {
+  return {
+    code: ' g-01 ',
+    name: ' 东门入口 ',
+    floorId: '11',
+    locationDescription: ' 场馆东侧主入口 ',
+    mapCoordinates: '113.1462, 27.8165',
+    navigationAddress: ' 株洲体育中心东门 ',
+    sortOrder: 2,
+    status: 'restricted',
+    statusRemark: ' 临时管制 ',
+    ...overrides,
+  }
+}
 
-    await service.remove(created.id)
-    expect(await service.list()).toEqual([])
-    expect((await service.listAuditLogs()).map((item) => item.action)).toEqual(['create', 'update', 'status-update', 'status-update', 'delete'])
-  })
+function queuedRequester(responses: unknown[]) {
+  const configs: SignedRequestConfig[] = []
+  const request: TicketGateDataRequester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+    configs.push(config as unknown as SignedRequestConfig)
+    return responses.shift() as T
+  }
+  return { configs, request }
+}
 
-  it('requires one positioning coordinate, validates navigation pairing and positive sort order', () => {
-    const issues = validateTicketGateInput(input({
-      code: 'G_1',
-      mapCoordinates: '[{"lng":200,"lat":27}]',
+describe('ticket gate API mapping and validation', () => {
+  it('maps int64 IDs, nullable text, the single point, statuses and covered zones', () => {
+    expect(mapApiGate(apiGate())).toEqual({
+      id: '9007199254740993',
+      code: 'G-01',
+      name: '东门入口',
+      floorId: '9007199254740995',
+      floorName: '一层',
+      locationDescription: '',
+      point: { lng: 113.1462, lat: 27.8165 },
       navigationAddress: '',
-      navigationLongitude: 113.1,
-      navigationLatitude: null,
-      sortOrder: 0,
-    })).issues
-    expect(issues.map((item) => item.field)).toEqual(['code', 'mapCoordinates', 'navigationLatitude', 'sortOrder'])
-    expect(validateTicketGateInput(input({ mapCoordinates: '', navigationAddress: '' })).issues.map((item) => item.field)).toEqual(['mapCoordinates'])
-    expect(validateTicketGateInput(input({ navigationAddress: '', navigationLongitude: null, navigationLatitude: null })).valid).toBe(true)
+      sortOrder: 2,
+      status: 'restricted',
+      statusRemark: '临时管制',
+      enabled: false,
+      zoneIds: ['9007199254740997', '8'],
+      zoneNames: ['A-01', 'A-02'],
+      matchOpen: false,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+    expect(mapApiGateFloor(apiFloor({ status: 0 }))).toEqual({ id: '11', name: '一层', enabled: false, sortOrder: 1 })
   })
 
-  it('parses the prototype coordinate format while retaining legacy JSON compatibility', () => {
-    const points = parseMapCoordinates('113.1, 27.8')
-    expect(points).toEqual([{ lng: 113.1, lat: 27.8 }])
-    expect(parseMapCoordinates('[{"lng":113.1,"lat":27.8}]')).toEqual(points)
-    expect(formatMapCoordinates(points)).toBe('113.1, 27.8')
-    expect(() => parseMapCoordinates('{}')).toThrow('经度, 纬度')
-    expect(() => parseMapCoordinates('113.1,')).toThrow('经度, 纬度')
+  it('keeps prototype required fields, formats coordinates and validates floor options', () => {
+    const floors = [mapApiGateFloor(apiFloor())]
+    expect(parseMapCoordinates('113.1, 27.8')).toEqual({ lng: 113.1, lat: 27.8 })
+    expect(formatMapCoordinates({ lng: 113.1, lat: 27.8 })).toBe('113.1, 27.8')
+    expect(validateTicketGateInput(input(), floors).valid).toBe(true)
+    expect(validateTicketGateInput(input({ code: '!', floorId: '', mapCoordinates: '200, 27', sortOrder: 0 }), floors)
+      .issues.map((issue) => issue.field)).toEqual(['code', 'floorId', 'mapCoordinates', 'sortOrder'])
+  })
+})
+
+describe('ticket gate API service', () => {
+  it('loads a filtered page, all pages, floor options and detail', async () => {
+    const { configs, request } = queuedRequester([
+      { list: [apiGate({ id: 1 })], total: '1', page: 2, page_size: 20 },
+      { list: [apiGate({ id: 2, code: 'G-02', sort_order: 2 })], total: 101, page: 1, page_size: 100 },
+      { list: [apiGate({ id: 3, code: 'G-03', sort_order: 1 })], total: 101, page: 2, page_size: 100 },
+      [apiFloor()],
+      apiGate({ id: 4 }),
+    ])
+    const service = createTicketGateService(request)
+    const query = { keyword: ' 东 ', status: 'restricted' as const, floorId: '11' }
+
+    expect(await service.listPage(2, 20, query)).toMatchObject({ total: 1, page: 2, pageSize: 20 })
+    expect((await service.list()).map((gate) => gate.code)).toEqual(['G-03', 'G-02'])
+    expect(await service.listFloors()).toEqual([{ id: '11', name: '一层', enabled: true, sortOrder: 1 }])
+    expect((await service.get('4')).id).toBe('4')
+    expect(configs).toMatchObject([
+      { method: 'GET', url: 'api/v1/admin/gates', params: { page: 2, page_size: 20, keyword: '东', floor_id: '11', open_status: 2 } },
+      { method: 'GET', url: 'api/v1/admin/gates', params: { page: 1, page_size: 100 } },
+      { method: 'GET', url: 'api/v1/admin/gates', params: { page: 2, page_size: 100 } },
+      { method: 'GET', url: 'api/v1/admin/floors' },
+      { method: 'GET', url: 'api/v1/admin/gates/4' },
+    ])
   })
 
-  it('sorts by order then natural code', () => {
-    const base = {
-      id: 'gate', name: '入口', floor: '一层' as const, locationDescription: '', mapPoints: [], navigationAddress: '地址', navigationPoint: null,
-      status: 'open' as const, statusRemark: '', createdAt: '2026-01-01', updatedAt: '2026-01-01',
-    }
-    expect(sortTicketGates([
-      { ...base, id: '3', code: 'G-10', sortOrder: 1 },
-      { ...base, id: '2', code: 'G-2', sortOrder: 1 },
-      { ...base, id: '1', code: 'G-1', sortOrder: 2 },
-    ]).map((item) => item.code)).toEqual(['G-2', 'G-10', 'G-1'])
+  it('submits create/update/delete and performs detail-first minimal status updates', async () => {
+    const { configs, request } = queuedRequester([
+      apiGate({ id: 21, status: 1 }),
+      apiGate({ id: 21, name: '东门主入口', status: 1 }),
+      apiGate({ id: 21, name: '东门主入口', open_status: 1, status: 0 }),
+      apiGate({ id: 21, name: '东门主入口', open_status: 0, status: 0, status_remark: '临时关闭' }),
+      { deleted: true },
+    ])
+    const service = createTicketGateService(request)
+
+    await service.create(input())
+    await service.update('21', input({ code: 'G-99', name: '东门主入口' }))
+    await service.updateStatus('21', { status: 'closed', statusRemark: ' 临时关闭 ' })
+    await service.remove('21')
+
+    expect(configs[0]).toMatchObject({
+      method: 'POST',
+      url: 'api/v1/admin/gates',
+      data: {
+        code: 'G-01', name: '东门入口', floor_id: 11, location_desc: '场馆东侧主入口',
+        lng: 113.1462, lat: 27.8165, nav_address: '株洲体育中心东门', open_status: 2,
+        status_remark: '临时管制', sort_order: 2, status: 1,
+      },
+    })
+    expect(configs[1]?.data).not.toHaveProperty('code')
+    expect(configs[1]?.data).not.toHaveProperty('status')
+    expect(configs[1]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/gates/21', data: { name: '东门主入口', floor_id: 11 } })
+    expect(configs[2]).toMatchObject({ method: 'GET', url: 'api/v1/admin/gates/21' })
+    expect(configs[3]).toMatchObject({
+      method: 'PATCH',
+      url: 'api/v1/admin/gates/21',
+      data: { name: '东门主入口', lng: 113.1462, lat: 27.8165, open_status: 0, status_remark: '临时关闭' },
+    })
+    expect(configs[4]).toMatchObject({ method: 'DELETE', url: 'api/v1/admin/gates/21' })
   })
 
-  it('migrates v1 records into v2 without deleting the legacy key', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(LEGACY_TICKET_GATE_STORAGE_KEY, JSON.stringify({
-      schemaVersion: 1,
-      records: [{
-        id: 'legacy-1', name: '二层西入口', code: 'g-5', venueArea: '二层', location: '西侧楼梯口', direction: 'entry',
-        laneCount: 2, deviceCount: 2, enabled: false, remark: '设备维护', createdAt: '2026-08-01', updatedAt: '2026-08-02',
-      }],
-    }))
-    const service = new LocalTicketGateService({ storage })
-    expect(await service.list()).toEqual([expect.objectContaining({ id: 'legacy-1', code: 'G-5', floor: '二层', status: 'closed', statusRemark: '设备维护', navigationPoint: null })])
-    expect(storage.getItem(LEGACY_TICKET_GATE_STORAGE_KEY)).not.toBeNull()
-    expect(storage.getItem(TICKET_GATE_STORAGE_KEY)).not.toBeNull()
+  it('rejects floor IDs that cannot be represented safely in JSON bodies', async () => {
+    const { request } = queuedRequester([])
+    await expect(createTicketGateService(request).create(input({ floorId: '9007199254740993' })))
+      .rejects.toThrow('超出浏览器可安全提交的范围')
   })
 })

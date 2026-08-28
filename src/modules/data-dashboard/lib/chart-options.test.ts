@@ -5,7 +5,7 @@ import { buildDistributionOption, buildMetricTrendOption, buildParkingUsageOptio
 const metric: DashboardMetric = {
   id: 'IND-T', group: 'entry', name: '测试指标', definition: '测试', source: '测试源',
   primaryLabel: 'PV', primaryValue: 30, secondaryLabel: 'UV', secondaryValue: 20,
-  comparisonRate: 10, availability: 'ready', updatedAt: '2026-08-17T00:00:00.000Z',
+  previousValue: 90, comparisonRate: 10, comparisonText: '上升 10%', updatedAt: '2026-08-17T00:00:00.000Z',
   trend: [
     { date: '2026-08-16', primary: 10, secondary: 8 },
     { date: '2026-08-17', primary: 20, secondary: 12 },

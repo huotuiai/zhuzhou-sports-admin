@@ -1,4 +1,13 @@
-import type { TrafficControl, TrafficControlQuery, TrafficControlService, TrafficControlTimeStatus, TrafficControlValidationResult, TrafficControlWriteInput } from '../types'
+import type {
+  TrafficControl,
+  TrafficControlExportFile,
+  TrafficControlQuery,
+  TrafficControlServerQuery,
+  TrafficControlService,
+  TrafficControlTimeStatus,
+  TrafficControlValidationResult,
+  TrafficControlWriteInput,
+} from '../types'
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { sortTrafficControls, trafficControlService, validateTrafficControlInput } from '../services/traffic-control-service'
@@ -8,6 +17,25 @@ const PAGE_SIZE = 20
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
+}
+
+function serverQuery(query: TrafficControlQuery): TrafficControlServerQuery {
+  return { keyword: query.keyword, type: query.type, publishStatus: query.publishStatus }
+}
+
+function writeInput(item: TrafficControl, patch: Partial<TrafficControlWriteInput> = {}): TrafficControlWriteInput {
+  return {
+    title: item.title,
+    type: item.type,
+    areaName: item.areaName,
+    startAt: item.startAt,
+    endAt: item.endAt,
+    detourInstructions: item.detourInstructions,
+    geometry: item.geometry,
+    pinned: item.pinned,
+    sortOrder: item.sortOrder,
+    ...patch,
+  }
 }
 
 export function deriveTrafficControlTimeStatus(item: Pick<TrafficControl, 'startAt' | 'endAt'>, now = new Date()): TrafficControlTimeStatus {
@@ -29,16 +57,18 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
     const pageSize = ref(PAGE_SIZE)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
+    const detailLoadingId = ref<string | null>(null)
     const deletingId = ref<string | null>(null)
     const error = ref<string | null>(null)
     const clock = ref(now().getTime())
 
     const filteredRecords = computed(() => {
       const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
-      const rangeStart = query.dateStart ? new Date(`${query.dateStart}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY
-      const rangeEnd = query.dateEnd ? new Date(`${query.dateEnd}T23:59:59.999`).getTime() : Number.POSITIVE_INFINITY
+      const rangeStart = query.dateStart ? new Date(query.dateStart + 'T00:00:00').getTime() : Number.NEGATIVE_INFINITY
+      const rangeEnd = query.dateEnd ? new Date(query.dateEnd + 'T23:59:59.999').getTime() : Number.POSITIVE_INFINITY
       return sortTrafficControls(records.value.filter((item) => {
-        if (keyword && ![item.code, item.title, item.areaName].some((value) => includes(value, keyword))) return false
+        if (keyword && ![item.code, item.title, item.areaName].some(value => includes(value, keyword))) return false
         if (query.type !== 'all' && item.type !== query.type) return false
         if (query.publishStatus !== 'all' && item.publishStatus !== query.publishStatus) return false
         if (query.timeStatus !== 'all' && deriveTrafficControlTimeStatus(item, new Date(clock.value)) !== query.timeStatus) return false
@@ -54,31 +84,12 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       return filteredRecords.value.slice(start, start + pageSize.value)
     })
 
-    function setQuery(patch: Partial<TrafficControlQuery>): void {
-      Object.assign(query, patch)
-      page.value = 1
-    }
-    function resetQuery(): void {
-      Object.assign(query, DEFAULT_QUERY)
-      page.value = 1
-    }
-    function setPage(value: number): void {
-      if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
-    }
-    function setPageSize(value: number): void {
-      if (Number.isInteger(value) && value > 0) {
-        pageSize.value = value
-        page.value = 1
-      }
-    }
-    function validate(input: TrafficControlWriteInput, mode: 'create' | 'edit'): TrafficControlValidationResult {
-      return validateTrafficControlInput(input, { mode, now: now() })
-    }
     async function load(): Promise<boolean> {
       isLoading.value = true
       error.value = null
       try {
-        records.value = await service.list()
+        records.value = await service.list(serverQuery(query))
+        page.value = Math.min(page.value, pageCount.value)
         return true
       }
       catch (cause) {
@@ -87,6 +98,51 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       }
       finally { isLoading.value = false }
     }
+
+    async function setQuery(patch: Partial<TrafficControlQuery>): Promise<boolean> {
+      Object.assign(query, patch)
+      page.value = 1
+      return load()
+    }
+
+    async function resetQuery(): Promise<boolean> {
+      Object.assign(query, DEFAULT_QUERY)
+      page.value = 1
+      return load()
+    }
+
+    function setPage(value: number): void {
+      if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
+    }
+
+    function setPageSize(value: number): void {
+      if (Number.isInteger(value) && value > 0) {
+        pageSize.value = value
+        page.value = 1
+      }
+    }
+
+    function validate(input: TrafficControlWriteInput, mode: 'create' | 'edit'): TrafficControlValidationResult {
+      return validateTrafficControlInput(input, { mode, now: now() })
+    }
+
+    async function get(id: string): Promise<TrafficControl | null> {
+      detailLoadingId.value = id
+      error.value = null
+      try {
+        return await service.get(id)
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally { detailLoadingId.value = null }
+    }
+
+    async function refreshAfterMutation(): Promise<void> {
+      await load()
+    }
+
     async function create(input: TrafficControlWriteInput): Promise<TrafficControl | null> {
       const result = validate(input, 'create')
       if (!result.valid) {
@@ -97,7 +153,7 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       error.value = null
       try {
         const record = await service.create(input)
-        records.value = sortTrafficControls([...records.value, record])
+        await refreshAfterMutation()
         return record
       }
       catch (cause) {
@@ -106,6 +162,7 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       }
       finally { isSaving.value = false }
     }
+
     async function update(id: string, input: TrafficControlWriteInput): Promise<TrafficControl | null> {
       const result = validate(input, 'edit')
       if (!result.valid) {
@@ -116,7 +173,7 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       error.value = null
       try {
         const record = await service.update(id, input)
-        records.value = sortTrafficControls([...records.value.filter((item) => item.id !== id), record])
+        await refreshAfterMutation()
         return record
       }
       catch (cause) {
@@ -125,13 +182,13 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       }
       finally { isSaving.value = false }
     }
+
     async function remove(id: string): Promise<boolean> {
       deletingId.value = id
       error.value = null
       try {
         await service.remove(id)
-        records.value = records.value.filter((item) => item.id !== id)
-        page.value = Math.min(page.value, pageCount.value)
+        await refreshAfterMutation()
         return true
       }
       catch (cause) {
@@ -140,26 +197,14 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       }
       finally { deletingId.value = null }
     }
+
     async function togglePinned(item: TrafficControl): Promise<TrafficControl | null> {
-      return update(item.id, {
-        title: item.title,
-        type: item.type,
-        areaName: item.areaName,
-        startAt: item.startAt,
-        endAt: item.endAt,
-        detourInstructions: item.detourInstructions,
-        geometry: item.geometry,
-        publishAt: item.publishAt,
-        pinned: !item.pinned,
-        sortOrder: item.sortOrder,
-      })
-    }
-    async function changePublishStatus(item: TrafficControl, action: 'publish' | 'revoke'): Promise<TrafficControl | null> {
       isSaving.value = true
       error.value = null
       try {
-        const record = action === 'publish' ? await service.publish(item.id) : await service.revoke(item.id)
-        records.value = sortTrafficControls([...records.value.filter((current) => current.id !== item.id), record])
+        const latest = await service.get(item.id)
+        const record = await service.update(item.id, writeInput(latest, { pinned: !latest.pinned }))
+        await refreshAfterMutation()
         return record
       }
       catch (cause) {
@@ -168,12 +213,74 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       }
       finally { isSaving.value = false }
     }
+
+    async function changePublishStatus(item: TrafficControl, action: 'publish' | 'revoke'): Promise<TrafficControl | null> {
+      isSaving.value = true
+      error.value = null
+      try {
+        const record = action === 'publish' ? await service.publish(item.id) : await service.revoke(item.id)
+        await refreshAfterMutation()
+        return record
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally { isSaving.value = false }
+    }
+
     const publish = (item: TrafficControl) => changePublishStatus(item, 'publish')
     const revoke = (item: TrafficControl) => changePublishStatus(item, 'revoke')
+
+    async function exportAll(): Promise<TrafficControlExportFile | null> {
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.export()
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally { isExporting.value = false }
+    }
+
     function resetError(): void { error.value = null }
     function refreshTime(): void { clock.value = now().getTime() }
 
-    return { records, query, page, pageSize, isLoading, isSaving, deletingId, error, filteredRecords, total, pageCount, currentPage, paginatedRecords, setQuery, resetQuery, setPage, setPageSize, validate, load, create, update, remove, togglePinned, publish, revoke, resetError, refreshTime }
+    return {
+      records,
+      query,
+      page,
+      pageSize,
+      isLoading,
+      isSaving,
+      isExporting,
+      detailLoadingId,
+      deletingId,
+      error,
+      filteredRecords,
+      total,
+      pageCount,
+      currentPage,
+      paginatedRecords,
+      setQuery,
+      resetQuery,
+      setPage,
+      setPageSize,
+      validate,
+      load,
+      get,
+      create,
+      update,
+      remove,
+      togglePinned,
+      publish,
+      revoke,
+      exportAll,
+      resetError,
+      refreshTime,
+    }
   })
 }
 

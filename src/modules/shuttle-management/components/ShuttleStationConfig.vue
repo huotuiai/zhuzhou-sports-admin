@@ -243,7 +243,7 @@ watch(() => props.routeId, cancelEditor)
           <div v-else class="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-lg border bg-background/70 p-3 sm:grid-cols-2">
             <label v-for="gate in ticketGates" :key="gate.id" class="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 hover:bg-muted/40">
               <Checkbox :model-value="editor.arrivalGateIds.includes(gate.id)" :disabled="saving" :aria-label="`选择到达检票口：${gate.code} ${gate.name}`" @update:model-value="toggleArrivalGate(gate.id, $event)" />
-              <span class="min-w-0"><span class="block truncate text-sm font-medium">{{ gate.code }} · {{ gate.name }}</span><span class="block text-xs text-muted-foreground">{{ gate.floor }} · {{ gate.status === 'open' ? '开放' : gate.status === 'restricted' ? '受限' : '关闭' }}</span></span>
+              <span class="min-w-0"><span class="block truncate text-sm font-medium">{{ gate.code }} · {{ gate.name }}</span><span class="block text-xs text-muted-foreground">{{ gate.floorName }} · {{ gate.status === 'open' ? '开放' : gate.status === 'restricted' ? '受限' : '关闭' }}</span></span>
             </label>
           </div>
           <p v-if="unavailableArrivalGateIds.length" class="text-xs text-warning">已保留 {{ unavailableArrivalGateIds.length }} 个当前不可选的历史检票口关联。</p>

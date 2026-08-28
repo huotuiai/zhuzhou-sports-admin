@@ -7,7 +7,7 @@ import type {
   DashboardDistributionSlice,
   DashboardFilterState,
   DashboardMetricGroup,
-  ParkingUsageItem,
+  DashboardStatsQuery,
   VrWorkMetric,
 } from '@/modules/data-dashboard/types'
 import { computed, onMounted, ref } from 'vue'
@@ -26,7 +26,6 @@ import { toast } from 'vue-sonner'
 import DashboardChart from '@/modules/data-dashboard/components/DashboardChart.vue'
 import DashboardFilterBar from '@/modules/data-dashboard/components/DashboardFilterBar.vue'
 import DashboardMetricCard from '@/modules/data-dashboard/components/DashboardMetricCard.vue'
-import DistributionDetailDialog from '@/modules/data-dashboard/components/DistributionDetailDialog.vue'
 import MetricDetailSheet from '@/modules/data-dashboard/components/MetricDetailSheet.vue'
 import {
   buildDistributionOption,
@@ -34,7 +33,7 @@ import {
   distributionSliceColor,
 } from '@/modules/data-dashboard/lib/chart-options'
 import {
-  rangeForPreset,
+  queryForPreset,
   toDashboardDate,
 } from '@/modules/data-dashboard/services/dashboard-service'
 import { useDataDashboardStore } from '@/modules/data-dashboard/stores/data-dashboard-store'
@@ -45,26 +44,22 @@ import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useThemeStore } from '@/stores/theme'
 
-interface EChartsClickPayload {
-  name?: unknown
-  data?: unknown
-}
-
-const groupTabs: readonly { value: DashboardMetricGroup, label: string, count: number }[] = [
-  { value: 'entry', label: '入口行为', count: 14 },
-  { value: 'page', label: '页面数据', count: 6 },
+const groupTabs: readonly { value: DashboardMetricGroup, label: string }[] = [
+  { value: 'entry', label: '入口行为' },
+  { value: 'page', label: '页面数据' },
 ]
 
 const vrColumns: readonly DataTableColumn<VrWorkMetric>[] = [
   { key: 'rank', label: 'PV 排行', width: '92px', align: 'center' },
   { key: 'title', label: '作品', minWidth: '210px' },
   { key: 'cover', label: '封面', width: '88px', align: 'center' },
-  { key: 'bindingType', label: '绑定对象', minWidth: '118px', align: 'center' },
+  { key: 'bindingObject', label: '绑定对象', minWidth: '150px' },
   { key: 'pv', label: 'PV', minWidth: '100px', align: 'right' },
+  { key: 'uv', label: 'UV', minWidth: '90px', align: 'right' },
   { key: 'likes', label: '点赞', minWidth: '90px', align: 'right' },
   { key: 'sceneCount', label: '场景数', minWidth: '82px', align: 'right' },
+  { key: 'status', label: '状态', minWidth: '90px', align: 'center' },
   { key: 'lastSyncedAt', label: '最后同步', minWidth: '170px' },
-  { key: 'actions', label: '操作', minWidth: '150px', align: 'right' },
 ]
 
 const store = useDataDashboardStore()
@@ -72,7 +67,8 @@ const themeStore = useThemeStore()
 const reducedMotion = usePreferredReducedMotion()
 const now = new Date()
 const today = toDashboardDate(now)
-const initialRange = rangeForPreset('last-7-days', now)
+const initialQuery = queryForPreset('last-7-days', now)
+const initialRange: DashboardDateRange = { start: initialQuery.start, end: initialQuery.end }
 const filterState = ref<DashboardFilterState>({
   preset: 'last-7-days',
   customStart: '',
@@ -82,8 +78,6 @@ const filterState = ref<DashboardFilterState>({
 const exporting = ref(false)
 
 const currentRange = computed<DashboardDateRange>(() => store.snapshot?.operations.range ?? initialRange)
-const selectedDistributionTitle = computed(() => store.selectedDistribution?.title ?? '分布明细')
-const selectedDistributionSliceLabel = computed(() => store.selectedDistribution?.sliceLabel ?? '')
 function distributionOption(distribution: DashboardDistribution): EChartsCoreOption {
   return buildDistributionOption(
     distribution,
@@ -118,34 +112,8 @@ function formatDateTime(value: string | null | undefined): string {
   return `${part('month')}-${part('day')} ${part('hour')}:${part('minute')}`
 }
 
-function parseChartPayload(payload: unknown): EChartsClickPayload {
-  return payload && typeof payload === 'object' ? payload as EChartsClickPayload : {}
-}
-
-function chartSliceKey(payload: unknown, distribution: DashboardDistribution): string | null {
-  const parsed = parseChartPayload(payload)
-  if (parsed.data && typeof parsed.data === 'object') {
-    const id = Reflect.get(parsed.data, 'id')
-    if (typeof id === 'string') return id
-  }
-  if (typeof parsed.name === 'string') {
-    return distribution.slices.find((slice) => slice.label === parsed.name)?.key ?? null
-  }
-  return null
-}
-
-function parkingItemFromPayload(payload: unknown): ParkingUsageItem | null {
-  const parsed = parseChartPayload(payload)
-  if (parsed.data && typeof parsed.data === 'object') {
-    const id = Reflect.get(parsed.data, 'id')
-    if (typeof id === 'string') return store.snapshot?.parkingUsage.find((item) => item.id === id) ?? null
-  }
-  if (typeof parsed.name === 'string') return store.snapshot?.parkingUsage.find((item) => item.name === parsed.name) ?? null
-  return null
-}
-
-async function applyRange(range: DashboardDateRange): Promise<void> {
-  const succeeded = await store.refreshOperations(range)
+async function applyRange(query: DashboardStatsQuery): Promise<void> {
+  const succeeded = await store.refreshOperations(query)
   if (!succeeded && store.error) toast.error(store.error)
 }
 
@@ -153,42 +121,8 @@ async function selectMetric(id: string): Promise<void> {
   await store.selectMetric(id)
 }
 
-async function openDistribution(distribution: DashboardDistribution, slice: DashboardDistributionSlice): Promise<void> {
-  await store.openDistributionDetail({
-    id: distribution.id,
-    title: distribution.title,
-    sliceKey: slice.key,
-    sliceLabel: slice.label,
-  })
-}
-
-async function handleDistributionChartClick(distribution: DashboardDistribution, payload: unknown): Promise<void> {
-  const key = chartSliceKey(payload, distribution)
-  const slice = distribution.slices.find((item) => item.key === key)
-  if (slice) await openDistribution(distribution, slice)
-}
-
-async function openParkingDetail(item: ParkingUsageItem): Promise<void> {
-  await store.openDistributionDetail({
-    id: 'parking-usage',
-    title: '停车场车位使用情况',
-    sliceKey: item.id,
-    sliceLabel: `${item.name} 停车场`,
-  })
-}
-
-async function handleParkingChartClick(payload: unknown): Promise<void> {
-  const item = parkingItemFromPayload(payload)
-  if (item) await openParkingDetail(item)
-}
-
-function csvCell(value: unknown): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
-function downloadCsv(filename: string, headers: readonly string[], rows: readonly (readonly unknown[])[]): void {
-  const content = `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }))
+function downloadFile(content: Blob, filename: string): void {
+  const url = URL.createObjectURL(content)
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
@@ -200,15 +134,10 @@ async function exportMetricDetails(): Promise<void> {
   if (!store.selectedMetric || exporting.value) return
   exporting.value = true
   try {
-    const rows = await store.readMetricExport()
-    const metric = store.selectedMetric
-    const dimension = store.detailDimension === 'secondary' ? metric.secondaryLabel : metric.primaryLabel
-    downloadCsv(
-      `数据看板-${metric.name}-${currentRange.value.start}-${currentRange.value.end}.csv`,
-      ['日期', '指标', '数据维度', '数值', '来源入口'],
-      rows.map((row) => [row.date, metric.name, dimension, row.value, row.sourceEntry]),
-    )
-    toast.success(`已导出 ${rows.length} 条指标明细`)
+    const file = await store.exportMetricDetails()
+    if (!file) throw new Error(store.detailError ?? '导出失败')
+    downloadFile(file.content, file.filename)
+    toast.success('指标原始埋点 CSV 已导出')
   } catch (error) {
     toast.error(error instanceof Error ? error.message : '导出失败')
   } finally {
@@ -216,18 +145,21 @@ async function exportMetricDetails(): Promise<void> {
   }
 }
 
-async function syncVrWork(id: string): Promise<void> {
-  const succeeded = await store.syncVrWork(id)
-  if (succeeded) {
-    const work = store.snapshot?.vrWorks.find((item) => item.id === id)
-    toast.success(`同步完成，已更新至 ${formatDateTime(work?.lastSyncedAt)}`)
-  } else {
-    toast.error(store.syncErrors[id] ?? '同步失败，可重试')
+async function syncVrWorks(): Promise<void> {
+  const result = await store.syncVrWorks()
+  if (!result) {
+    toast.error(store.vrSyncError ?? '同步失败，可重试')
+    return
   }
+  if (result.result === 'fail') {
+    toast.error(result.disabled ? `${result.summary}；对接源已自动停用` : result.summary)
+    return
+  }
+  toast.success(result.summary)
 }
 
 onMounted(async () => {
-  await store.load(initialRange)
+  await store.load(initialQuery)
 })
 </script>
 
@@ -253,7 +185,7 @@ onMounted(async () => {
           <Database class="mx-auto size-9 text-danger" aria-hidden="true" />
           <h2 class="mt-4 font-semibold">数据看板加载失败</h2>
           <p class="mt-2 text-sm text-muted-foreground">{{ store.error }}</p>
-          <Button class="mt-5" @click="store.load(initialRange)">
+          <Button class="mt-5" @click="store.load(initialQuery)">
             <RefreshCw aria-hidden="true" />重新加载
           </Button>
         </div>
@@ -293,7 +225,7 @@ onMounted(async () => {
               @click="store.setActiveGroup(tab.value)"
             >
               {{ tab.label }}
-              <span class="rounded-full px-1.5 py-0.5 text-[10px]" :class="store.activeGroup === tab.value ? 'bg-primary-foreground/15' : 'bg-muted'">{{ tab.count }}</span>
+              <span class="rounded-full px-1.5 py-0.5 text-[10px]" :class="store.activeGroup === tab.value ? 'bg-primary-foreground/15' : 'bg-muted'">{{ store.metricGroupCounts[tab.value] }}</span>
             </button>
           </div>
 
@@ -331,20 +263,17 @@ onMounted(async () => {
                 <DashboardChart
                   :option="distributionOption(distribution)"
                   :accessible-label="distribution.title"
-                  @chart-click="handleDistributionChartClick(distribution, $event)"
                 />
               </div>
               <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3">
-                <button
+                <span
                   v-for="slice in distribution.slices"
                   :key="slice.key"
-                  type="button"
-                  class="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
-                  @click="openDistribution(distribution, slice)"
+                  class="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground"
                 >
                   <span class="size-2.5 rounded-sm" :style="{ backgroundColor: distributionColor(slice) }" aria-hidden="true" />
                   {{ slice.label }} <strong class="font-semibold tabular-nums text-foreground">{{ slice.value }}</strong>
-                </button>
+                </span>
               </div>
             </Card>
           </div>
@@ -358,26 +287,23 @@ onMounted(async () => {
                 <h3 class="text-sm font-semibold">停车场车位使用情况</h3>
                 <p class="mt-1 text-xs text-muted-foreground">低使用率绿色 · 高使用率橙色 · 已满红色</p>
               </div>
-              <span class="text-xs text-muted-foreground">点击柱体查看停车场明细</span>
+              <span class="text-xs text-muted-foreground">数据为当前停车余位快照</span>
             </div>
             <div class="h-72 min-w-0 px-2 sm:h-80">
               <DashboardChart
                 :option="parkingOption"
                 accessible-label="停车场车位使用情况柱状图"
-                @chart-click="handleParkingChartClick"
               />
             </div>
-            <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3" aria-label="停车场车位使用情况快捷明细">
-              <button
+            <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3" aria-label="停车场车位使用情况摘要">
+              <span
                 v-for="parking in store.snapshot.parkingUsage"
                 :key="parking.id"
-                type="button"
-                class="min-h-9 rounded-lg border border-border/70 bg-background/60 px-3 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
-                @click="openParkingDetail(parking)"
+                class="inline-flex min-h-9 items-center rounded-lg border border-border/70 bg-background/60 px-3 text-xs"
               >
                 <strong>{{ parking.name }}</strong>
                 <span class="ml-2 tabular-nums text-muted-foreground">{{ parking.usageRate }}% · 剩余 {{ parking.available }}</span>
-              </button>
+              </span>
             </div>
           </Card>
           <Skeleton v-else class="h-96 rounded-xl" />
@@ -390,7 +316,14 @@ onMounted(async () => {
             </span>
             <h2 id="vr-section-title" class="text-base font-semibold">板块三 · VR 作品数据</h2>
             <Badge variant="secondary">720 云累计，固定展示</Badge>
+            <Button variant="outline" size="sm" class="ml-auto" :disabled="store.isVrSyncing" @click="syncVrWorks">
+              <LoaderCircle v-if="store.isVrSyncing" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              <RotateCw v-else aria-hidden="true" />
+              {{ store.isVrSyncing ? '同步中' : '同步全部 720 云' }}
+            </Button>
           </div>
+
+          <p v-if="store.vrSyncError" class="rounded-lg border border-danger/25 bg-danger/5 px-3 py-2 text-xs text-danger">{{ store.vrSyncError }}</p>
 
           <DataTable
             :columns="vrColumns"
@@ -404,35 +337,19 @@ onMounted(async () => {
               <span class="inline-grid size-7 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{{ row.rank }}</span>
             </template>
             <template #cell-title="{ row }">
-              <p class="font-medium">{{ row.title }}</p>
+              <p class="font-medium">{{ row.title }}</p><p class="mt-1 font-mono text-[10px] text-muted-foreground">{{ row.externalId }}</p>
             </template>
             <template #cell-cover="{ row }">
-              <span class="inline-grid h-9 w-12 place-items-center rounded-md bg-gradient-to-br from-sky-800 to-cyan-500 text-[10px] font-semibold text-white shadow-sm">{{ row.coverLabel }}</span>
+              <img v-if="row.coverUrl" :src="row.coverUrl" :alt="`${row.title}封面`" class="h-10 w-14 rounded-md border object-cover">
+              <span v-else class="inline-grid h-10 w-14 place-items-center rounded-md bg-gradient-to-br from-sky-800 to-cyan-500 text-[10px] font-semibold text-white shadow-sm">VR</span>
             </template>
-            <template #cell-bindingType="{ row }">
-              <Badge :variant="row.bindingType === 'manual' ? 'secondary' : 'outline'">
-                {{ row.bindingType === 'manual' ? '手动绑定' : '外部绑定' }}
-              </Badge>
-            </template>
+            <template #cell-bindingObject="{ row }"><span class="text-xs text-muted-foreground">{{ row.bindingObject ?? '—' }}</span></template>
             <template #cell-pv="{ row }"><strong class="tabular-nums">{{ row.pv.toLocaleString('zh-CN') }}</strong></template>
+            <template #cell-uv="{ row }"><span class="tabular-nums">{{ row.uv?.toLocaleString('zh-CN') ?? '—' }}</span></template>
             <template #cell-likes="{ row }"><span class="tabular-nums">{{ row.likes.toLocaleString('zh-CN') }}</span></template>
             <template #cell-sceneCount="{ row }"><span class="tabular-nums">{{ row.sceneCount }}</span></template>
+            <template #cell-status="{ row }"><Badge :variant="row.isInvalid ? 'destructive' : row.enabled ? 'outline' : 'secondary'">{{ row.isInvalid ? '已失效' : row.enabled ? '启用' : '停用' }}</Badge></template>
             <template #cell-lastSyncedAt="{ row }"><span class="whitespace-nowrap text-xs tabular-nums">{{ formatDateTime(row.lastSyncedAt) }}</span></template>
-            <template #cell-actions="{ row }">
-              <div class="inline-flex flex-col items-end gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="store.syncingVrIds.has(row.id)"
-                  @click="syncVrWork(row.id)"
-                >
-                  <LoaderCircle v-if="store.syncingVrIds.has(row.id)" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                  <RotateCw v-else aria-hidden="true" />
-                  {{ store.syncingVrIds.has(row.id) ? '同步中' : '手动同步' }}
-                </Button>
-                <span v-if="store.syncErrors[row.id]" class="max-w-44 text-right text-[10px] leading-4 text-danger">{{ store.syncErrors[row.id] }}</span>
-              </div>
-            </template>
           </DataTable>
         </section>
       </template>
@@ -444,24 +361,16 @@ onMounted(async () => {
       :dimension="store.detailDimension"
       :detail="store.metricDetail"
       :loading="store.isDetailLoading"
+      :trend-loading="store.isTrendLoading"
       :exporting="exporting"
       :error="store.detailError"
+      :trend-error="store.trendError"
       @update:open="!$event && store.closeMetricDetail()"
       @update:dimension="store.setDetailDimension($event)"
       @update:page="store.setDetailPage($event)"
       @retry="store.loadMetricDetail()"
+      @retry-trend="store.loadMetricTrend()"
       @export="exportMetricDetails"
-    />
-
-    <DistributionDetailDialog
-      :open="Boolean(store.selectedDistribution)"
-      :title="selectedDistributionTitle"
-      :slice-label="selectedDistributionSliceLabel"
-      :rows="store.distributionDetails"
-      :loading="store.isDistributionLoading"
-      :error="store.distributionError"
-      @update:open="!$event && store.closeDistributionDetail()"
-      @retry="store.retryDistributionDetail()"
     />
   </section>
 </template>

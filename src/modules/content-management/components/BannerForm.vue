@@ -88,9 +88,8 @@ defineExpose<BannerFormHandle>({ validateAndFocus })
         accept="image/*"
         :max-file-size="2 * 1024 * 1024"
         hint="支持常用图片格式，≤2MB，建议 750×420"
-        :disabled="saving"
+        disabled
         :invalid="Boolean(errorFor('image'))"
-        @update:model-value="patch({ image: $event[0] ?? null })"
       />
       <p v-if="errorFor('image')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('image') }}</p>
     </div>

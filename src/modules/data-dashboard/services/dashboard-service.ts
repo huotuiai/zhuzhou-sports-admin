@@ -1,42 +1,141 @@
+import type { AxiosResponse } from 'axios'
+import type { SignedRequestConfig } from '@/lib/http'
 import type {
   DashboardActivityOption,
   DashboardDatePreset,
   DashboardDateRange,
   DashboardDistribution,
+  DashboardDistributionSlice,
+  DashboardExportFile,
   DashboardMetric,
   DashboardMetricDetail,
-  DashboardMetricDimension,
   DashboardMetricGroup,
-  DashboardOperationsSnapshot,
+  DashboardOperationsResult,
   DashboardService,
   DashboardSnapshot,
+  DashboardStatsQuery,
   DashboardTrendPoint,
-  DistributionDetailRow,
+  DashboardVrSyncResult,
   MetricDetailPage,
   ParkingUsageItem,
   VrWorkMetric,
 } from '../types'
+import { ApiError, rawHttpClient, requestData } from '@/lib/http'
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+type ApiRangePreset = 'today' | 'yesterday' | '7d' | '30d' | 'custom'
 
-interface MetricSeed {
-  id: string
-  group: DashboardMetricGroup
-  name: string
-  definition: string
-  source: string
-  primaryLabel: string
-  primaryValue: number
-  secondaryLabel: string | null
-  secondaryValue: number | null
-  comparisonRate: number | null
-  sourceEntry: string
+export interface ApiTimeWindow {
+  preset: string
+  start: string
+  end: string
 }
 
-export interface MockDashboardServiceOptions {
-  now?: () => Date
-  failSyncForIds?: ReadonlySet<string>
-  syncDelayMs?: number
+export interface ApiActivityOption {
+  id: number | string
+  title: string
+  activity_start_at: string | null
+  activity_end_at: string | null
+}
+
+export interface ApiKpiCard {
+  code: string
+  name: string
+  hint: string
+  group: string
+  value: number | string
+  uv: number | string | null
+  prev: number | string
+  change: number | string | null
+  change_text: string
+}
+
+export interface ApiOverviewVO {
+  window: ApiTimeWindow
+  activities: ApiActivityOption[]
+  entry: ApiKpiCard[]
+  page: ApiKpiCard[]
+  as_of: string
+}
+
+export interface ApiTrendPoint {
+  day: string
+  value: number | string
+  uv: number | string | null
+}
+
+export interface ApiAnalyticsEvent {
+  id: number | string
+  create_at: string
+  update_at: string
+  occurred_at: string
+  event_name: string
+  device_id: string | null
+  page: string | null
+  ref_type: string | null
+  ref_id: number | string | null
+  extra_json: string | null
+  ip: string | null
+}
+
+export interface ApiAnalyticsEventPage {
+  list: ApiAnalyticsEvent[]
+  total: number | string
+  page: number | string
+  page_size: number | string
+}
+
+export interface ApiDistSlice {
+  name: string
+  value: number | string
+}
+
+export interface ApiParkingBar {
+  name: string
+  remain: number | string
+  capacity: number | string
+  usage: number | string
+}
+
+export interface ApiDistributionVO {
+  parking_fee: ApiDistSlice[]
+  parking_remain: ApiParkingBar[]
+  controls: ApiDistSlice[]
+  activities: ApiDistSlice[]
+}
+
+export interface ApiVrWork {
+  id: number | string
+  create_at: string
+  update_at: string
+  external_id: string
+  title: string
+  cover_url: string | null
+  bind_object: string | null
+  pv_count: number | string
+  like_count: number | string
+  scene_count: number | string
+  uv_count: number | string | null
+  share_count: number | string | null
+  comment_count: number | string | null
+  phone_click_count: number | string | null
+  last_sync_at: string | null
+  is_invalid: number | boolean
+  status: number | boolean
+}
+
+export interface ApiVrSyncResult {
+  source_id: number | string
+  result: string
+  summary: string
+  disabled: boolean
+}
+
+export interface DashboardDataRequester {
+  <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface DashboardFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
 export class DashboardServiceError extends Error {
@@ -46,8 +145,38 @@ export class DashboardServiceError extends Error {
   }
 }
 
-function clone<T>(value: T): T {
-  return structuredClone(value)
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const MAX_DETAIL_PAGE_SIZE = 100
+
+function responseError(message: string): ApiError {
+  return new ApiError(message, { kind: 'response' })
+}
+
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
+  return value
+}
+
+function nullableText(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
+}
+
+function numberValue(value: unknown, field: string): number {
+  const result = Number(value)
+  if (!Number.isFinite(result)) throw responseError(`服务器返回的${field}无效`)
+  return result
+}
+
+function nonNegativeInteger(value: unknown, field: string): number {
+  return Math.max(0, Math.trunc(numberValue(value, field)))
+}
+
+function nullableNonNegativeInteger(value: unknown, field: string): number | null {
+  return value === null || value === undefined ? null : nonNegativeInteger(value, field)
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === 1
 }
 
 export function toDashboardDate(date: Date): string {
@@ -60,9 +189,7 @@ export function toDashboardDate(date: Date): string {
 function parseDashboardDate(value: string): Date {
   if (!DATE_PATTERN.test(value)) throw new DashboardServiceError('日期格式无效')
   const date = new Date(`${value}T00:00:00`)
-  if (Number.isNaN(date.getTime()) || toDashboardDate(date) !== value) {
-    throw new DashboardServiceError('日期格式无效')
-  }
+  if (Number.isNaN(date.getTime()) || toDashboardDate(date) !== value) throw new DashboardServiceError('日期格式无效')
   return date
 }
 
@@ -70,12 +197,6 @@ function addDays(date: Date, days: number): Date {
   const result = new Date(date)
   result.setDate(result.getDate() + days)
   return result
-}
-
-function inclusiveDayCount(range: DashboardDateRange): number {
-  const start = parseDashboardDate(range.start)
-  const end = parseDashboardDate(range.end)
-  return Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1
 }
 
 export function normalizeDashboardRange(range: DashboardDateRange, now = new Date()): DashboardDateRange {
@@ -100,262 +221,305 @@ export function rangeForPreset(preset: Exclude<DashboardDatePreset, 'custom'>, n
   return { start: toDashboardDate(addDays(today, -(days - 1))), end: toDashboardDate(today) }
 }
 
-const METRIC_SEEDS: readonly MetricSeed[] = [
-  { id: 'IND-3', group: 'entry', name: '座位检索次数', definition: '所有页面发起座位检索的 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 8942, secondaryLabel: 'UV', secondaryValue: 6820, comparisonRate: 18.2, sourceEntry: '座位检索' },
-  { id: 'IND-5', group: 'entry', name: '停车场坐标点击次数', definition: '首页所有停车场坐标点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 15732, secondaryLabel: 'UV', secondaryValue: 11450, comparisonRate: 21.7, sourceEntry: '首页停车场坐标' },
-  { id: 'IND-6', group: 'entry', name: '接驳车坐标点击次数', definition: '首页所有接驳车坐标点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 12480, secondaryLabel: 'UV', secondaryValue: 9860, comparisonRate: -3.2, sourceEntry: '首页接驳车坐标' },
-  { id: 'IND-7', group: 'entry', name: '检票口坐标点击次数', definition: '首页所有检票口坐标点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 6480, secondaryLabel: 'UV', secondaryValue: 4920, comparisonRate: 28.4, sourceEntry: '首页检票口坐标' },
-  { id: 'IND-8', group: 'entry', name: 'VR 使用次数', definition: '所有 VR 入口点击 PV/UV 总和。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 9214, secondaryLabel: 'UV', secondaryValue: 5120, comparisonRate: 15.3, sourceEntry: 'VR 入口' },
-  { id: 'IND-34', group: 'entry', name: '首页查询座位次数', definition: '首页座位快捷查询条“查入场方案”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 3560, secondaryLabel: 'UV', secondaryValue: 2940, comparisonRate: 9.8, sourceEntry: '首页座位快捷查询' },
-  { id: 'IND-25', group: 'entry', name: '去场馆', definition: '点击首页“去场馆”图标的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 3415, secondaryLabel: 'UV', secondaryValue: 2860, comparisonRate: 11.6, sourceEntry: '首页去场馆' },
-  { id: 'IND-26', group: 'entry', name: 'Tab · 首页', definition: '点击底部 Tab“首页”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 4820, secondaryLabel: 'UV', secondaryValue: 3860, comparisonRate: 12.3, sourceEntry: '底部 Tab-首页' },
-  { id: 'IND-27', group: 'entry', name: 'Tab · 座位', definition: '点击底部 Tab“座位”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 9120, secondaryLabel: 'UV', secondaryValue: 7340, comparisonRate: 17.4, sourceEntry: '底部 Tab-座位' },
-  { id: 'IND-28', group: 'entry', name: 'Tab · 交通', definition: '点击底部 Tab“交通”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 15730, secondaryLabel: 'UV', secondaryValue: 11200, comparisonRate: 21.7, sourceEntry: '底部 Tab-交通' },
-  { id: 'IND-30', group: 'entry', name: 'Tab · 我的', definition: '点击底部 Tab“我的”的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 4230, secondaryLabel: 'UV', secondaryValue: 3650, comparisonRate: 4.8, sourceEntry: '底部 Tab-我的' },
-  { id: 'IND-39', group: 'entry', name: '收藏 · 检票口次数', definition: '点击收藏检票口的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 1150, secondaryLabel: 'UV', secondaryValue: 920, comparisonRate: 18.6, sourceEntry: '收藏-检票口' },
-  { id: 'IND-40', group: 'entry', name: '收藏 · 停车场次数', definition: '点击收藏停车场的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 2340, secondaryLabel: 'UV', secondaryValue: 1860, comparisonRate: 9.2, sourceEntry: '收藏-停车场' },
-  { id: 'IND-41', group: 'entry', name: '收藏 · 接驳车次数', definition: '点击收藏接驳车的 PV/UV。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 1680, secondaryLabel: 'UV', secondaryValue: 1340, comparisonRate: 5.4, sourceEntry: '收藏-接驳车' },
-  { id: 'IND-1', group: 'page', name: 'H5 页面访问量 PV', definition: 'H5 页面浏览次数之和，不含 Banner 曝光与点击埋点。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 128560, secondaryLabel: null, secondaryValue: null, comparisonRate: 12.4, sourceEntry: 'H5 页面' },
-  { id: 'IND-2', group: 'page', name: 'H5 访问人数 UV', definition: '按设备去重后的访问人数，与 H5 页面访问量口径一致。', source: 'L1 埋点', primaryLabel: 'UV', primaryValue: 42380, secondaryLabel: null, secondaryValue: null, comparisonRate: 9.8, sourceEntry: 'H5 页面' },
-  { id: 'IND-36', group: 'page', name: '交通页面', definition: '交通页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 13260, secondaryLabel: 'UV', secondaryValue: 9870, comparisonRate: -2.8, sourceEntry: '交通页面' },
-  { id: 'IND-37', group: 'page', name: '座位页面', definition: '座位页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 9480, secondaryLabel: 'UV', secondaryValue: 7150, comparisonRate: 16.5, sourceEntry: '座位页面' },
-  { id: 'IND-38', group: 'page', name: '我的页面', definition: '我的页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 4960, secondaryLabel: 'UV', secondaryValue: 3580, comparisonRate: 6.7, sourceEntry: '我的页面' },
-  { id: 'IND-42', group: 'page', name: '资讯页面', definition: '资讯页浏览次数与去重设备数。', source: 'L1 埋点', primaryLabel: 'PV', primaryValue: 6820, secondaryLabel: 'UV', secondaryValue: 5240, comparisonRate: 22.1, sourceEntry: '资讯页面' },
-]
-
-const ACTIVITIES: readonly DashboardActivityOption[] = [
-  { id: 'activity-concert', name: '8 月 15 日演唱会', start: '2026-08-12', end: '2026-08-16' },
-  { id: 'activity-football', name: '8 月 22 日足球赛', start: '2026-08-19', end: '2026-08-23' },
-]
-
-const DISTRIBUTIONS: readonly DashboardDistribution[] = [
-  {
-    id: 'parking-charge', title: '停车收费类型分布', description: '当前停车区配置', kind: 'donut', centerText: '10 个',
-    slices: [{ key: 'free', label: '免费停车场', value: 4, tone: 'success' }, { key: 'paid', label: '收费停车场', value: 6, tone: 'warning' }],
-  },
-  {
-    id: 'control-status', title: '管制状态分布', description: '当前交通管制状态', kind: 'donut', centerText: '5 项',
-    slices: [{ key: 'published', label: '已发布', value: 3, tone: 'success' }, { key: 'draft', label: '草稿', value: 1, tone: 'muted' }, { key: 'revoked', label: '已撤销', value: 1, tone: 'danger' }],
-  },
-  {
-    id: 'activity-status', title: '活动状态分布', description: '当前活动上下架状态', kind: 'donut', centerText: '3 场',
-    slices: [{ key: 'online', label: '上架', value: 2, tone: 'primary' }, { key: 'offline', label: '下架', value: 1, tone: 'muted' }],
-  },
-]
-
-const PARKING_USAGE: readonly ParkingUsageItem[] = [
-  { id: 'P1', name: 'P1', total: 500, used: 320, available: 180, usageRate: 64 },
-  { id: 'P2', name: 'P2', total: 300, used: 180, available: 120, usageRate: 60 },
-  { id: 'P3', name: 'P3', total: 200, used: 45, available: 155, usageRate: 22 },
-  { id: 'P4', name: 'P4', total: 400, used: 368, available: 32, usageRate: 92 },
-  { id: 'P5', name: 'P5', total: 150, used: 150, available: 0, usageRate: 100 },
-  { id: 'P6', name: 'P6', total: 200, used: 60, available: 140, usageRate: 30 },
-]
-
-const INITIAL_VR_WORKS: readonly VrWorkMetric[] = [
-  { id: 'vr-1', rank: 1, title: '体育中心全景导览', coverLabel: 'VR', bindingType: 'manual', pv: 45230, likes: 3102, sceneCount: 12, lastSyncedAt: '2026-08-13T10:00:00+08:00' },
-  { id: 'vr-2', rank: 2, title: '场馆入口与检票口导览', coverLabel: 'VR', bindingType: 'manual', pv: 28940, likes: 1876, sceneCount: 8, lastSyncedAt: '2026-08-13T10:00:00+08:00' },
-  { id: 'vr-3', rank: 3, title: '座位区 3D 俯瞰', coverLabel: 'VR', bindingType: 'manual', pv: 19580, likes: 1205, sceneCount: 6, lastSyncedAt: '2026-08-13T10:00:00+08:00' },
-]
-
-const TREND_WEIGHTS = [0.78, 0.9, 1, 1.12, 1.24, 1.1, 0.96] as const
-
-function hashText(value: string): number {
-  let hash = 0
-  for (const character of value) hash = (hash * 31 + character.charCodeAt(0)) % 9973
-  return hash
+export function queryForPreset(preset: Exclude<DashboardDatePreset, 'custom'>, now = new Date()): DashboardStatsQuery {
+  return { preset, activityId: '', ...rangeForPreset(preset, now) }
 }
 
-function distributeTotal(total: number, count: number, salt: number): number[] {
-  if (count <= 0) return []
-  const weights = Array.from({ length: count }, (_, index) => {
-    const base = TREND_WEIGHTS[(index + salt) % TREND_WEIGHTS.length]!
-    return base * (0.96 + ((salt + index * 7) % 9) / 100)
-  })
-  const weightSum = weights.reduce((sum, value) => sum + value, 0)
-  const values = weights.map((weight) => Math.max(0, Math.round(total * weight / weightSum)))
-  const difference = total - values.reduce((sum, value) => sum + value, 0)
-  values[values.length - 1] = Math.max(0, values[values.length - 1]! + difference)
-  return values
+function apiPreset(preset: DashboardDatePreset): ApiRangePreset {
+  if (preset === 'last-7-days') return '7d'
+  if (preset === 'last-30-days') return '30d'
+  return preset
 }
 
-function datesInRange(range: DashboardDateRange): string[] {
-  const count = inclusiveDayCount(range)
-  const start = parseDashboardDate(range.start)
-  return Array.from({ length: count }, (_, index) => toDashboardDate(addDays(start, index)))
+export function dashboardQueryParams(query: DashboardStatsQuery): Record<string, string> {
+  if (query.activityId) return { activity_id: query.activityId }
+  if (query.preset === 'custom') {
+    const range = normalizeDashboardRange(query)
+    return { range: 'custom', start: range.start, end: range.end }
+  }
+  return { range: apiPreset(query.preset) }
 }
 
-function scaledValue(baseValue: number, range: DashboardDateRange, salt: number): number {
-  const count = inclusiveDayCount(range)
-  if (count === 7) return baseValue
-  const dateFactor = 0.9 + (hashText(`${range.start}:${salt}`) % 21) / 100
-  return Math.max(0, Math.round(baseValue * count / 7 * dateFactor))
+function shanghaiDate(value: string, offsetMs = 0): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) throw responseError('服务器返回的统计时间窗无效')
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(date.getTime() + offsetMs))
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value ?? ''
+  return `${part('year')}-${part('month')}-${part('day')}`
 }
 
-function buildMetric(seed: MetricSeed, range: DashboardDateRange, updatedAt: string): DashboardMetric {
-  const salt = hashText(seed.id) % TREND_WEIGHTS.length
-  const primaryValue = scaledValue(seed.primaryValue, range, salt)
-  const secondaryValue = seed.secondaryValue === null ? null : scaledValue(seed.secondaryValue, range, salt + 3)
-  const dates = datesInRange(range)
-  const primaryTrend = distributeTotal(primaryValue, dates.length, salt)
-  const secondaryTrend = secondaryValue === null ? [] : distributeTotal(secondaryValue, dates.length, salt + 3)
-  const trend: DashboardTrendPoint[] = dates.map((date, index) => ({
-    date,
-    primary: primaryTrend[index] ?? 0,
-    secondary: secondaryValue === null ? null : (secondaryTrend[index] ?? 0),
-  }))
+export function mapApiTimeWindow(value: ApiTimeWindow): DashboardDateRange {
+  return { start: shanghaiDate(requiredText(value.start, '统计开始时间')), end: shanghaiDate(requiredText(value.end, '统计结束时间'), -1) }
+}
+
+function activityDate(value: string | null): string | null {
+  return value ? shanghaiDate(value) : null
+}
+
+export function mapApiActivity(value: ApiActivityOption): DashboardActivityOption {
+  if (value.id === null || value.id === undefined) throw responseError('服务器返回的活动 ID 不完整')
   return {
-    id: seed.id,
-    group: seed.group,
-    name: seed.name,
-    definition: seed.definition,
-    source: seed.source,
-    primaryLabel: seed.primaryLabel,
-    primaryValue,
-    secondaryLabel: seed.secondaryLabel,
+    id: String(value.id),
+    name: requiredText(value.title, '活动标题'),
+    start: activityDate(value.activity_start_at),
+    end: activityDate(value.activity_end_at),
+  }
+}
+
+function metricGroup(value: unknown): DashboardMetricGroup {
+  if (value === 'entry' || value === 'page') return value
+  throw responseError('服务器返回的指标分组无效')
+}
+
+export function mapApiMetric(value: ApiKpiCard, updatedAt: string): DashboardMetric {
+  const id = requiredText(value.code, '指标编码')
+  const group = metricGroup(value.group)
+  const secondaryValue = nullableNonNegativeInteger(value.uv, '指标 UV')
+  return {
+    id,
+    group,
+    name: requiredText(value.name, '指标名称'),
+    definition: nullableText(value.hint) ?? '',
+    source: '统计埋点',
+    primaryLabel: id === 'IND-2' ? 'UV' : 'PV',
+    primaryValue: nonNegativeInteger(value.value, '指标值'),
+    secondaryLabel: secondaryValue === null ? null : 'UV',
     secondaryValue,
-    comparisonRate: seed.comparisonRate,
-    availability: 'ready',
+    previousValue: nonNegativeInteger(value.prev, '上期指标值'),
+    comparisonRate: value.change === null || value.change === undefined ? null : numberValue(value.change, '指标环比'),
+    comparisonText: nullableText(value.change_text)?.trim() || '—',
     updatedAt,
-    trend,
+    trend: [],
   }
 }
 
-function buildOperations(range: DashboardDateRange, updatedAt: string): DashboardOperationsSnapshot {
+export function mapApiOverview(value: ApiOverviewVO, query: DashboardStatsQuery): DashboardOperationsResult {
+  const updatedAt = requiredText(value.as_of, '统计计算时间')
+  const entry = Array.isArray(value.entry) ? value.entry.map(item => mapApiMetric(item, updatedAt)) : []
+  const page = Array.isArray(value.page) ? value.page.map(item => mapApiMetric(item, updatedAt)) : []
   return {
-    range: clone(range),
-    metrics: METRIC_SEEDS.map((seed) => buildMetric(seed, range, updatedAt)),
-    updatedAt,
+    activities: Array.isArray(value.activities) ? value.activities.map(mapApiActivity) : [],
+    operations: {
+      query: { ...query },
+      range: mapApiTimeWindow(value.window),
+      metrics: [...entry, ...page],
+      updatedAt,
+    },
   }
 }
 
-function detailSource(metricId: string): string {
-  return METRIC_SEEDS.find((seed) => seed.id === metricId)?.sourceEntry ?? '未知入口'
+export function mapApiTrend(value: ApiTrendPoint): DashboardTrendPoint {
+  const date = requiredText(value.day, '趋势日期')
+  if (!DATE_PATTERN.test(date)) throw responseError('服务器返回的趋势日期无效')
+  return {
+    date,
+    primary: nonNegativeInteger(value.value, '趋势主值'),
+    secondary: nullableNonNegativeInteger(value.uv, '趋势 UV'),
+  }
 }
 
-function defaultDistributionDetails(distributionId: string, sliceKey: string, updatedAt: string): DistributionDetailRow[] {
-  const definitions: Record<string, Record<string, readonly string[]>> = {
-    'parking-charge': {
-      free: ['P3 停车场', 'P6 停车场', '北广场临时停车区', '媒体停车区'],
-      paid: ['P1 停车场', 'P2 停车场', 'P4 停车场', 'P5 停车场', '贵宾停车区', '社会车辆停车区'],
-    },
-    'control-status': {
-      published: ['体育路北段临时管制', '场馆东路单向通行', '演唱会散场分流'],
-      draft: ['足球赛赛前管制方案'],
-      revoked: ['全民健身日临时管制'],
-    },
-    'activity-status': {
-      online: ['8 月 15 日演唱会', '8 月 22 日足球赛'],
-      offline: ['全民健身日活动'],
-    },
+export function mapApiAnalyticsEvent(value: ApiAnalyticsEvent): DashboardMetricDetail {
+  if (value.id === null || value.id === undefined) throw responseError('服务器返回的埋点 ID 不完整')
+  return {
+    id: String(value.id),
+    occurredAt: requiredText(value.occurred_at, '事件发生时间'),
+    eventName: requiredText(value.event_name, '埋点名称'),
+    deviceId: nullableText(value.device_id),
+    page: nullableText(value.page),
+    referenceType: nullableText(value.ref_type),
+    referenceId: value.ref_id === null || value.ref_id === undefined ? null : String(value.ref_id),
+    extraJson: nullableText(value.extra_json),
+    ip: nullableText(value.ip),
+    createdAt: requiredText(value.create_at, '埋点创建时间'),
+    updatedAt: requiredText(value.update_at, '埋点更新时间'),
   }
-  const distribution = DISTRIBUTIONS.find((item) => item.id === distributionId)
-  const slice = distribution?.slices.find((item) => item.key === sliceKey)
-  return (definitions[distributionId]?.[sliceKey] ?? []).map((name, index) => ({
-    id: `${distributionId}-${sliceKey}-${index + 1}`,
-    objectName: name,
-    category: slice?.label ?? '当前分类',
-    value: '当前配置',
-    updatedAt,
-  }))
 }
 
-export class MockDashboardService implements DashboardService {
-  private readonly now: () => Date
-  private readonly failSyncForIds: ReadonlySet<string>
-  private readonly syncDelayMs: number
-  private vrWorks: VrWorkMetric[]
-
-  constructor(options: MockDashboardServiceOptions = {}) {
-    this.now = options.now ?? (() => new Date())
-    this.failSyncForIds = options.failSyncForIds ?? new Set()
-    this.syncDelayMs = Math.max(0, options.syncDelayMs ?? 600)
-    this.vrWorks = INITIAL_VR_WORKS.map(clone)
+export function mapApiMetricPage(value: ApiAnalyticsEventPage): MetricDetailPage {
+  return {
+    items: Array.isArray(value.list) ? value.list.map(mapApiAnalyticsEvent) : [],
+    total: nonNegativeInteger(value.total, '埋点总数'),
+    page: Math.max(1, nonNegativeInteger(value.page, '埋点页码')),
+    pageSize: Math.max(1, nonNegativeInteger(value.page_size, '埋点每页条数')),
   }
+}
 
-  async loadDashboard(range: DashboardDateRange): Promise<DashboardSnapshot> {
-    const normalizedRange = normalizeDashboardRange(range, this.now())
-    const updatedAt = this.now().toISOString()
+function sliceTone(distributionId: string, label: string, index: number): DashboardDistributionSlice['tone'] {
+  if (/免费|已发布|上架/.test(label)) return distributionId === 'activity-status' ? 'primary' : 'success'
+  if (/收费/.test(label)) return 'warning'
+  if (/撤销|下架/.test(label)) return 'danger'
+  if (/草稿/.test(label)) return 'muted'
+  return (['primary', 'success', 'warning', 'muted'] as const)[index % 4]
+}
+
+function mapSlices(id: string, values: readonly ApiDistSlice[]): DashboardDistributionSlice[] {
+  return values.map((item, index) => {
+    const label = requiredText(item.name, '分布名称')
+    return { key: `${id}-${index + 1}`, label, value: nonNegativeInteger(item.value, '分布数量'), tone: sliceTone(id, label, index) }
+  })
+}
+
+function distribution(id: string, title: string, description: string, values: readonly ApiDistSlice[]): DashboardDistribution {
+  const slices = mapSlices(id, values)
+  return { id, title, description, kind: 'donut', centerText: `${slices.reduce((sum, item) => sum + item.value, 0)} 项`, slices }
+}
+
+export function mapApiDistribution(value: ApiDistributionVO): { distributions: DashboardDistribution[], parkingUsage: ParkingUsageItem[] } {
+  const distributions = [
+    distribution('parking-charge', '停车收费类型分布', '当前停车区配置', Array.isArray(value.parking_fee) ? value.parking_fee : []),
+    distribution('control-status', '管制状态分布', '当前交通管制状态', Array.isArray(value.controls) ? value.controls : []),
+    distribution('activity-status', '活动状态分布', '当前活动上下架状态', Array.isArray(value.activities) ? value.activities : []),
+  ]
+  const parkingUsage = (Array.isArray(value.parking_remain) ? value.parking_remain : []).map((item, index) => {
+    const total = nonNegativeInteger(item.capacity, '停车场总车位')
+    const available = nonNegativeInteger(item.remain, '停车场余位')
+    const usage = Math.min(1, Math.max(0, numberValue(item.usage, '停车场占用率')))
     return {
-      activities: ACTIVITIES.map(clone),
-      operations: buildOperations(normalizedRange, updatedAt),
-      distributions: DISTRIBUTIONS.map(clone),
-      parkingUsage: PARKING_USAGE.map(clone),
-      vrWorks: this.vrWorks.map(clone),
-      currentDataUpdatedAt: updatedAt,
+      id: `parking-${index + 1}`,
+      name: requiredText(item.name, '停车场名称'),
+      total,
+      used: Math.max(0, total - available),
+      available,
+      usageRate: Math.round(usage * 1000) / 10,
     }
-  }
+  })
+  return { distributions, parkingUsage }
+}
 
-  async loadOperations(range: DashboardDateRange): Promise<DashboardOperationsSnapshot> {
-    return buildOperations(normalizeDashboardRange(range, this.now()), this.now().toISOString())
-  }
-
-  async getMetricDetails(
-    metricId: string,
-    dimension: DashboardMetricDimension,
-    range: DashboardDateRange,
-    page: number,
-    pageSize: number,
-  ): Promise<MetricDetailPage> {
-    const all = await this.getAllMetricDetails(metricId, dimension, range)
-    const safePageSize = Math.max(1, Math.trunc(pageSize) || 20)
-    const maxPage = Math.max(1, Math.ceil(all.length / safePageSize))
-    const safePage = Math.min(Math.max(1, Math.trunc(page) || 1), maxPage)
-    const start = (safePage - 1) * safePageSize
-    return { items: all.slice(start, start + safePageSize), total: all.length, page: safePage, pageSize: safePageSize }
-  }
-
-  async getAllMetricDetails(
-    metricId: string,
-    dimension: DashboardMetricDimension,
-    range: DashboardDateRange,
-  ): Promise<DashboardMetricDetail[]> {
-    const seed = METRIC_SEEDS.find((item) => item.id === metricId)
-    if (!seed) throw new DashboardServiceError('未找到指标')
-    if (dimension === 'secondary' && seed.secondaryValue === null) throw new DashboardServiceError('当前指标没有次级数据')
-    const metric = buildMetric(seed, normalizeDashboardRange(range, this.now()), this.now().toISOString())
-    return metric.trend.map((point) => ({
-      id: `${metric.id}-${dimension}-${point.date}`,
-      date: point.date,
-      value: dimension === 'secondary' ? (point.secondary ?? 0) : point.primary,
-      sourceEntry: detailSource(metric.id),
-    }))
-  }
-
-  async getDistributionDetails(distributionId: string, sliceKey: string): Promise<DistributionDetailRow[]> {
-    if (distributionId === 'parking-usage') {
-      const parking = PARKING_USAGE.find((item) => item.id === sliceKey)
-      if (!parking) throw new DashboardServiceError('未找到停车场数据')
-      return [{
-        id: `parking-usage-${parking.id}`,
-        objectName: `${parking.name} 停车场`,
-        category: '车位使用情况',
-        value: `已用 ${parking.used} / 总计 ${parking.total}，剩余 ${parking.available}，使用率 ${parking.usageRate}%`,
-        updatedAt: this.now().toISOString(),
-      }]
-    }
-    const rows = defaultDistributionDetails(distributionId, sliceKey, this.now().toISOString())
-    if (!rows.length) throw new DashboardServiceError('未找到分布明细')
-    return rows
-  }
-
-  async syncVrWork(id: string): Promise<VrWorkMetric> {
-    const work = this.vrWorks.find((item) => item.id === id)
-    if (!work) throw new DashboardServiceError('未找到 VR 作品')
-    if (this.syncDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.syncDelayMs))
-    if (this.failSyncForIds.has(id)) throw new DashboardServiceError('720 云示例源同步失败，可稍后重试')
-    work.pv += work.rank * 41
-    work.likes += work.rank
-    work.lastSyncedAt = this.now().toISOString()
-    this.vrWorks.sort((left, right) => right.pv - left.pv)
-    this.vrWorks.forEach((item, index) => { item.rank = index + 1 })
-    return clone(work)
+export function mapApiVrWork(value: ApiVrWork): Omit<VrWorkMetric, 'rank'> {
+  if (value.id === null || value.id === undefined) throw responseError('服务器返回的 VR 作品 ID 不完整')
+  return {
+    id: String(value.id),
+    externalId: requiredText(value.external_id, 'VR 外部 ID'),
+    title: requiredText(value.title, 'VR 标题'),
+    coverUrl: nullableText(value.cover_url),
+    bindingObject: nullableText(value.bind_object),
+    pv: nonNegativeInteger(value.pv_count, 'VR 浏览量'),
+    uv: nullableNonNegativeInteger(value.uv_count, 'VR UV'),
+    likes: nonNegativeInteger(value.like_count, 'VR 点赞数'),
+    shares: nullableNonNegativeInteger(value.share_count, 'VR 分享数'),
+    comments: nullableNonNegativeInteger(value.comment_count, 'VR 评论数'),
+    phoneClicks: nullableNonNegativeInteger(value.phone_click_count, 'VR 电话点击数'),
+    sceneCount: nonNegativeInteger(value.scene_count, 'VR 场景数'),
+    lastSyncedAt: nullableText(value.last_sync_at),
+    isInvalid: flag(value.is_invalid),
+    enabled: flag(value.status),
+    createdAt: requiredText(value.create_at, 'VR 创建时间'),
+    updatedAt: requiredText(value.update_at, 'VR 更新时间'),
   }
 }
 
-export const dashboardService: DashboardService = new MockDashboardService()
-
-export const DASHBOARD_METRIC_COUNTS: Readonly<Record<DashboardMetricGroup, number>> = {
-  entry: METRIC_SEEDS.filter((item) => item.group === 'entry').length,
-  page: METRIC_SEEDS.filter((item) => item.group === 'page').length,
+export function mapApiVrWorks(values: readonly ApiVrWork[]): VrWorkMetric[] {
+  return values.map(mapApiVrWork)
+    .sort((first, second) => second.pv - first.pv || first.title.localeCompare(second.title, 'zh-CN'))
+    .map((item, index) => ({ ...item, rank: index + 1 }))
 }
+
+export function mapApiVrSync(value: ApiVrSyncResult): DashboardVrSyncResult {
+  if (value.source_id === null || value.source_id === undefined) throw responseError('服务器返回的对接源 ID 不完整')
+  if (value.result !== 'success' && value.result !== 'fail') throw responseError('服务器返回的同步结果无效')
+  return {
+    sourceId: String(value.source_id),
+    result: value.result,
+    summary: requiredText(value.summary, '同步摘要'),
+    disabled: value.disabled === true,
+  }
+}
+
+function safeFilename(value: string): string {
+  const sanitized = Array.from(value, character => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127 ? '_' : character).join('')
+  return sanitized.replace(/[\\/]/g, '_').trim() || 'stats_details.csv'
+}
+
+function headerValue(response: AxiosResponse, name: string): string | null {
+  const direct = response.headers?.[name]
+  if (typeof direct === 'string') return direct
+  const headers = response.headers as { get?: (headerName: string) => unknown }
+  const result = typeof headers.get === 'function' ? headers.get(name) : null
+  return typeof result === 'string' ? result : null
+}
+
+export function dashboardExportFilename(contentDisposition: string | null): string {
+  if (!contentDisposition) return 'stats_details.csv'
+  const encoded = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try { return safeFilename(decodeURIComponent(encoded.replace(/^"|"$/g, ''))) }
+    catch { /* Use the plain filename fallback. */ }
+  }
+  const plain = contentDisposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i)
+  return safeFilename((plain?.[1] ?? plain?.[2] ?? 'stats_details.csv').trim())
+}
+
+const defaultFileRequester: DashboardFileRequester = config => rawHttpClient.request<Blob>(config)
+
+export function createDashboardService(
+  request: DashboardDataRequester = requestData,
+  requestFile: DashboardFileRequester = defaultFileRequester,
+): DashboardService {
+  const service: DashboardService = {
+    async loadDashboard(query): Promise<DashboardSnapshot> {
+      const [overview, distributionResult, vrWorks] = await Promise.all([
+        service.loadOperations(query), service.loadDistributions(), service.loadVrWorks(),
+      ])
+      return {
+        activities: overview.activities,
+        operations: overview.operations,
+        distributions: distributionResult.distributions,
+        parkingUsage: distributionResult.parkingUsage,
+        vrWorks,
+        currentDataUpdatedAt: overview.operations.updatedAt,
+      }
+    },
+
+    async loadOperations(query) {
+      const result = await request<ApiOverviewVO>({ method: 'GET', url: 'api/v1/admin/stats/overview', params: dashboardQueryParams(query) })
+      return mapApiOverview(result, query)
+    },
+
+    async loadMetricTrend(metricId, query) {
+      const result = await request<ApiTrendPoint[]>({
+        method: 'GET', url: 'api/v1/admin/stats/trend', params: { code: metricId, ...dashboardQueryParams(query) },
+      })
+      return Array.isArray(result) ? result.map(mapApiTrend) : []
+    },
+
+    async getMetricDetails(metricId, query, page, pageSize) {
+      const result = await request<ApiAnalyticsEventPage>({
+        method: 'GET', url: 'api/v1/admin/stats/details',
+        params: {
+          page: Math.max(1, Math.trunc(page) || 1),
+          page_size: Math.min(MAX_DETAIL_PAGE_SIZE, Math.max(1, Math.trunc(pageSize) || 20)),
+          code: metricId,
+          ...dashboardQueryParams(query),
+        },
+      })
+      return mapApiMetricPage(result)
+    },
+
+    async exportMetricDetails(metricId, query): Promise<DashboardExportFile> {
+      const response = await requestFile({
+        method: 'GET', url: 'api/v1/admin/stats/details/export',
+        params: { code: metricId, ...dashboardQueryParams(query) }, responseType: 'blob', headers: { Accept: 'text/csv' },
+      })
+      return { content: response.data, filename: dashboardExportFilename(headerValue(response, 'content-disposition')) }
+    },
+
+    async loadDistributions() {
+      return mapApiDistribution(await request<ApiDistributionVO>({ method: 'GET', url: 'api/v1/admin/stats/distribution' }))
+    },
+
+    async loadVrWorks() {
+      const result = await request<ApiVrWork[]>({ method: 'GET', url: 'api/v1/admin/stats/vr-works' })
+      return mapApiVrWorks(Array.isArray(result) ? result : [])
+    },
+
+    async syncVrWorks() {
+      return mapApiVrSync(await request<ApiVrSyncResult>({ method: 'POST', url: 'api/v1/admin/stats/vr-sync', data: {} }))
+    },
+  }
+  return service
+}
+
+export const dashboardService = createDashboardService()

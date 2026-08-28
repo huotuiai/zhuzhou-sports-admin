@@ -1,11 +1,15 @@
 export type DashboardDatePreset = 'today' | 'yesterday' | 'last-7-days' | 'last-30-days' | 'custom'
 export type DashboardMetricGroup = 'entry' | 'page'
 export type DashboardMetricDimension = 'primary' | 'secondary'
-export type DashboardMetricAvailability = 'ready' | 'pending'
 
 export interface DashboardDateRange {
   start: string
   end: string
+}
+
+export interface DashboardStatsQuery extends DashboardDateRange {
+  preset: DashboardDatePreset
+  activityId: string
 }
 
 export interface DashboardFilterState {
@@ -18,8 +22,8 @@ export interface DashboardFilterState {
 export interface DashboardActivityOption {
   id: string
   name: string
-  start: string
-  end: string
+  start: string | null
+  end: string | null
 }
 
 export interface DashboardTrendPoint {
@@ -38,23 +42,37 @@ export interface DashboardMetric {
   primaryValue: number
   secondaryLabel: string | null
   secondaryValue: number | null
+  previousValue: number
   comparisonRate: number | null
-  availability: DashboardMetricAvailability
+  comparisonText: string
   updatedAt: string
   trend: DashboardTrendPoint[]
 }
 
 export interface DashboardOperationsSnapshot {
+  query: DashboardStatsQuery
   range: DashboardDateRange
   metrics: DashboardMetric[]
   updatedAt: string
 }
 
+export interface DashboardOperationsResult {
+  activities: DashboardActivityOption[]
+  operations: DashboardOperationsSnapshot
+}
+
 export interface DashboardMetricDetail {
   id: string
-  date: string
-  value: number
-  sourceEntry: string
+  occurredAt: string
+  eventName: string
+  deviceId: string | null
+  page: string | null
+  referenceType: string | null
+  referenceId: string | null
+  extraJson: string | null
+  ip: string | null
+  createdAt: string
+  updatedAt: string
 }
 
 export interface MetricDetailPage {
@@ -62,6 +80,11 @@ export interface MetricDetailPage {
   total: number
   page: number
   pageSize: number
+}
+
+export interface DashboardExportFile {
+  content: Blob
+  filename: string
 }
 
 export type DashboardDistributionKind = 'donut' | 'progress'
@@ -91,26 +114,32 @@ export interface ParkingUsageItem {
   usageRate: number
 }
 
-export interface DistributionDetailRow {
-  id: string
-  objectName: string
-  category: string
-  value: string
-  updatedAt: string
-}
-
-export type VrBindingType = 'manual' | 'external'
-
 export interface VrWorkMetric {
   id: string
   rank: number
+  externalId: string
   title: string
-  coverLabel: string
-  bindingType: VrBindingType
+  coverUrl: string | null
+  bindingObject: string | null
   pv: number
+  uv: number | null
   likes: number
+  shares: number | null
+  comments: number | null
+  phoneClicks: number | null
   sceneCount: number
-  lastSyncedAt: string
+  lastSyncedAt: string | null
+  isInvalid: boolean
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DashboardVrSyncResult {
+  sourceId: string
+  result: 'success' | 'fail'
+  summary: string
+  disabled: boolean
 }
 
 export interface DashboardSnapshot {
@@ -123,20 +152,12 @@ export interface DashboardSnapshot {
 }
 
 export interface DashboardService {
-  loadDashboard(range: DashboardDateRange): Promise<DashboardSnapshot>
-  loadOperations(range: DashboardDateRange): Promise<DashboardOperationsSnapshot>
-  getMetricDetails(
-    metricId: string,
-    dimension: DashboardMetricDimension,
-    range: DashboardDateRange,
-    page: number,
-    pageSize: number,
-  ): Promise<MetricDetailPage>
-  getAllMetricDetails(
-    metricId: string,
-    dimension: DashboardMetricDimension,
-    range: DashboardDateRange,
-  ): Promise<DashboardMetricDetail[]>
-  getDistributionDetails(distributionId: string, sliceKey: string): Promise<DistributionDetailRow[]>
-  syncVrWork(id: string): Promise<VrWorkMetric>
+  loadDashboard(query: DashboardStatsQuery): Promise<DashboardSnapshot>
+  loadOperations(query: DashboardStatsQuery): Promise<DashboardOperationsResult>
+  loadMetricTrend(metricId: string, query: DashboardStatsQuery): Promise<DashboardTrendPoint[]>
+  getMetricDetails(metricId: string, query: DashboardStatsQuery, page: number, pageSize: number): Promise<MetricDetailPage>
+  exportMetricDetails(metricId: string, query: DashboardStatsQuery): Promise<DashboardExportFile>
+  loadDistributions(): Promise<{ distributions: DashboardDistribution[], parkingUsage: ParkingUsageItem[] }>
+  loadVrWorks(): Promise<VrWorkMetric[]>
+  syncVrWorks(): Promise<DashboardVrSyncResult>
 }

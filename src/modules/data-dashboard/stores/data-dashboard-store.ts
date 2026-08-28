@@ -1,25 +1,18 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
-  DashboardDateRange,
+  DashboardExportFile,
   DashboardMetricDimension,
   DashboardMetricGroup,
   DashboardService,
   DashboardSnapshot,
-  DistributionDetailRow,
+  DashboardStatsQuery,
+  DashboardVrSyncResult,
   MetricDetailPage,
 } from '../types'
 import { dashboardService } from '../services/dashboard-service'
 
 export const DASHBOARD_DETAIL_PAGE_SIZE = 20
-export const DASHBOARD_MAX_EXPORT_ROWS = 50_000
-
-interface SelectedDistribution {
-  id: string
-  title: string
-  sliceKey: string
-  sliceLabel: string
-}
 
 function emptyDetailPage(): MetricDetailPage {
   return { items: [], total: 0, page: 1, pageSize: DASHBOARD_DETAIL_PAGE_SIZE }
@@ -29,64 +22,72 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '数据加载失败，请稍后重试'
 }
 
-export function createDataDashboardStore(
-  service: DashboardService,
-  storeId = 'data-dashboard',
-) {
+export function createDataDashboardStore(service: DashboardService, storeId = 'data-dashboard') {
   return defineStore(storeId, () => {
     const snapshot = ref<DashboardSnapshot | null>(null)
     const activeGroup = ref<DashboardMetricGroup>('entry')
     const selectedMetricId = ref<string | null>(null)
     const detailDimension = ref<DashboardMetricDimension>('primary')
     const metricDetail = ref<MetricDetailPage>(emptyDetailPage())
-    const selectedDistribution = ref<SelectedDistribution | null>(null)
-    const distributionDetails = ref<DistributionDetailRow[]>([])
-    const syncingVrIds = ref<Set<string>>(new Set())
-    const syncErrors = ref<Record<string, string>>({})
     const isLoading = ref(false)
     const isOperationsLoading = ref(false)
+    const isTrendLoading = ref(false)
     const isDetailLoading = ref(false)
-    const isDistributionLoading = ref(false)
+    const isVrSyncing = ref(false)
     const error = ref<string | null>(null)
+    const trendError = ref<string | null>(null)
     const detailError = ref<string | null>(null)
-    const distributionError = ref<string | null>(null)
+    const vrSyncError = ref<string | null>(null)
     let operationsRequest = 0
+    let trendRequest = 0
     let detailRequest = 0
 
     const selectedMetric = computed(() => snapshot.value?.operations.metrics
-      .find((metric) => metric.id === selectedMetricId.value) ?? null)
+      .find(metric => metric.id === selectedMetricId.value) ?? null)
     const visibleMetrics = computed(() => snapshot.value?.operations.metrics
-      .filter((metric) => metric.group === activeGroup.value) ?? [])
+      .filter(metric => metric.group === activeGroup.value) ?? [])
+    const metricGroupCounts = computed<Record<DashboardMetricGroup, number>>(() => ({
+      entry: snapshot.value?.operations.metrics.filter(metric => metric.group === 'entry').length ?? 0,
+      page: snapshot.value?.operations.metrics.filter(metric => metric.group === 'page').length ?? 0,
+    }))
 
-    async function load(range: DashboardDateRange): Promise<boolean> {
+    async function load(query: DashboardStatsQuery): Promise<boolean> {
       isLoading.value = true
       error.value = null
       try {
-        snapshot.value = await service.loadDashboard(range)
+        snapshot.value = await service.loadDashboard(query)
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = errorMessage(cause)
         return false
-      } finally {
-        isLoading.value = false
       }
+      finally { isLoading.value = false }
     }
 
-    async function refreshOperations(range: DashboardDateRange): Promise<boolean> {
-      if (!snapshot.value) return load(range)
+    async function refreshOperations(query: DashboardStatsQuery): Promise<boolean> {
+      if (!snapshot.value) return load(query)
       const request = ++operationsRequest
       isOperationsLoading.value = true
       error.value = null
       try {
-        const operations = await service.loadOperations(range)
+        const result = await service.loadOperations(query)
         if (request !== operationsRequest || !snapshot.value) return false
-        snapshot.value = { ...snapshot.value, operations }
-        if (selectedMetricId.value) await loadMetricDetail(1)
+        snapshot.value = {
+          ...snapshot.value,
+          activities: result.activities,
+          operations: result.operations,
+          currentDataUpdatedAt: result.operations.updatedAt,
+        }
+        if (selectedMetricId.value && !selectedMetric.value) closeMetricDetail()
+        else if (selectedMetricId.value) await Promise.all([loadMetricTrend(), loadMetricDetail(1)])
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         if (request === operationsRequest) error.value = errorMessage(cause)
         return false
-      } finally {
+      }
+      finally {
         if (request === operationsRequest) isOperationsLoading.value = false
       }
     }
@@ -98,28 +99,54 @@ export function createDataDashboardStore(
     }
 
     async function selectMetric(id: string): Promise<void> {
-      const metric = snapshot.value?.operations.metrics.find((item) => item.id === id)
+      const metric = snapshot.value?.operations.metrics.find(item => item.id === id)
       if (!metric) return
       selectedMetricId.value = id
       detailDimension.value = 'primary'
       metricDetail.value = emptyDetailPage()
+      trendError.value = null
       detailError.value = null
-      await loadMetricDetail(1)
+      await Promise.all([loadMetricTrend(), loadMetricDetail(1)])
     }
 
     function closeMetricDetail(): void {
+      trendRequest += 1
       detailRequest += 1
       selectedMetricId.value = null
       detailDimension.value = 'primary'
       metricDetail.value = emptyDetailPage()
+      trendError.value = null
       detailError.value = null
+      isTrendLoading.value = false
       isDetailLoading.value = false
     }
 
-    async function setDetailDimension(dimension: DashboardMetricDimension): Promise<void> {
+    function setDetailDimension(dimension: DashboardMetricDimension): void {
       if (dimension === 'secondary' && selectedMetric.value?.secondaryValue === null) return
       detailDimension.value = dimension
-      await loadMetricDetail(1)
+    }
+
+    async function loadMetricTrend(): Promise<boolean> {
+      const metricId = selectedMetricId.value
+      const query = snapshot.value?.operations.query
+      if (!metricId || !query) return false
+      const request = ++trendRequest
+      isTrendLoading.value = true
+      trendError.value = null
+      try {
+        const trend = await service.loadMetricTrend(metricId, query)
+        if (request !== trendRequest || selectedMetricId.value !== metricId || !snapshot.value) return false
+        const metrics = snapshot.value.operations.metrics.map(metric => metric.id === metricId ? { ...metric, trend } : metric)
+        snapshot.value = { ...snapshot.value, operations: { ...snapshot.value.operations, metrics } }
+        return true
+      }
+      catch (cause) {
+        if (request === trendRequest) trendError.value = errorMessage(cause)
+        return false
+      }
+      finally {
+        if (request === trendRequest) isTrendLoading.value = false
+      }
     }
 
     async function setDetailPage(page: number): Promise<void> {
@@ -128,86 +155,56 @@ export function createDataDashboardStore(
 
     async function loadMetricDetail(page = metricDetail.value.page): Promise<boolean> {
       const metricId = selectedMetricId.value
-      const range = snapshot.value?.operations.range
-      if (!metricId || !range) return false
+      const query = snapshot.value?.operations.query
+      if (!metricId || !query) return false
       const request = ++detailRequest
       isDetailLoading.value = true
       detailError.value = null
       try {
-        const nextPage = await service.getMetricDetails(
-          metricId,
-          detailDimension.value,
-          range,
-          page,
-          DASHBOARD_DETAIL_PAGE_SIZE,
-        )
+        const result = await service.getMetricDetails(metricId, query, page, DASHBOARD_DETAIL_PAGE_SIZE)
         if (request !== detailRequest || selectedMetricId.value !== metricId) return false
-        metricDetail.value = nextPage
+        metricDetail.value = result
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         if (request === detailRequest) detailError.value = errorMessage(cause)
         return false
-      } finally {
+      }
+      finally {
         if (request === detailRequest) isDetailLoading.value = false
       }
     }
 
-    async function readMetricExport() {
+    async function exportMetricDetails(): Promise<DashboardExportFile | null> {
       const metricId = selectedMetricId.value
-      const range = snapshot.value?.operations.range
-      if (!metricId || !range) throw new Error('请先选择要导出的指标')
-      const rows = await service.getAllMetricDetails(metricId, detailDimension.value, range)
-      if (rows.length > DASHBOARD_MAX_EXPORT_ROWS) throw new Error('导出数据超过 5 万条，请缩小时间范围')
-      return rows
-    }
-
-    async function openDistributionDetail(selection: SelectedDistribution): Promise<void> {
-      selectedDistribution.value = selection
-      distributionDetails.value = []
-      distributionError.value = null
-      isDistributionLoading.value = true
-      try {
-        distributionDetails.value = await service.getDistributionDetails(selection.id, selection.sliceKey)
-      } catch (cause) {
-        distributionError.value = errorMessage(cause)
-      } finally {
-        isDistributionLoading.value = false
+      const query = snapshot.value?.operations.query
+      if (!metricId || !query) {
+        detailError.value = '请先选择要导出的指标'
+        return null
+      }
+      try { return await service.exportMetricDetails(metricId, query) }
+      catch (cause) {
+        detailError.value = errorMessage(cause)
+        return null
       }
     }
 
-    function closeDistributionDetail(): void {
-      selectedDistribution.value = null
-      distributionDetails.value = []
-      distributionError.value = null
-    }
-
-    async function retryDistributionDetail(): Promise<void> {
-      if (selectedDistribution.value) await openDistributionDetail(selectedDistribution.value)
-    }
-
-    async function syncVrWork(id: string): Promise<boolean> {
-      if (!snapshot.value || syncingVrIds.value.has(id)) return false
-      syncingVrIds.value = new Set(syncingVrIds.value).add(id)
-      const nextErrors = { ...syncErrors.value }
-      delete nextErrors[id]
-      syncErrors.value = nextErrors
+    async function syncVrWorks(): Promise<DashboardVrSyncResult | null> {
+      if (!snapshot.value || isVrSyncing.value) return null
+      isVrSyncing.value = true
+      vrSyncError.value = null
       try {
-        const updated = await service.syncVrWork(id)
-        if (!snapshot.value) return false
-        const works = snapshot.value.vrWorks
-          .map((work) => work.id === id ? updated : work)
-          .sort((left, right) => right.pv - left.pv)
-          .map((work, index) => ({ ...work, rank: index + 1 }))
-        snapshot.value = { ...snapshot.value, vrWorks: works }
-        return true
-      } catch (cause) {
-        syncErrors.value = { ...syncErrors.value, [id]: errorMessage(cause) }
-        return false
-      } finally {
-        const nextIds = new Set(syncingVrIds.value)
-        nextIds.delete(id)
-        syncingVrIds.value = nextIds
+        const result = await service.syncVrWorks()
+        const vrWorks = await service.loadVrWorks()
+        if (snapshot.value) snapshot.value = { ...snapshot.value, vrWorks }
+        if (result.result === 'fail') vrSyncError.value = result.summary
+        return result
       }
+      catch (cause) {
+        vrSyncError.value = errorMessage(cause)
+        return null
+      }
+      finally { isVrSyncing.value = false }
     }
 
     return {
@@ -216,19 +213,18 @@ export function createDataDashboardStore(
       selectedMetricId,
       selectedMetric,
       visibleMetrics,
+      metricGroupCounts,
       detailDimension,
       metricDetail,
-      selectedDistribution,
-      distributionDetails,
-      syncingVrIds,
-      syncErrors,
       isLoading,
       isOperationsLoading,
+      isTrendLoading,
       isDetailLoading,
-      isDistributionLoading,
+      isVrSyncing,
       error,
+      trendError,
       detailError,
-      distributionError,
+      vrSyncError,
       load,
       refreshOperations,
       setActiveGroup,
@@ -236,12 +232,10 @@ export function createDataDashboardStore(
       closeMetricDetail,
       setDetailDimension,
       setDetailPage,
+      loadMetricTrend,
       loadMetricDetail,
-      readMetricExport,
-      openDistributionDetail,
-      closeDistributionDetail,
-      retryDistributionDetail,
-      syncVrWork,
+      exportMetricDetails,
+      syncVrWorks,
     }
   })
 }

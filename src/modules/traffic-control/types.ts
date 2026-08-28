@@ -3,6 +3,13 @@ import type { MapGeometry } from '@/components/map/types'
 export type TrafficControlType = 'road-closure' | 'restriction' | 'detour' | 'temporary' | 'other'
 export type TrafficControlTimeStatus = 'upcoming' | 'active' | 'ended'
 export type TrafficControlPublishStatus = 'draft' | 'published' | 'revoked'
+export type TrafficControlDataSource = 'manual' | 'sync'
+
+export interface TrafficControlOverlap {
+  kind: string
+  id: string
+  name: string
+}
 
 export interface TrafficControl {
   id: string
@@ -16,17 +23,23 @@ export interface TrafficControl {
   geometry: MapGeometry | null
   areaSquareMeters: number | null
   publishStatus: TrafficControlPublishStatus
-  publisher: string
+  publisherId: string | null
   publishAt: string | null
   pinned: boolean
   sortOrder: number
+  remark: string
+  dataSource: TrafficControlDataSource
+  syncStatus: string | null
+  lastSyncAt: string | null
+  externalId: string | null
+  overlaps: TrafficControlOverlap[]
   coordinateSystem: 'GCJ-02'
   createdAt: string
   updatedAt: string
 }
 
 export type TrafficControlWriteInput = Pick<TrafficControl,
-  'title' | 'type' | 'areaName' | 'startAt' | 'endAt' | 'detourInstructions' | 'geometry' | 'publishAt' | 'pinned' | 'sortOrder'
+  'title' | 'type' | 'areaName' | 'startAt' | 'endAt' | 'detourInstructions' | 'geometry' | 'pinned' | 'sortOrder'
 >
 
 export interface TrafficControlQuery {
@@ -36,6 +49,20 @@ export interface TrafficControlQuery {
   timeStatus: TrafficControlTimeStatus | 'all'
   dateStart: string
   dateEnd: string
+}
+
+export type TrafficControlServerQuery = Pick<TrafficControlQuery, 'keyword' | 'type' | 'publishStatus'>
+
+export interface TrafficControlPage {
+  records: TrafficControl[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface TrafficControlExportFile {
+  content: Blob
+  filename: string
 }
 
 export type TrafficControlField = keyof TrafficControlWriteInput | 'dateRange'
@@ -52,12 +79,15 @@ export interface TrafficControlValidationResult {
 }
 
 export interface TrafficControlService {
-  list(): Promise<TrafficControl[]>
+  list(query?: TrafficControlServerQuery): Promise<TrafficControl[]>
+  listPage(page: number, pageSize: number, query: TrafficControlServerQuery): Promise<TrafficControlPage>
+  get(id: string): Promise<TrafficControl>
   create(input: TrafficControlWriteInput): Promise<TrafficControl>
   update(id: string, input: TrafficControlWriteInput): Promise<TrafficControl>
   remove(id: string): Promise<void>
   publish(id: string): Promise<TrafficControl>
   revoke(id: string): Promise<TrafficControl>
+  export(): Promise<TrafficControlExportFile>
 }
 
 export const TRAFFIC_CONTROL_TYPES: readonly {

@@ -88,7 +88,7 @@ export const router = createRouter({
         {
           path: 'system/external-data',
           name: 'external-data-integration',
-          component: () => import('@/views/EmptyRouteView.vue'),
+          component: () => import('@/views/ExternalDataIntegrationView.vue'),
           meta: { title: '外部数据对接', sectionTitle: '系统管理' },
         },
         {

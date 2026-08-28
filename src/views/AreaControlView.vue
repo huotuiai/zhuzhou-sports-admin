@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CrudDialogCloseRequest, CrudDialogMode, DataTableColumn } from '@/components/common'
 import type { TrafficControl, TrafficControlPublishStatus, TrafficControlQuery, TrafficControlTimeStatus, TrafficControlValidationIssue, TrafficControlWriteInput } from '@/modules/traffic-control/types'
-import { AlertTriangle, Download, Ellipsis, List, Map as MapIcon, MapPinned, PencilLine, Pin, PinOff, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
+import { AlertTriangle, Download, Ellipsis, List, LoaderCircle, Map as MapIcon, MapPinned, PencilLine, Pin, PinOff, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
 import { useEventListener, useNow } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -45,6 +45,7 @@ const queryDraft = ref<TrafficControlQuery>({ ...store.query })
 const formOpen = ref(false)
 const formMode = ref<CrudDialogMode>('create')
 const editingId = ref<string | null>(null)
+const formPublishAt = ref<string | null>(null)
 const formValue = ref<TrafficControlWriteInput>(emptyForm())
 const initialValue = ref<TrafficControlWriteInput>(emptyForm())
 const issues = ref<readonly TrafficControlValidationIssue[]>([])
@@ -52,6 +53,7 @@ const formRef = ref<{ validateAndFocus(): boolean } | null>(null)
 const discardOpen = ref(false)
 const deleteTarget = ref<TrafficControl | null>(null)
 const statusTarget = ref<{ record: TrafficControl, action: 'publish' | 'revoke' } | null>(null)
+const overlapResult = ref<TrafficControl | null>(null)
 const historicalConfirmOpen = ref(false)
 const loadError = ref('')
 
@@ -67,7 +69,7 @@ function emptyForm(): TrafficControlWriteInput {
   const start = new Date(Date.now() + 60 * 60_000)
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0)
   const end = new Date(start.getTime() + 3 * 60 * 60_000)
-  return { title: '', type: 'road-closure', areaName: '', startAt: localDateTime(start), endAt: localDateTime(end), detourInstructions: '', geometry: null, publishAt: localDateTime(new Date()), pinned: false, sortOrder: 50 }
+  return { title: '', type: 'road-closure', areaName: '', startAt: localDateTime(start), endAt: localDateTime(end), detourInstructions: '', geometry: null, pinned: false, sortOrder: 50 }
 }
 
 function toWriteInput(item: TrafficControl): TrafficControlWriteInput {
@@ -75,11 +77,10 @@ function toWriteInput(item: TrafficControl): TrafficControlWriteInput {
     title: item.title,
     type: item.type,
     areaName: item.areaName,
-    startAt: item.startAt,
-    endAt: item.endAt,
+    startAt: localDateTime(new Date(item.startAt)),
+    endAt: localDateTime(new Date(item.endAt)),
     detourInstructions: item.detourInstructions,
     geometry: item.geometry ? cloneGeometry(item.geometry) : null,
-    publishAt: item.publishAt ? localDateTime(new Date(item.publishAt)) : null,
     pinned: item.pinned,
     sortOrder: item.sortOrder,
   }
@@ -112,27 +113,26 @@ function publishStatusClass(status: TrafficControlPublishStatus): string {
   return 'border-border bg-muted/50 text-muted-foreground line-through'
 }
 
-function csvCell(value: unknown): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
-function exportCurrent(): void {
-  const headers = ['管制编号', '标题', '类型', '区域名称', '开始时间', '结束时间', '管制状态', '发布状态', '置顶', '发布时间', '发布人']
-  const rows = store.filteredRecords.map((item) => [item.code, item.title, trafficControlTypeMeta(item.type).label, item.areaName, formatDateTime(item.startAt), formatDateTime(item.endAt), TRAFFIC_TIME_STATUS_LABELS[timeStatus(item)], TRAFFIC_PUBLISH_STATUS_LABELS[item.publishStatus], item.pinned ? '是' : '否', item.publishAt ? formatDateTime(item.publishAt) : '—', item.publisher])
-  const csv = `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+async function exportAll(): Promise<void> {
+  const file = await store.exportAll()
+  if (!file) {
+    toast.error(store.error ?? '交通管制导出失败。')
+    return
+  }
+  const url = URL.createObjectURL(file.content)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `交通管制-${new Date().toISOString().slice(0, 10)}.csv`
+  anchor.download = file.filename
   anchor.click()
   URL.revokeObjectURL(url)
-  toast.success('已导出当前筛选结果。')
+  toast.success('已导出全部交通管制数据。')
 }
 
 function openCreate(): void {
   store.resetError()
   formMode.value = 'create'
   editingId.value = null
+  formPublishAt.value = null
   const value = emptyForm()
   formValue.value = cloneWriteInput(value)
   initialValue.value = cloneWriteInput(value)
@@ -140,11 +140,17 @@ function openCreate(): void {
   formOpen.value = true
 }
 
-function openEdit(item: TrafficControl): void {
+async function openEdit(item: TrafficControl): Promise<void> {
   store.resetError()
+  const detail = await store.get(item.id)
+  if (!detail) {
+    toast.error(store.error ?? '交通管制详情加载失败。')
+    return
+  }
   formMode.value = 'edit'
-  editingId.value = item.id
-  const value = toWriteInput(item)
+  editingId.value = detail.id
+  formPublishAt.value = detail.publishAt
+  const value = toWriteInput(detail)
   formValue.value = cloneWriteInput(value)
   initialValue.value = cloneWriteInput(value)
   issues.value = []
@@ -160,6 +166,7 @@ function updateForm(value: TrafficControlWriteInput): void {
 function closeForm(): void {
   formOpen.value = false
   editingId.value = null
+  formPublishAt.value = null
   issues.value = []
   discardOpen.value = false
   historicalConfirmOpen.value = false
@@ -170,16 +177,18 @@ function requestFormClose(request: CrudDialogCloseRequest): void {
   else closeForm()
 }
 
-function applyQuery(): void {
+async function applyQuery(): Promise<void> {
   if (queryDraft.value.dateStart && queryDraft.value.dateEnd && queryDraft.value.dateStart > queryDraft.value.dateEnd) {
     toast.error('查询开始日期不能晚于结束日期。')
     return
   }
-  store.setQuery({ ...queryDraft.value })
+  if (!await store.setQuery({ ...queryDraft.value })) toast.error(store.error ?? '交通管制查询失败。')
+  else loadError.value = ''
 }
 
-function resetQuery(): void {
-  store.resetQuery()
+async function resetQuery(): Promise<void> {
+  if (!await store.resetQuery()) toast.error(store.error ?? '交通管制查询重置失败。')
+  else loadError.value = ''
   queryDraft.value = { ...store.query }
 }
 
@@ -229,7 +238,8 @@ async function confirmStatusChange(): Promise<void> {
     return
   }
   statusTarget.value = null
-  toast.success(target.action === 'publish' ? '管制已发布。' : '管制已撤销。')
+  if (target.action === 'publish' && updated.overlaps.length) overlapResult.value = updated
+  else toast.success(target.action === 'publish' ? '管制已发布。' : '管制已撤销。')
 }
 
 async function remove(): Promise<void> {
@@ -275,7 +285,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </div>
         <div class="flex items-center gap-2">
           <Button size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
-          <Button variant="outline" size="lg" class="h-11" @click="exportCurrent"><Download aria-hidden="true" />导出</Button>
+          <Button variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出全部' }}</Button>
         </div>
       </header>
 
@@ -293,7 +303,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表视图</Button>
           <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图视图</Button>
         </div>
-        <p class="text-xs text-muted-foreground">地图视图按 area_polygon 渲染管制区域，未配置区域的记录仅在列表展示。</p>
+        <p class="text-xs text-muted-foreground">地图视图按 geometry_json 渲染管制区域，未配置区域的记录仅在列表展示。</p>
       </div>
 
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert"><AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button></div>
@@ -309,11 +319,11 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-publishStatus="{ row }"><Badge variant="outline" :class="publishStatusClass(row.publishStatus)">{{ TRAFFIC_PUBLISH_STATUS_LABELS[row.publishStatus] }}</Badge></template>
           <template #cell-pinned="{ row }"><Pin v-if="row.pinned" class="mx-auto size-4 fill-primary text-primary" aria-label="已置顶" /><span v-else class="text-muted-foreground">—</span></template>
           <template #cell-publishAt="{ row }"><time v-if="row.publishAt" class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.publishAt">{{ formatDateTime(row.publishAt) }}</time><span v-else class="text-muted-foreground">—</span></template>
-          <template #cell-publisher="{ row }"><span class="whitespace-nowrap text-sm">{{ row.publisher }}</span></template>
+          <template #cell-publisher="{ row }"><span class="whitespace-nowrap text-sm">{{ row.publisherId ? `用户 #${row.publisherId}` : '—' }}</span></template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
-              <Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button>
-              <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-11 w-11" :aria-label="`${row.title}更多操作`"><Ellipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuItem class="min-h-10 px-3" :disabled="row.publishStatus === 'revoked'" @select="togglePinned(row)"><PinOff v-if="row.pinned" /><Pin v-else />{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem><DropdownMenuItem v-if="row.publishStatus === 'draft'" class="min-h-10 px-3" @select="statusTarget = { record: row, action: 'publish' }">发布</DropdownMenuItem><DropdownMenuItem v-else-if="row.publishStatus === 'published'" class="min-h-10 px-3" @select="statusTarget = { record: row, action: 'revoke' }">撤销</DropdownMenuItem><DropdownMenuItem v-else class="min-h-10 px-3" disabled>已撤销不可再发布</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" class="min-h-10 px-3" @select="deleteTarget = row"><Trash2 />删除</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+              <Button variant="ghost" class="h-11 px-3" :disabled="store.detailLoadingId === row.id" @click="openEdit(row)"><LoaderCircle v-if="store.detailLoadingId === row.id" class="animate-spin" aria-hidden="true" /><PencilLine v-else aria-hidden="true" />编辑</Button>
+              <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-11 w-11" :aria-label="`${row.title}更多操作`"><Ellipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuItem class="min-h-10 px-3" :disabled="row.publishStatus === 'revoked'" @select="togglePinned(row)"><PinOff v-if="row.pinned" /><Pin v-else />{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem><DropdownMenuItem v-if="row.publishStatus === 'draft'" class="min-h-10 px-3" @select="statusTarget = { record: row, action: 'publish' }">发布</DropdownMenuItem><DropdownMenuItem v-else-if="row.publishStatus === 'published'" class="min-h-10 px-3" @select="statusTarget = { record: row, action: 'revoke' }">撤销</DropdownMenuItem><DropdownMenuItem v-else class="min-h-10 px-3" disabled>已撤销不可再发布</DropdownMenuItem><template v-if="row.publishStatus === 'draft'"><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" class="min-h-10 px-3" @select="deleteTarget = row"><Trash2 />删除</DropdownMenuItem></template></DropdownMenuContent></DropdownMenu>
             </div>
           </template>
         </DataTable>
@@ -324,7 +334,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
     </div>
 
     <CrudSheet :open="formOpen" :mode="formMode" size="wide" :title="formMode === 'create' ? '新增交通管制' : `编辑交通管制 · ${store.records.find((item) => item.id === editingId)?.code ?? ''}`" description="维护核心信息；地图区域为选填项。" :saving="store.isSaving" :dirty="formDirty" @submit="save" @request-close="requestFormClose">
-      <TrafficControlForm :key="`${formMode}-${editingId ?? 'new'}`" ref="formRef" :mode="formMode" :value="formValue" :issues="issues" :saving="store.isSaving" :theme="themeStore.mode" @update:value="updateForm" />
+      <TrafficControlForm :key="`${formMode}-${editingId ?? 'new'}`" ref="formRef" :mode="formMode" :value="formValue" :publish-at="formPublishAt" :issues="issues" :saving="store.isSaving" :theme="themeStore.mode" @update:value="updateForm" />
     </CrudSheet>
 
     <AlertDialog :open="discardOpen" @update:open="discardOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>当前交通管制信息尚未保存，关闭后将无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><Button variant="destructive" class="h-11" @click="closeForm"><X />放弃修改</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
@@ -337,13 +347,20 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <AlertDialogTitle>确认{{ statusTarget?.action === 'publish' ? '发布' : '撤销' }}该管制？</AlertDialogTitle>
           <AlertDialogDescription>{{ statusTarget?.action === 'publish' ? '发布后即时同步 H5 用户端。' : '撤销后 H5 不再展示，历史日志保留。' }}</AlertDialogDescription>
         </AlertDialogHeader>
-        <div v-if="statusTarget?.action === 'publish' && statusTarget.record.code === 'GZ-003'" class="rounded-xl border border-warning/35 bg-warning/10 p-4 text-sm leading-6 text-warning">
-          该管制区域与 2 个停车场（P1、P3）、1 个接驳站重叠，请确认是否需要停用相关设施（不会自动停用）。
-        </div>
         <AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmStatusChange">确认{{ statusTarget?.action === 'publish' ? '发布' : '撤销' }}</Button></AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
 
-    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.title }}”？</AlertDialogTitle><AlertDialogDescription>{{ deleteTarget?.publishStatus === 'published' ? '该管制已发布，删除后 H5 将不再展示；历史操作日志仍保留。' : '删除后该管制的基础信息与地图区域将一并移除，且无法恢复。' }}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog :open="Boolean(overlapResult)" @update:open="!$event && (overlapResult = null)">
+      <AlertDialogContent>
+        <AlertDialogHeader><AlertDialogTitle>管制已发布，发现区域重叠</AlertDialogTitle><AlertDialogDescription>后端已完成发布；以下设施可能与管制区域重叠，系统不会自动停用，请另行确认。</AlertDialogDescription></AlertDialogHeader>
+        <ul class="max-h-64 space-y-2 overflow-auto rounded-xl border bg-muted/20 p-3 text-sm">
+          <li v-for="item in overlapResult?.overlaps ?? []" :key="`${item.kind}-${item.id}`" class="flex items-center justify-between gap-3 rounded-lg bg-background px-3 py-2"><span class="font-medium">{{ item.name }}</span><span class="font-mono text-xs text-muted-foreground">{{ item.kind }} #{{ item.id }}</span></li>
+        </ul>
+        <AlertDialogFooter><Button class="h-11" @click="overlapResult = null">知道了</Button></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.title }}”？</AlertDialogTitle><AlertDialogDescription>仅草稿可删除。删除后该管制的基础信息与地图区域将一并移除，且无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>
 </template>

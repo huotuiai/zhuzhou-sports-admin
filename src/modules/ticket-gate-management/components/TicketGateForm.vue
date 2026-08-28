@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import type { CrudDialogMode } from '@/components/common'
-import type { TicketGateStatus, TicketGateValidationIssue, TicketGateWriteInput } from '../types'
+import type { TicketGateFloorOption, TicketGateStatus, TicketGateValidationIssue, TicketGateWriteInput } from '../types'
 import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import { AlertTriangle, Info } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
 import { validateTicketGateInput } from '../services/ticket-gate-service'
 
 type Field = keyof TicketGateWriteInput
@@ -14,6 +13,7 @@ type Field = keyof TicketGateWriteInput
 const props = withDefaults(defineProps<{
   mode: CrudDialogMode
   value: TicketGateWriteInput
+  floors: readonly TicketGateFloorOption[]
   issues?: readonly TicketGateValidationIssue[]
   saving?: boolean
 }>(), { issues: () => [], saving: false })
@@ -24,12 +24,10 @@ const container = ref<HTMLElement | null>(null)
 const touched = reactive<Record<Field, boolean>>({
   code: false,
   name: false,
-  floor: false,
+  floorId: false,
   locationDescription: false,
   mapCoordinates: false,
   navigationAddress: false,
-  navigationLongitude: false,
-  navigationLatitude: false,
   sortOrder: false,
   status: false,
   statusRemark: false,
@@ -126,15 +124,17 @@ watch(() => props.mode, () => {
     </div>
 
     <div class="space-y-2">
-      <Label :for="inputId('floor')">楼层 <span class="text-destructive" aria-hidden="true">*</span></Label>
-      <Select :model-value="value.floor" :disabled="saving" @update:model-value="patch({ floor: $event as TicketGateWriteInput['floor'] }); touched.floor = true">
-        <SelectTrigger :id="inputId('floor')" data-field="floor" class="h-11 w-full"><SelectValue /></SelectTrigger>
-        <SelectContent><SelectItem value="一层">一层</SelectItem><SelectItem value="二层">二层</SelectItem></SelectContent>
+      <Label :for="inputId('floorId')">楼层 <span class="text-destructive" aria-hidden="true">*</span></Label>
+      <Select :model-value="value.floorId" :disabled="saving || !floors.length" @update:model-value="patch({ floorId: String($event) }); touched.floorId = true">
+        <SelectTrigger :id="inputId('floorId')" data-field="floorId" class="h-11 w-full" :aria-invalid="Boolean(issueFor('floorId'))"><SelectValue placeholder="请选择楼层" /></SelectTrigger>
+        <SelectContent><SelectItem v-for="floor in floors" :key="floor.id" :value="floor.id">{{ floor.name }}{{ floor.enabled ? '' : '（已停用）' }}</SelectItem></SelectContent>
       </Select>
+      <p v-if="issueFor('floorId')" :id="errorId('floorId')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('floorId')?.message }}</p>
+      <p v-else-if="!floors.length" class="text-xs leading-5 text-warning">暂无可选楼层，请先在座位规划管理中配置。</p>
     </div>
 
     <div class="space-y-2">
-      <Label :for="inputId('sortOrder')">排序号 <span class="text-destructive" aria-hidden="true">*</span></Label>
+      <Label :for="inputId('sortOrder')">排序号</Label>
       <Input
         :id="inputId('sortOrder')"
         data-field="sortOrder"
@@ -205,19 +205,6 @@ watch(() => props.mode, () => {
       </Select>
     </div>
 
-    <div v-if="value.status !== 'open'" class="col-span-2 space-y-2">
-      <Label :for="inputId('statusRemark')">状态说明</Label>
-      <Textarea
-        :id="inputId('statusRemark')"
-        data-field="statusRemark"
-        :model-value="value.statusRemark"
-        class="min-h-20 resize-y"
-        placeholder="例如：临时关闭，请走东门"
-        :disabled="saving"
-        @update:model-value="text('statusRemark', $event)"
-      />
-      <p class="text-xs leading-5 text-warning">保存后，该检票口将在 H5 座位匹配中自动排除。</p>
-    </div>
   </div>
 </template>
 

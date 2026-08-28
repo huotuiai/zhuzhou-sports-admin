@@ -1,161 +1,310 @@
+import type { AxiosResponse } from 'axios'
+import type { SignedRequestConfig } from '@/lib/http'
+import type { BannerWriteInput, ContentWriteInput, PriorityHintWriteInput, RemoteFileAsset } from '../types'
 import { describe, expect, it } from 'vitest'
-import type { BannerWriteInput, ContentWriteInput, PriorityHintWriteInput } from '../types'
 import {
-  CONTENT_MANAGEMENT_STORAGE_KEY,
-  ContentManagementServiceError,
-  LocalContentManagementService,
-  buildSelectableReferences,
+  contentExportFilename,
+  createContentManagementService,
+  formatContentRequestDateTime,
   getActivityStatus,
   isWithinValidity,
+  mapApiBanner,
+  mapApiContent,
+  mapApiPriorityHint,
   sortContents,
   validateBannerInput,
   validateContentInput,
   validatePriorityHintInput,
+  type ApiBannerVO,
+  type ApiContentVO,
+  type ApiHighlightVO,
 } from './content-management-service'
 
-class MemoryStorage implements Storage {
-  private readonly values = new Map<string, string>()
-  get length() { return this.values.size }
-  clear() { this.values.clear() }
-  getItem(key: string) { return this.values.get(key) ?? null }
-  key(index: number) { return [...this.values.keys()][index] ?? null }
-  removeItem(key: string) { this.values.delete(key) }
-  setItem(key: string, value: string) { this.values.set(key, value) }
-}
-
-function createService(now = '2026-08-17T04:00:00.000Z') {
-  const storage = new MemoryStorage()
-  let sequence = 0
-  const service = new LocalContentManagementService({
-    storage,
-    now: () => new Date(now),
-    createId: () => `generated-${++sequence}`,
-  })
-  return { service, storage }
-}
-
-function newsInput(patch: Partial<ContentWriteInput> = {}): ContentWriteInput {
+function apiContent(overrides: Partial<ApiContentVO> = {}): ApiContentVO {
   return {
-    type: 'news',
-    title: '新的场馆资讯',
-    bodyHtml: '<p>正文</p>',
-    cover: null,
-    attachments: [],
-    publishAt: null,
-    pinned: false,
-    priority: 50,
-    activityStartAt: null,
-    activityEndAt: null,
-    activityLocation: '',
-    navigationLocation: '',
-    ...patch,
+    id: '9007199254740995',
+    create_at: '2026-08-20T08:00:00+08:00',
+    update_at: '2026-08-20T09:00:00+08:00',
+    code: 'CT-001',
+    title: '体育中心开放通知',
+    content_type: 'news',
+    body: '<p>正文</p>',
+    cover_url: 'https://cdn.example.com/cover.jpg',
+    activity_start_at: null,
+    activity_end_at: null,
+    location: null,
+    nav_address: null,
+    nav_lng: null,
+    nav_lat: null,
+    publish_status: 'draft',
+    publish_at: null,
+    is_pinned: 1,
+    priority: '10',
+    valid_start_at: null,
+    valid_end_at: null,
+    data_source: 'sync',
+    sync_status: 'success',
+    last_sync_at: '2026-08-20T09:00:00+08:00',
+    external_id: 'external-1',
+    click_pv: '12',
+    click_uv: 9,
+    view_pv: 30,
+    view_uv: '20',
+    status: 1,
+    attachments: [{
+      id: '9007199254740997', file_name: '须知.pdf', file_url: 'https://cdn.example.com/notice.pdf',
+      file_type: 'application/pdf', file_size: '2048', sort_order: 2,
+    }],
+    ...overrides,
   }
 }
 
-function image() {
-  return { id: 'asset-new', name: 'banner.jpg', mimeType: 'image/jpeg', size: 1024, lastModified: 1, previewUrl: 'blob:preview' }
+function apiBanner(overrides: Partial<ApiBannerVO> = {}): ApiBannerVO {
+  return {
+    id: '9007199254740998',
+    create_at: '2026-08-20T08:00:00+08:00',
+    update_at: '2026-08-20T09:00:00+08:00',
+    code: 'BN-001',
+    title: '主活动 Banner',
+    image_url: 'https://cdn.example.com/banner.jpg',
+    jump_type: 'control',
+    jump_target_id: '9007199254740999',
+    priority: 5,
+    valid_start_at: '2026-08-21T00:00:00+08:00',
+    valid_end_at: '2026-08-31T23:59:59+08:00',
+    click_pv: 8,
+    click_uv: 6,
+    status: 1,
+    jump_title: '东门交通管制',
+    ...overrides,
+  }
 }
 
-describe('content management service', () => {
-  it('seeds the prototype snapshot and persists a versioned envelope', async () => {
-    const { service, storage } = createService()
-    const snapshot = await service.load()
+function apiHint(overrides: Partial<ApiHighlightVO> = {}): ApiHighlightVO {
+  return {
+    id: '9007199254741000',
+    create_at: '2026-08-20T08:00:00+08:00',
+    update_at: '2026-08-20T09:00:00+08:00',
+    code: 'HI-001',
+    title: '请从东门入场',
+    ref_type: 'control',
+    ref_id: '9007199254740999',
+    priority: 1,
+    valid_start_at: null,
+    valid_end_at: null,
+    click_pv: 3,
+    click_uv: 2,
+    status: 1,
+    ref_title: '东门交通管制',
+    ...overrides,
+  }
+}
 
-    expect(snapshot.contents).toHaveLength(6)
-    expect(snapshot.banners).toHaveLength(2)
-    expect(snapshot.priorityHints).toHaveLength(2)
-    expect(JSON.parse(storage.getItem(CONTENT_MANAGEMENT_STORAGE_KEY) ?? '{}')).toMatchObject({ schemaVersion: 2 })
+function asset(overrides: Partial<RemoteFileAsset> = {}): RemoteFileAsset {
+  return {
+    id: 'asset-1', name: 'remote.jpg', url: 'https://cdn.example.com/remote.jpg',
+    mimeType: 'image/jpeg', size: 1024, sortOrder: 0, ...overrides,
+  }
+}
+
+function contentInput(overrides: Partial<ContentWriteInput> = {}): ContentWriteInput {
+  return {
+    type: 'news', title: '新的场馆资讯', bodyHtml: '<p>正文</p>', cover: null, attachments: [],
+    publishAt: null, pinned: false, priority: 50, activityStartAt: null, activityEndAt: null,
+    activityLocation: '', navigationLocation: '', ...overrides,
+  }
+}
+
+function bannerInput(overrides: Partial<BannerWriteInput> = {}): BannerWriteInput {
+  return {
+    title: '主活动 Banner', image: asset(), jumpType: 'traffic-control', targetId: '21',
+    priority: 5, displayEnabled: true, validFrom: '2026-08-21', validTo: '2026-08-31', ...overrides,
+  }
+}
+
+function hintInput(overrides: Partial<PriorityHintWriteInput> = {}): PriorityHintWriteInput {
+  return {
+    title: '入场提醒', referenceType: 'traffic-control', targetId: '21', priority: 1,
+    displayEnabled: true, validFrom: null, validTo: null, ...overrides,
+  }
+}
+
+describe('content management API service', () => {
+  it('maps content snake-case fields, int64 IDs, nullable values and remote media', () => {
+    const record = mapApiContent(apiContent())
+    expect(record).toMatchObject({
+      id: '9007199254740995', type: 'news', pinned: true, enabled: true, priority: 10,
+      navAddress: '', navLng: null, navLat: null, dataSource: 'sync', syncStatus: 'success',
+      externalId: 'external-1', metrics: { clickPv: 12, clickUv: 9, viewPv: 30, viewUv: 20 },
+    })
+    expect(record.cover).toMatchObject({ url: 'https://cdn.example.com/cover.jpg' })
+    expect(record.attachments[0]).toMatchObject({
+      id: '9007199254740997', name: '须知.pdf', url: 'https://cdn.example.com/notice.pdf', size: 2048, sortOrder: 2,
+    })
   })
 
-  it('creates content, generates the next code, and strips object URLs from storage', async () => {
-    const { service, storage } = createService()
-    const created = await service.createContent(newsInput({ cover: image() }))
-
-    expect(created.code).toBe('CT-007')
-    expect(created.publishStatus).toBe('draft')
-    expect(created.cover?.previewUrl).toBe('blob:preview')
-    expect((await service.load()).contents.find((item) => item.id === created.id)?.cover?.previewUrl).toBe('blob:preview')
-    expect(storage.getItem(CONTENT_MANAGEMENT_STORAGE_KEY)).not.toContain('blob:preview')
-    const refreshedSession = new LocalContentManagementService({ storage })
-    expect((await refreshedSession.load()).contents.find((item) => item.id === created.id)?.cover?.previewUrl).toBeUndefined()
+  it('maps Banner and high-priority control references to UI enums and preserves target titles', () => {
+    expect(mapApiBanner(apiBanner())).toMatchObject({
+      id: '9007199254740998', jumpType: 'traffic-control', targetId: '9007199254740999',
+      targetTitle: '东门交通管制', validFrom: '2026-08-21', validTo: '2026-08-31',
+    })
+    expect(mapApiPriorityHint(apiHint())).toMatchObject({
+      id: '9007199254741000', referenceType: 'traffic-control', targetId: '9007199254740999', targetTitle: '东门交通管制',
+    })
   })
 
-  it('reconciles scheduled publishing against the injected clock', async () => {
-    const storage = new MemoryStorage()
-    const earlyService = new LocalContentManagementService({ storage, now: () => new Date('2026-08-17T02:00:00.000Z') })
-    const scheduled = await earlyService.createContent(newsInput({ publishAt: '2026-08-21T01:00:00.000Z' }))
-    expect(scheduled.publishStatus).toBe('draft')
-
-    const lateService = new LocalContentManagementService({ storage, now: () => new Date('2026-08-22T02:00:00.000Z') })
-    expect((await lateService.load()).contents.find((item) => item.id === scheduled.id)?.publishStatus).toBe('published')
-  })
-
-  it('blocks referenced deletion and allows ordinary content mutations', async () => {
-    const { service } = createService()
-    const snapshot = await service.load()
-    const referenced = snapshot.contents.find((item) => item.code === 'CT-002')!
-    const editable = snapshot.contents.find((item) => item.code === 'CT-003')!
-
-    await expect(service.removeContent(referenced.id)).rejects.toMatchObject({ code: 'referenced' })
-    expect((await service.updateContent(editable.id, newsInput())).title).toBe('新的场馆资讯')
-    expect((await service.setContentPinned(editable.id, true)).pinned).toBe(true)
-    expect((await service.setContentEnabled(editable.id, true)).enabled).toBe(true)
-    await service.removeContent(editable.id)
-  })
-
-  it('supports publishing, pinning, enabling and deleting an unreferenced manual draft', async () => {
-    const { service } = createService()
-    const draft = (await service.load()).contents.find((item) => item.code === 'CT-006')!
-
-    expect((await service.publishContent(draft.id)).publishStatus).toBe('published')
-    expect((await service.setContentPinned(draft.id, true)).pinned).toBe(true)
-    expect((await service.setContentEnabled(draft.id, false)).enabled).toBe(false)
-    await service.removeContent(draft.id)
-    expect((await service.load()).contents.some((item) => item.id === draft.id)).toBe(false)
-  })
-
-  it('validates activity fields, priorities, validity periods and references', async () => {
-    const { service } = createService()
-    const snapshot = await service.load()
-    const activityIssues = validateContentInput(newsInput({
-      type: 'activity',
-      title: 'A',
-      priority: 10_000,
-      activityStartAt: '2026-08-17T20:00',
-      activityEndAt: '2026-08-17T19:00',
-      navigationLocation: '300, 120',
+  it('validates unavailable media, activity fields, references and prototype priority sorting', () => {
+    const activityIssues = validateContentInput(contentInput({
+      type: 'activity', title: 'A', priority: 10_000, activityStartAt: '2026-08-22T20:00',
+      activityEndAt: '2026-08-22T19:00', navigationLocation: '300, 120',
     }))
-    expect(activityIssues.map((issue) => issue.field)).toEqual(expect.arrayContaining(['title', 'priority', 'cover', 'activityEndAt', 'activityLocation', 'navigationLocation']))
+    expect(activityIssues.map(item => item.field)).toEqual(expect.arrayContaining([
+      'title', 'priority', 'cover', 'activityEndAt', 'activityLocation', 'navigationLocation',
+    ]))
+    expect(validateBannerInput(bannerInput({ image: null, targetId: null, validTo: null })).map(item => item.field))
+      .toEqual(expect.arrayContaining(['image', 'targetId', 'validTo']))
+    expect(validatePriorityHintInput(hintInput({ targetId: '' })).map(item => item.field)).toContain('targetId')
 
-    const banner: BannerWriteInput = { title: '有效 Banner', image: image(), jumpType: 'activity', targetId: 'missing', priority: 50, displayEnabled: true, validFrom: '2026-08-18', validTo: null }
-    expect(validateBannerInput(banner, snapshot).map((issue) => issue.field)).toEqual(expect.arrayContaining(['targetId', 'validTo']))
-
-    const oversizedBanner = { ...banner, targetId: 'content-001', validFrom: null, image: { ...image(), size: 3 * 1024 * 1024 } }
-    expect(validateBannerInput(oversizedBanner, snapshot).some((issue) => issue.field === 'image')).toBe(true)
-
-    const hint: PriorityHintWriteInput = { title: '有效提示', referenceType: 'news', targetId: 'content-003', priority: 50, displayEnabled: true, validFrom: null, validTo: null }
-    expect(validatePriorityHintInput(hint, snapshot).some((issue) => issue.field === 'targetId')).toBe(true)
+    const first = mapApiContent(apiContent({ id: 1, code: 'CT-001', priority: 20, is_pinned: 0 }))
+    const second = mapApiContent(apiContent({ id: 2, code: 'CT-002', priority: 5, is_pinned: 0 }))
+    const pinned = mapApiContent(apiContent({ id: 3, code: 'CT-003', priority: 99, is_pinned: 1 }))
+    expect(sortContents([first, second, pinned]).map(item => item.id)).toEqual(['3', '2', '1'])
   })
 
-  it('derives activity and effective-period state and exposes only valid references', async () => {
-    const snapshot = await createService().service.load()
-    const activity = snapshot.contents.find((item) => item.code === 'CT-005')!
-    expect(getActivityStatus(activity, new Date('2026-08-17T00:00:00.000Z'))).toBe('not-started')
-    expect(isWithinValidity('2026-08-10', '2026-08-18', new Date('2026-08-17T04:00:00.000Z'))).toBe(true)
-    expect(buildSelectableReferences(snapshot).find((item) => item.id === 'content-003')?.valid).toBe(false)
+  it('derives activity/effective state and formats supported local times', () => {
+    const activity = mapApiContent(apiContent({
+      content_type: 'activity', activity_start_at: '2026-08-22T10:00:00+08:00', activity_end_at: '2026-08-22T12:00:00+08:00',
+    }))
+    expect(getActivityStatus(activity, new Date('2026-08-22T09:00:00+08:00'))).toBe('not-started')
+    expect(isWithinValidity('2026-08-21', '2026-08-31', new Date('2026-08-25T12:00:00+08:00'))).toBe(true)
+    expect(formatContentRequestDateTime('2026-08-22T10:20')).toBe('2026-08-22 10:20:00')
   })
 
-  it('sorts content by pinned, priority and publish time', async () => {
-    const { service } = createService()
-    const snapshot = await service.load()
-    const sorted = sortContents(snapshot.contents)
-    expect(sorted[0]?.pinned).toBe(true)
+  it('sends supported list filters and automatically reads all matching pages', async () => {
+    const configs: SignedRequestConfig[] = []
+    const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      const requestedPage = Number((config.params as Record<string, unknown>).page)
+      return { list: [apiContent({ id: requestedPage, code: `CT-00${requestedPage}` })], total: 101, page: requestedPage, page_size: 100 } as T
+    }
+    const service = createContentManagementService(requester)
+    const records = await service.listContents({ keyword: ' 通知 ', contentType: 'news', publishStatus: 'draft' })
+    expect(records.map(item => item.id)).toEqual(['1', '2'])
+    expect(configs).toEqual([
+      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 1, page_size: 100, content_type: 'news', keyword: '通知', publish_status: 'draft' } },
+      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 2, page_size: 100, content_type: 'news', keyword: '通知', publish_status: 'draft' } },
+    ])
   })
 
-  it('reports corrupted storage without silently replacing user data', async () => {
-    const { service, storage } = createService()
-    storage.setItem(CONTENT_MANAGEMENT_STORAGE_KEY, '{invalid')
-    await expect(service.load()).rejects.toBeInstanceOf(ContentManagementServiceError)
-    expect(storage.getItem(CONTENT_MANAGEMENT_STORAGE_KEY)).toBe('{invalid')
+  it('maps Banner and high-priority list filters and automatically reads every page', async () => {
+    const configs: SignedRequestConfig[] = []
+    const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      const requestedPage = Number((config.params as Record<string, unknown>).page)
+      const record = config.url === 'api/v1/admin/banners'
+        ? apiBanner({ id: requestedPage, code: `BN-00${requestedPage}` })
+        : apiHint({ id: requestedPage, code: `HI-00${requestedPage}` })
+      return { list: [record], total: 101, page: requestedPage, page_size: 100 } as T
+    }
+    const service = createContentManagementService(requester)
+    await expect(service.listBanners({ keyword: ' 赛事 ', jumpType: 'traffic-control' })).resolves.toHaveLength(2)
+    await expect(service.listPriorityHints({ keyword: ' 入场 ', referenceType: 'traffic-control' })).resolves.toHaveLength(2)
+    expect(configs).toEqual([
+      { method: 'GET', url: 'api/v1/admin/banners', params: { page: 1, page_size: 100, keyword: '赛事', jump_type: 'control' } },
+      { method: 'GET', url: 'api/v1/admin/banners', params: { page: 2, page_size: 100, keyword: '赛事', jump_type: 'control' } },
+      { method: 'GET', url: 'api/v1/admin/highlights', params: { page: 1, page_size: 100, keyword: '入场', ref_type: 'control' } },
+      { method: 'GET', url: 'api/v1/admin/highlights', params: { page: 2, page_size: 100, keyword: '入场', ref_type: 'control' } },
+    ])
+  })
+
+  it('creates a draft then publishes on schedule, and withdraws when update clears publish time', async () => {
+    const configs: SignedRequestConfig[] = []
+    const responses = [
+      apiContent({ id: 21, code: 'CT-021' }),
+      apiContent({ id: 21, code: 'CT-021', publish_at: '2026-08-28T10:00:00+08:00' }),
+      apiContent({ id: 21, code: 'CT-021', publish_status: 'published', publish_at: '2026-08-28T10:00:00+08:00' }),
+      apiContent({ id: 21, code: 'CT-021', publish_status: 'draft', publish_at: null }),
+    ]
+    const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      return responses.shift() as T
+    }
+    const service = createContentManagementService(requester)
+    await service.createContent(contentInput({
+      publishAt: '2026-08-28T10:00', attachments: [asset({ name: 'guide.pdf', url: 'https://cdn.example.com/guide.pdf', mimeType: 'application/pdf' })],
+    }))
+    await service.updateContent('21', contentInput())
+
+    expect(configs[0]).toMatchObject({ method: 'POST', url: 'api/v1/admin/contents', data: { title: '新的场馆资讯', content_type: 'news', attachments: [{ file_name: 'guide.pdf', file_url: 'https://cdn.example.com/guide.pdf' }] } })
+    expect(configs[0]?.data).not.toHaveProperty('code')
+    expect(configs[0]?.data).not.toHaveProperty('publish_at')
+    expect(configs[1]).toEqual({ method: 'POST', url: 'api/v1/admin/contents/21/publish', data: { publish_at: '2026-08-28 10:00:00' } })
+    expect(configs[2]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '新的场馆资讯', content_type: 'news' } })
+    expect(configs[3]).toEqual({ method: 'POST', url: 'api/v1/admin/contents/21/unpublish', data: {} })
+  })
+
+  it('maps navigation input and reads latest detail before quick content toggles', async () => {
+    const configs: SignedRequestConfig[] = []
+    const responses = [
+      apiContent({ id: 21, code: 'CT-021', content_type: 'activity', cover_url: 'https://cdn.example.com/activity.jpg' }),
+      apiContent({ id: 21, code: 'CT-021', content_type: 'activity' }),
+      apiContent({ id: 21, code: 'CT-021', content_type: 'activity', status: 0 }),
+    ]
+    const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      return responses.shift() as T
+    }
+    const service = createContentManagementService(requester)
+    await service.createContent(contentInput({
+      type: 'activity', cover: asset(), activityStartAt: '2026-08-28T10:00', activityEndAt: '2026-08-28T12:00',
+      activityLocation: '体育场', navigationLocation: '113.1462, 27.8165',
+    }))
+    await service.setContentEnabled('21', false)
+    expect(configs[0]?.data).toMatchObject({ nav_address: null, nav_lng: 113.1462, nav_lat: 27.8165 })
+    expect(configs[1]).toEqual({ method: 'GET', url: 'api/v1/admin/contents/21' })
+    expect(configs[2]).toEqual({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '体育中心开放通知', content_type: 'activity', status: 0 } })
+  })
+
+  it('uses Banner/highlight enum mappings, date boundaries and latest-detail status updates', async () => {
+    const configs: SignedRequestConfig[] = []
+    const responses = [apiBanner(), apiBanner(), apiBanner({ status: 0 }), apiHint(), apiHint(), apiHint({ status: 0 })]
+    const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      return responses.shift() as T
+    }
+    const service = createContentManagementService(requester)
+    await service.createBanner(bannerInput())
+    await service.setBannerEnabled('22', false)
+    await service.createPriorityHint(hintInput())
+    await service.setPriorityHintEnabled('23', false)
+
+    expect(configs[0]?.data).toMatchObject({ jump_type: 'control', jump_target_id: 21, valid_start_at: '2026-08-21 00:00:00', valid_end_at: '2026-08-31 23:59:59' })
+    expect(configs[1]).toEqual({ method: 'GET', url: 'api/v1/admin/banners/22' })
+    expect(configs[2]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/banners/22', data: { title: '主活动 Banner', image_url: 'https://cdn.example.com/banner.jpg', status: 0 } })
+    expect(configs[3]?.data).toMatchObject({ ref_type: 'control', ref_id: 21 })
+    expect(configs[4]).toEqual({ method: 'GET', url: 'api/v1/admin/highlights/23' })
+    expect(configs[5]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/highlights/23', data: { title: '请从东门入场', ref_type: 'control', ref_id: '9007199254740999', status: 0 } })
+  })
+
+  it('loads reference options and wraps the raw server CSV response', async () => {
+    const configs: SignedRequestConfig[] = []
+    const blob = new Blob(['csv'], { type: 'text/csv' })
+    const service = createContentManagementService(
+      async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+        configs.push(config as SignedRequestConfig)
+        return [{ id: '9007199254740995', code: 'CT-001', title: '已发布资讯', content_type: 'news', publish_status: 'published' }] as T
+      },
+      async config => {
+        configs.push(config)
+        return { data: blob, headers: { 'content-disposition': "attachment; filename*=UTF-8''content%20all.csv" } } as unknown as AxiosResponse<Blob>
+      },
+    )
+    await expect(service.listReferenceOptions('news')).resolves.toMatchObject([{ id: '9007199254740995', type: 'news', valid: true }])
+    await expect(service.exportContents()).resolves.toEqual({ content: blob, filename: 'content all.csv' })
+    expect(configs).toEqual([
+      { method: 'GET', url: 'api/v1/admin/contents/options', params: { content_type: 'news' } },
+      { method: 'GET', url: 'api/v1/admin/contents/export', responseType: 'blob', headers: { Accept: 'text/csv' } },
+    ])
+    expect(contentExportFilename('attachment; filename="../../bad.csv"')).toBe('.._.._bad.csv')
   })
 })

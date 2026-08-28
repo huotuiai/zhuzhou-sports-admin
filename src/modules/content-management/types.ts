@@ -5,15 +5,15 @@ export type PublishStatus = 'draft' | 'published'
 export type ActivityStatus = 'not-started' | 'ongoing' | 'ended'
 export type ReferenceType = ContentType | 'traffic-control'
 export type BannerJumpType = ReferenceType | 'none'
+export type ContentDataSource = 'manual' | 'sync'
 
-export interface FileAssetMetadata {
+export interface RemoteFileAsset {
   id: string
   name: string
+  url: string
   mimeType: string
   size: number
-  lastModified: number
-  /** Object URLs are session-only and are stripped before localStorage persistence. */
-  previewUrl?: string
+  sortOrder: number
 }
 
 export interface MetricSnapshot {
@@ -29,18 +29,26 @@ export interface ContentRecord {
   type: ContentType
   title: string
   bodyHtml: string
-  cover: FileAssetMetadata | null
-  attachments: FileAssetMetadata[]
+  cover: RemoteFileAsset | null
+  attachments: RemoteFileAsset[]
   publishStatus: PublishStatus
   publishAt: string | null
   pinned: boolean
   priority: number
   enabled: boolean
+  validStartAt: string | null
+  validEndAt: string | null
   activityStartAt: string | null
   activityEndAt: string | null
   activityLocation: string
-  navigationLocation: string
+  navAddress: string
+  navLng: number | null
+  navLat: number | null
   metrics: MetricSnapshot
+  dataSource: ContentDataSource
+  syncStatus: string | null
+  lastSyncAt: string | null
+  externalId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -49,8 +57,8 @@ export interface ContentWriteInput {
   type: ContentType
   title: string
   bodyHtml: string
-  cover: FileAssetMetadata | null
-  attachments: FileAssetMetadata[]
+  cover: RemoteFileAsset | null
+  attachments: RemoteFileAsset[]
   publishAt: string | null
   pinned: boolean
   priority: number
@@ -64,9 +72,10 @@ export interface BannerRecord {
   id: string
   code: string
   title: string
-  image: FileAssetMetadata
+  image: RemoteFileAsset
   jumpType: BannerJumpType
   targetId: string | null
+  targetTitle: string | null
   priority: number
   displayEnabled: boolean
   validFrom: string | null
@@ -78,7 +87,7 @@ export interface BannerRecord {
 
 export interface BannerWriteInput {
   title: string
-  image: FileAssetMetadata | null
+  image: RemoteFileAsset | null
   jumpType: BannerJumpType
   targetId: string | null
   priority: number
@@ -93,6 +102,7 @@ export interface PriorityHintRecord {
   title: string
   referenceType: ReferenceType
   targetId: string
+  targetTitle: string
   priority: number
   displayEnabled: boolean
   validFrom: string | null
@@ -118,15 +128,6 @@ export interface ContentManagementSnapshot {
   priorityHints: PriorityHintRecord[]
 }
 
-export interface ExternalContentReference {
-  id: string
-  code: string
-  type: 'traffic-control'
-  title: string
-  enabled: boolean
-  published: boolean
-}
-
 export interface SelectableReference {
   id: string
   code: string
@@ -136,8 +137,46 @@ export interface SelectableReference {
   description: string
 }
 
-export interface ExternalContentReferenceService {
-  listTrafficControls(): Promise<ExternalContentReference[]>
+export interface ContentPage {
+  records: ContentRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface BannerPage {
+  records: BannerRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface PriorityHintPage {
+  records: PriorityHintRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface ContentExportFile {
+  content: Blob
+  filename: string
+}
+
+export interface ContentServerQuery {
+  keyword: string
+  contentType: ContentType
+  publishStatus: PublishStatus | 'all'
+}
+
+export interface BannerServerQuery {
+  keyword: string
+  jumpType: BannerJumpType | 'all'
+}
+
+export interface PriorityHintServerQuery {
+  keyword: string
+  referenceType: ReferenceType | 'all'
 }
 
 export type ContentValidationField = keyof ContentWriteInput
@@ -148,11 +187,6 @@ export interface ValidationIssue<TField extends string = string> {
   field: TField
   code: 'required' | 'invalid' | 'too_short' | 'too_long' | 'not_found' | 'limit'
   message: string
-}
-
-export interface DeleteReferenceBlock {
-  bannerCodes: string[]
-  priorityHintCodes: string[]
 }
 
 export interface ActivityQuery {
@@ -184,20 +218,31 @@ export interface PriorityHintQuery {
 }
 
 export interface ContentManagementService {
-  load(): Promise<ContentManagementSnapshot>
+  listContents(query: ContentServerQuery): Promise<ContentRecord[]>
+  listContentPage(page: number, pageSize: number, query: ContentServerQuery): Promise<ContentPage>
+  getContent(id: string): Promise<ContentRecord>
   createContent(input: ContentWriteInput): Promise<ContentRecord>
   updateContent(id: string, input: ContentWriteInput): Promise<ContentRecord>
-  publishContent(id: string): Promise<ContentRecord>
+  publishContent(id: string, publishAt?: string | null): Promise<ContentRecord>
+  unpublishContent(id: string): Promise<ContentRecord>
   setContentPinned(id: string, pinned: boolean): Promise<ContentRecord>
   setContentEnabled(id: string, enabled: boolean): Promise<ContentRecord>
+  replaceAttachments(id: string, attachments: readonly RemoteFileAsset[]): Promise<ContentRecord>
   removeContent(id: string): Promise<void>
-  getDeleteReferenceBlock(id: string): Promise<DeleteReferenceBlock>
+  listBanners(query: BannerServerQuery): Promise<BannerRecord[]>
+  listBannerPage(page: number, pageSize: number, query: BannerServerQuery): Promise<BannerPage>
+  getBanner(id: string): Promise<BannerRecord>
   createBanner(input: BannerWriteInput): Promise<BannerRecord>
   updateBanner(id: string, input: BannerWriteInput): Promise<BannerRecord>
   setBannerEnabled(id: string, enabled: boolean): Promise<BannerRecord>
   removeBanner(id: string): Promise<void>
+  listPriorityHints(query: PriorityHintServerQuery): Promise<PriorityHintRecord[]>
+  listPriorityHintPage(page: number, pageSize: number, query: PriorityHintServerQuery): Promise<PriorityHintPage>
+  getPriorityHint(id: string): Promise<PriorityHintRecord>
   createPriorityHint(input: PriorityHintWriteInput): Promise<PriorityHintRecord>
   updatePriorityHint(id: string, input: PriorityHintWriteInput): Promise<PriorityHintRecord>
   setPriorityHintEnabled(id: string, enabled: boolean): Promise<PriorityHintRecord>
   removePriorityHint(id: string): Promise<void>
+  listReferenceOptions(type: ReferenceType): Promise<SelectableReference[]>
+  exportContents(): Promise<ContentExportFile>
 }

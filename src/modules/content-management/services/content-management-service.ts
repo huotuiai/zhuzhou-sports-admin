@@ -1,277 +1,472 @@
+import type { AxiosResponse } from 'axios'
+import type { SignedRequestConfig } from '@/lib/http'
 import type {
   ActivityStatus,
+  BannerJumpType,
+  BannerPage,
   BannerRecord,
+  BannerServerQuery,
   BannerValidationField,
   BannerWriteInput,
+  ContentDataSource,
+  ContentExportFile,
   ContentManagementService,
-  ContentManagementSnapshot,
+  ContentPage,
   ContentRecord,
+  ContentServerQuery,
+  ContentType,
   ContentValidationField,
   ContentWriteInput,
-  DeleteReferenceBlock,
-  ExternalContentReference,
-  ExternalContentReferenceService,
-  FileAssetMetadata,
+  PriorityHintPage,
   PriorityHintRecord,
+  PriorityHintServerQuery,
   PriorityHintValidationField,
   PriorityHintWriteInput,
   ReferenceType,
+  RemoteFileAsset,
   SelectableReference,
   ValidationIssue,
 } from '../types'
-import { createClientId } from '@/lib/id'
+import { ApiError, rawHttpClient, requestData } from '@/lib/http'
 
-export const CONTENT_MANAGEMENT_STORAGE_KEY = 'zz-sports-content-management:v2'
-export const CONTENT_MANAGEMENT_SCHEMA_VERSION = 2
+type ApiReferenceType = ContentType | 'control'
+type ApiBannerJumpType = ApiReferenceType | 'none'
+
+export interface ApiAttachmentVO {
+  id?: number | string
+  file_name?: string
+  file_url?: string
+  file_type?: string | null
+  file_size?: number | string | null
+  sort_order?: number | string | null
+}
+
+export interface ApiContentVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  code: string
+  title: string
+  content_type: string
+  body: string | null
+  cover_url: string | null
+  activity_start_at: string | null
+  activity_end_at: string | null
+  location: string | null
+  nav_address: string | null
+  nav_lng: number | string | null
+  nav_lat: number | string | null
+  publish_status: string
+  publish_at: string | null
+  is_pinned: number | boolean
+  priority: number | string
+  valid_start_at: string | null
+  valid_end_at: string | null
+  data_source: string
+  sync_status: string | null
+  last_sync_at: string | null
+  external_id: string | null
+  click_pv: number | string
+  click_uv: number | string
+  view_pv: number | string
+  view_uv: number | string
+  status: number | boolean
+  attachments?: ApiAttachmentVO[] | null
+}
+
+export interface ApiBannerVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  code: string
+  title: string
+  image_url: string
+  jump_type: string
+  jump_target_id: number | string | null
+  priority: number | string
+  valid_start_at: string | null
+  valid_end_at: string | null
+  click_pv: number | string
+  click_uv: number | string
+  status: number | boolean
+  jump_title: string | null
+}
+
+export interface ApiHighlightVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  code: string
+  title: string
+  ref_type: string
+  ref_id: number | string
+  priority: number | string
+  valid_start_at: string | null
+  valid_end_at: string | null
+  click_pv: number | string
+  click_uv: number | string
+  status: number | boolean
+  ref_title: string
+}
+
+export interface ApiContentOption {
+  id: number | string
+  code: string
+  title: string
+  content_type?: string | null
+  publish_status?: string | null
+}
+
+interface ApiPage<T> {
+  list: T[]
+  total: number | string
+  page: number | string
+  page_size: number | string
+}
+
+interface ApiAttachmentRequest {
+  file_name: string
+  file_url: string
+  file_type: string
+  file_size: number
+  sort_order: number
+}
+
+interface ApiContentWriteRequest {
+  title: string
+  content_type: ContentType
+  body: string
+  cover_url?: string
+  activity_start_at?: string
+  activity_end_at?: string
+  location?: string
+  nav_address?: string | null
+  nav_lng?: number | null
+  nav_lat?: number | null
+  is_pinned: 0 | 1
+  priority: number
+  attachments: ApiAttachmentRequest[]
+}
+
+interface ApiBannerWriteRequest {
+  title: string
+  image_url: string
+  jump_type: ApiBannerJumpType
+  jump_target_id: number | string | null
+  priority: number
+  valid_start_at: string | null
+  valid_end_at: string | null
+  status: 0 | 1
+}
+
+interface ApiHighlightWriteRequest {
+  title: string
+  ref_type: ApiReferenceType
+  ref_id: number | string
+  priority: number
+  valid_start_at: string | null
+  valid_end_at: string | null
+  status: 0 | 1
+}
+
+export interface ContentManagementDataRequester {
+  <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface ContentManagementFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
+}
+
+export class ContentManagementServiceError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'ContentManagementServiceError'
+  }
+}
+
 export const MAX_BANNERS = 8
 export const MAX_PRIORITY_HINTS = 3
 export const DEFAULT_PRIORITY = 50
-export const MAX_IMAGE_FILE_SIZE = 2 * 1024 * 1024
-export const MAX_ATTACHMENT_FILE_SIZE = 10 * 1024 * 1024
+const MAX_PAGE_SIZE = 100
 
-interface StoredContentManagement {
-  schemaVersion: typeof CONTENT_MANAGEMENT_SCHEMA_VERSION
-  snapshot: ContentManagementSnapshot
+function responseError(message: string): ApiError {
+  return new ApiError(message, { kind: 'response' })
 }
 
-export type ContentManagementServiceErrorCode =
-  | 'validation_failed'
-  | 'not_found'
-  | 'referenced'
-  | 'limit_reached'
-  | 'storage_unavailable'
-  | 'storage_corrupted'
-
-export class ContentManagementServiceError extends Error {
-  readonly code: ContentManagementServiceErrorCode
-  readonly details?: unknown
-
-  constructor(code: ContentManagementServiceErrorCode, message: string, details?: unknown) {
-    super(message)
-    this.name = 'ContentManagementServiceError'
-    this.code = code
-    this.details = details
-  }
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
+  return value
 }
 
-export interface LocalContentManagementServiceOptions {
-  storage?: Storage
-  now?: () => Date
-  createId?: () => string
+function nullableText(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
 }
 
-const EMPTY_METRICS = Object.freeze({ clickPv: 0, clickUv: 0, viewPv: 0, viewUv: 0 })
-
-export const TRAFFIC_REFERENCE_SEED: readonly ExternalContentReference[] = [
-  {
-    id: 'traffic-gz-001',
-    code: 'GZ-001',
-    type: 'traffic-control',
-    title: '体育中心周边道路临时交通管制',
-    enabled: true,
-    published: true,
-  },
-  {
-    id: 'traffic-gz-002',
-    code: 'GZ-002',
-    type: 'traffic-control',
-    title: '演出散场期间临时交通疏导',
-    enabled: true,
-    published: true,
-  },
-] as const
-
-function resolveBrowserStorage(): Storage {
-  if (typeof globalThis.localStorage === 'undefined') {
-    throw new ContentManagementServiceError('storage_unavailable', '当前环境不支持本地存储')
-  }
-  return globalThis.localStorage
+function integer(value: unknown, fallback = 0): number {
+  const result = Number(value)
+  return Number.isInteger(result) ? result : fallback
 }
 
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
+function nonNegativeInteger(value: unknown): number {
+  return Math.max(0, integer(value))
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const result = Number(value)
+  return Number.isFinite(result) ? result : null
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === 1
+}
+
+function endpoint(path: string, id: string, suffix = ''): string {
+  return `${path}/${encodeURIComponent(id)}${suffix}`
 }
 
 function normalizeText(value: string): string {
   return value.trim().normalize('NFKC')
 }
 
-function textLength(value: string): number {
-  return Array.from(value).length
+function mapContentType(value: unknown): ContentType {
+  if (value === 'activity' || value === 'news' || value === 'notice') return value
+  throw responseError('服务器返回的内容类型无效')
+}
+
+function mapPublishStatus(value: unknown): ContentRecord['publishStatus'] {
+  if (value === 'draft' || value === 'published') return value
+  throw responseError('服务器返回的内容发布状态无效')
+}
+
+function mapDataSource(value: unknown): ContentDataSource {
+  if (value === 'manual' || value === 'sync') return value
+  throw responseError('服务器返回的内容数据来源无效')
+}
+
+function mapReferenceType(value: unknown): ReferenceType {
+  if (value === 'control') return 'traffic-control'
+  return mapContentType(value)
+}
+
+function apiReferenceType(value: ReferenceType): ApiReferenceType {
+  return value === 'traffic-control' ? 'control' : value
+}
+
+function mapBannerJumpType(value: unknown): BannerJumpType {
+  if (value === 'none') return 'none'
+  return mapReferenceType(value)
+}
+
+function apiBannerJumpType(value: BannerJumpType): ApiBannerJumpType {
+  return value === 'none' ? 'none' : apiReferenceType(value)
+}
+
+function filenameFromUrl(url: string): string {
+  const clean = url.split(/[?#]/)[0] ?? ''
+  const fallback = '远程文件'
+  try {
+    return decodeURIComponent(clean.split('/').filter(Boolean).pop() ?? fallback) || fallback
+  }
+  catch {
+    return clean.split('/').filter(Boolean).pop() || fallback
+  }
+}
+
+function mimeTypeFromName(name: string): string {
+  const extension = name.split('.').pop()?.toLocaleLowerCase('en-US')
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
+  if (extension === 'png') return 'image/png'
+  if (extension === 'gif') return 'image/gif'
+  if (extension === 'webp') return 'image/webp'
+  if (extension === 'pdf') return 'application/pdf'
+  if (extension === 'doc') return 'application/msword'
+  if (extension === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  return 'application/octet-stream'
+}
+
+function remoteAsset(id: string, url: string, patch: Partial<RemoteFileAsset> = {}): RemoteFileAsset {
+  const name = patch.name || filenameFromUrl(url)
+  return {
+    id,
+    name,
+    url,
+    mimeType: patch.mimeType || mimeTypeFromName(name),
+    size: Math.max(0, patch.size ?? 0),
+    sortOrder: Math.max(0, patch.sortOrder ?? 0),
+  }
+}
+
+function mapAttachment(value: ApiAttachmentVO, index: number, contentId: string): RemoteFileAsset {
+  const url = requiredText(value.file_url, '附件 URL')
+  const name = requiredText(value.file_name, '附件名称')
+  return remoteAsset(String(value.id ?? `${contentId}-attachment-${index}`), url, {
+    name,
+    mimeType: nullableText(value.file_type) || mimeTypeFromName(name),
+    size: nonNegativeInteger(value.file_size),
+    sortOrder: nonNegativeInteger(value.sort_order ?? index),
+  })
+}
+
+export function mapApiContent(value: ApiContentVO): ContentRecord {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的内容 ID 不完整')
+  const id = String(value.id)
+  const coverUrl = nullableText(value.cover_url)?.trim() || null
+  return {
+    id,
+    code: requiredText(value.code, '内容编号'),
+    type: mapContentType(value.content_type),
+    title: requiredText(value.title, '内容标题'),
+    bodyHtml: nullableText(value.body) ?? '',
+    cover: coverUrl ? remoteAsset(`${id}-cover`, coverUrl, { mimeType: 'image/*' }) : null,
+    attachments: Array.isArray(value.attachments)
+      ? value.attachments.map((item, index) => mapAttachment(item, index, id)).sort((a, b) => a.sortOrder - b.sortOrder)
+      : [],
+    publishStatus: mapPublishStatus(value.publish_status),
+    publishAt: nullableText(value.publish_at),
+    pinned: flag(value.is_pinned),
+    priority: integer(value.priority, DEFAULT_PRIORITY),
+    enabled: flag(value.status),
+    validStartAt: nullableText(value.valid_start_at),
+    validEndAt: nullableText(value.valid_end_at),
+    activityStartAt: nullableText(value.activity_start_at),
+    activityEndAt: nullableText(value.activity_end_at),
+    activityLocation: nullableText(value.location) ?? '',
+    navAddress: nullableText(value.nav_address) ?? '',
+    navLng: nullableNumber(value.nav_lng),
+    navLat: nullableNumber(value.nav_lat),
+    metrics: {
+      clickPv: nonNegativeInteger(value.click_pv),
+      clickUv: nonNegativeInteger(value.click_uv),
+      viewPv: nonNegativeInteger(value.view_pv),
+      viewUv: nonNegativeInteger(value.view_uv),
+    },
+    dataSource: mapDataSource(value.data_source),
+    syncStatus: nullableText(value.sync_status),
+    lastSyncAt: nullableText(value.last_sync_at),
+    externalId: nullableText(value.external_id),
+    createdAt: requiredText(value.create_at, '内容创建时间'),
+    updatedAt: requiredText(value.update_at, '内容更新时间'),
+  }
+}
+
+export function mapApiBanner(value: ApiBannerVO): BannerRecord {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的 Banner ID 不完整')
+  const id = String(value.id)
+  const imageUrl = requiredText(value.image_url, 'Banner 图片 URL')
+  return {
+    id,
+    code: requiredText(value.code, 'Banner 编号'),
+    title: requiredText(value.title, 'Banner 标题'),
+    image: remoteAsset(`${id}-image`, imageUrl, { mimeType: 'image/*' }),
+    jumpType: mapBannerJumpType(value.jump_type),
+    targetId: value.jump_target_id === null || value.jump_target_id === undefined ? null : String(value.jump_target_id),
+    targetTitle: nullableText(value.jump_title),
+    priority: integer(value.priority, DEFAULT_PRIORITY),
+    displayEnabled: flag(value.status),
+    validFrom: dateOnly(value.valid_start_at),
+    validTo: dateOnly(value.valid_end_at),
+    metrics: { clickPv: nonNegativeInteger(value.click_pv), clickUv: nonNegativeInteger(value.click_uv) },
+    createdAt: requiredText(value.create_at, 'Banner 创建时间'),
+    updatedAt: requiredText(value.update_at, 'Banner 更新时间'),
+  }
+}
+
+export function mapApiPriorityHint(value: ApiHighlightVO): PriorityHintRecord {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的高优提示 ID 不完整')
+  if (value.ref_id === undefined || value.ref_id === null) throw responseError('服务器返回的高优提示引用 ID 不完整')
+  return {
+    id: String(value.id),
+    code: requiredText(value.code, '高优提示编号'),
+    title: requiredText(value.title, '高优提示标题'),
+    referenceType: mapReferenceType(value.ref_type),
+    targetId: String(value.ref_id),
+    targetTitle: requiredText(value.ref_title, '高优提示引用标题'),
+    priority: integer(value.priority, DEFAULT_PRIORITY),
+    displayEnabled: flag(value.status),
+    validFrom: dateOnly(value.valid_start_at),
+    validTo: dateOnly(value.valid_end_at),
+    metrics: { clickPv: nonNegativeInteger(value.click_pv), clickUv: nonNegativeInteger(value.click_uv) },
+    createdAt: requiredText(value.create_at, '高优提示创建时间'),
+    updatedAt: requiredText(value.update_at, '高优提示更新时间'),
+  }
+}
+
+function mapPage<TApi, TRecord>(value: ApiPage<TApi>, mapper: (item: TApi) => TRecord) {
+  return {
+    records: Array.isArray(value.list) ? value.list.map(mapper) : [],
+    total: nonNegativeInteger(value.total),
+    page: Math.max(1, integer(value.page, 1)),
+    pageSize: Math.max(1, integer(value.page_size, 20)),
+  }
+}
+
+export function mapApiContentPage(value: ApiPage<ApiContentVO>): ContentPage {
+  return mapPage(value, mapApiContent)
+}
+
+export function mapApiBannerPage(value: ApiPage<ApiBannerVO>): BannerPage {
+  return mapPage(value, mapApiBanner)
+}
+
+export function mapApiPriorityHintPage(value: ApiPage<ApiHighlightVO>): PriorityHintPage {
+  return mapPage(value, mapApiPriorityHint)
+}
+
+function cloneAsset(asset: RemoteFileAsset): RemoteFileAsset {
+  return { ...asset }
+}
+
+function cloneContent(record: ContentRecord): ContentRecord {
+  return { ...record, cover: record.cover ? cloneAsset(record.cover) : null, attachments: record.attachments.map(cloneAsset), metrics: { ...record.metrics } }
+}
+
+function cloneBanner(record: BannerRecord): BannerRecord {
+  return { ...record, image: cloneAsset(record.image), metrics: { ...record.metrics } }
+}
+
+function cloneHint(record: PriorityHintRecord): PriorityHintRecord {
+  return { ...record, metrics: { ...record.metrics } }
+}
+
+export function sortContents(records: readonly ContentRecord[]): ContentRecord[] {
+  return [...records]
+    .sort((first, second) => Number(second.pinned) - Number(first.pinned)
+      || first.priority - second.priority
+      || (second.publishAt ?? second.updatedAt).localeCompare(first.publishAt ?? first.updatedAt))
+    .map(cloneContent)
+}
+
+export function sortBanners(records: readonly BannerRecord[]): BannerRecord[] {
+  return [...records].sort((first, second) => first.priority - second.priority || second.updatedAt.localeCompare(first.updatedAt)).map(cloneBanner)
+}
+
+export function sortPriorityHints(records: readonly PriorityHintRecord[]): PriorityHintRecord[] {
+  return [...records].sort((first, second) => first.priority - second.priority || second.updatedAt.localeCompare(first.updatedAt)).map(cloneHint)
 }
 
 function dateValue(value: string | null): number | null {
   if (!value) return null
-  const timestamp = new Date(value).getTime()
-  return Number.isNaN(timestamp) ? null : timestamp
+  const result = Date.parse(value)
+  return Number.isFinite(result) ? result : null
 }
 
 function dateOnlyValue(value: string | null, endOfDay = false): number | null {
   if (!value) return null
-  const suffix = endOfDay ? 'T23:59:59.999' : 'T00:00:00.000'
-  const timestamp = new Date(`${value}${suffix}`).getTime()
-  return Number.isNaN(timestamp) ? null : timestamp
+  const result = Date.parse(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`)
+  return Number.isFinite(result) ? result : null
 }
 
-function stripPreview(asset: FileAssetMetadata | null): FileAssetMetadata | null {
-  if (!asset) return null
-  const stored = { ...asset }
-  delete stored.previewUrl
-  return stored
-}
-
-function stripSnapshotPreviews(snapshot: ContentManagementSnapshot): ContentManagementSnapshot {
-  const next = clone(snapshot)
-  next.contents.forEach((record) => {
-    record.cover = stripPreview(record.cover)
-    record.attachments = record.attachments.map((asset) => stripPreview(asset)!)
-  })
-  next.banners.forEach((record) => {
-    record.image = stripPreview(record.image)!
-  })
-  return next
-}
-
-function assetsInSnapshot(snapshot: ContentManagementSnapshot): FileAssetMetadata[] {
-  return [
-    ...snapshot.contents.flatMap((record) => [record.cover, ...record.attachments]),
-    ...snapshot.banners.map((record) => record.image),
-  ].filter((asset): asset is FileAssetMetadata => Boolean(asset))
-}
-
-function hydrateSessionPreviews(
-  snapshot: ContentManagementSnapshot,
-  previews: ReadonlyMap<string, string>,
-): ContentManagementSnapshot {
-  const hydrated = clone(snapshot)
-  for (const asset of assetsInSnapshot(hydrated)) {
-    const previewUrl = previews.get(asset.id)
-    if (previewUrl) asset.previewUrl = previewUrl
-  }
-  return hydrated
-}
-
-function sampleAsset(id: string, name: string): FileAssetMetadata {
-  return {
-    id,
-    name,
-    mimeType: 'image/jpeg',
-    size: 386_240,
-    lastModified: new Date('2026-08-10T08:00:00+08:00').getTime(),
-  }
-}
-
-function sampleContent(
-  patch: Partial<ContentRecord> & Pick<ContentRecord, 'id' | 'code' | 'type' | 'title'>,
-): ContentRecord {
-  const timestamp = patch.updatedAt ?? '2026-08-13T02:00:00.000Z'
-  return {
-    id: patch.id,
-    code: patch.code,
-    type: patch.type,
-    title: patch.title,
-    bodyHtml: patch.bodyHtml ?? '<p>这里是内容正文，可在编辑抽屉中继续完善。</p>',
-    cover: patch.cover ?? null,
-    attachments: patch.attachments ?? [],
-    publishStatus: patch.publishStatus ?? 'published',
-    publishAt: patch.publishAt ?? '2026-08-10T01:30:00.000Z',
-    pinned: patch.pinned ?? false,
-    priority: patch.priority ?? DEFAULT_PRIORITY,
-    enabled: patch.enabled ?? true,
-    activityStartAt: patch.activityStartAt ?? null,
-    activityEndAt: patch.activityEndAt ?? null,
-    activityLocation: patch.activityLocation ?? '',
-    navigationLocation: patch.navigationLocation ?? '',
-    metrics: patch.metrics ?? { ...EMPTY_METRICS },
-    createdAt: patch.createdAt ?? timestamp,
-    updatedAt: timestamp,
-  }
-}
-
-export function createDefaultContentManagementSnapshot(): ContentManagementSnapshot {
-  const contents: ContentRecord[] = [
-    sampleContent({
-      id: 'content-001', code: 'CT-001', type: 'activity',
-      title: '8.15 群星演唱会 · 出行指南', pinned: true, priority: 10,
-      cover: sampleAsset('asset-ct-001', '8.15-演唱会封面.jpg'),
-      activityStartAt: '2026-08-15T11:30:00.000Z', activityEndAt: '2026-08-15T14:30:00.000Z',
-      activityLocation: '株洲体育中心体育场', navigationLocation: '113.1462, 27.8165',
-      metrics: { clickPv: 5240, clickUv: 4120, viewPv: 8860, viewUv: 6340 },
-    }),
-    sampleContent({
-      id: 'content-002', code: 'CT-002', type: 'notice',
-      title: '演唱会当日免费接驳专线公告', priority: 30,
-      cover: sampleAsset('asset-ct-002', '接驳专线公告.jpg'),
-      publishAt: '2026-08-11T06:00:00.000Z',
-      metrics: { clickPv: 3180, clickUv: 2650, viewPv: 5420, viewUv: 4010 },
-    }),
-    sampleContent({
-      id: 'content-003', code: 'CT-003', type: 'news',
-      title: '体育中心周边停车指引', priority: 50, enabled: false,
-      publishAt: '2026-08-11T02:20:00.000Z',
-      metrics: { clickPv: 2860, clickUv: 2140, viewPv: 4930, viewUv: 3720 },
-    }),
-    sampleContent({
-      id: 'content-004', code: 'CT-004', type: 'activity',
-      title: '8.22 足球赛 · 活动信息（草稿）', publishStatus: 'draft', priority: 70,
-      publishAt: null, enabled: true,
-      cover: sampleAsset('asset-ct-004', '8.22-足球赛封面.jpg'),
-      activityStartAt: '2026-08-22T11:30:00.000Z', activityEndAt: '2026-08-22T14:30:00.000Z',
-      activityLocation: '株洲体育中心体育场',
-    }),
-    sampleContent({
-      id: 'content-005', code: 'CT-005', type: 'activity',
-      title: '8.30 音乐节 · 进行中（演示）', priority: 20,
-      cover: sampleAsset('asset-ct-005', '8.30-音乐节封面.jpg'),
-      publishAt: '2026-08-12T07:00:00.000Z',
-      activityStartAt: '2026-08-30T10:00:00.000Z', activityEndAt: '2026-08-30T14:00:00.000Z',
-      activityLocation: '株洲体育中心体育场',
-      metrics: { clickPv: 2150, clickUv: 1780, viewPv: 3420, viewUv: 2650 },
-    }),
-    sampleContent({
-      id: 'content-006', code: 'CT-006', type: 'news',
-      title: '活动入场须知（草稿）', publishStatus: 'draft', publishAt: null,
-      priority: 60, enabled: true,
-    }),
-  ]
-
-  return {
-    contents,
-    banners: [
-      {
-        id: 'banner-001', code: 'BN-01', title: '8.15 演唱会 Banner',
-        image: sampleAsset('asset-bn-001', '8.15-演唱会-Banner.jpg'),
-        jumpType: 'activity', targetId: 'content-001', priority: 1, displayEnabled: true,
-        validFrom: '2026-08-10', validTo: '2026-08-16',
-        metrics: { clickPv: 4860, clickUv: 3920 },
-        createdAt: '2026-08-10T01:00:00.000Z', updatedAt: '2026-08-10T01:00:00.000Z',
-      },
-      {
-        id: 'banner-002', code: 'BN-02', title: '接驳专线公告 Banner',
-        image: sampleAsset('asset-bn-002', '接驳专线公告-Banner.jpg'),
-        jumpType: 'notice', targetId: 'content-002', priority: 2, displayEnabled: true,
-        validFrom: '2026-08-11', validTo: '2026-08-16',
-        metrics: { clickPv: 3020, clickUv: 2540 },
-        createdAt: '2026-08-11T01:00:00.000Z', updatedAt: '2026-08-11T01:00:00.000Z',
-      },
-    ],
-    priorityHints: [
-      {
-        id: 'hint-001', code: 'HP-01', title: '重要：活动日交通管制',
-        referenceType: 'traffic-control', targetId: 'traffic-gz-001', priority: 1,
-        displayEnabled: true, validFrom: '2026-08-13', validTo: '2026-08-16',
-        metrics: { clickPv: 1860, clickUv: 1520 },
-        createdAt: '2026-08-13T01:00:00.000Z', updatedAt: '2026-08-13T01:00:00.000Z',
-      },
-      {
-        id: 'hint-002', code: 'HP-02', title: '免费接驳专线已开通',
-        referenceType: 'notice', targetId: 'content-002', priority: 2,
-        displayEnabled: true, validFrom: '2026-08-11', validTo: '2026-08-16',
-        metrics: { clickPv: 1240, clickUv: 1010 },
-        createdAt: '2026-08-11T01:00:00.000Z', updatedAt: '2026-08-11T01:00:00.000Z',
-      },
-    ],
-  }
+function dateOnly(value: string | null | undefined): string | null {
+  if (!value) return null
+  const direct = value.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (direct) return direct[1]!
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 export function getActivityStatus(record: ContentRecord, now = new Date()): ActivityStatus {
@@ -282,11 +477,7 @@ export function getActivityStatus(record: ContentRecord, now = new Date()): Acti
   return 'ongoing'
 }
 
-export function isWithinValidity(
-  validFrom: string | null,
-  validTo: string | null,
-  now = new Date(),
-): boolean {
+export function isWithinValidity(validFrom: string | null, validTo: string | null, now = new Date()): boolean {
   const start = dateOnlyValue(validFrom)
   const end = dateOnlyValue(validTo, true)
   if (start !== null && now.getTime() < start) return false
@@ -302,492 +493,452 @@ export function isPriorityHintEffective(record: PriorityHintRecord, now = new Da
   return record.displayEnabled && isWithinValidity(record.validFrom, record.validTo, now)
 }
 
-export function reconcileScheduledContent(
-  snapshot: ContentManagementSnapshot,
-  now = new Date(),
-): ContentManagementSnapshot {
-  const next = clone(snapshot)
-  for (const record of next.contents) {
-    const publishAt = dateValue(record.publishAt)
-    if (publishAt === null) continue
-    record.publishStatus = publishAt <= now.getTime() ? 'published' : 'draft'
-  }
-  return next
-}
-
-export function sortContents(records: readonly ContentRecord[]): ContentRecord[] {
-  return [...records].sort((first, second) => {
-    if (first.pinned !== second.pinned) return first.pinned ? -1 : 1
-    if (first.priority !== second.priority) return first.priority - second.priority
-    return (second.publishAt ?? second.updatedAt).localeCompare(first.publishAt ?? first.updatedAt)
-  })
-}
-
-export function sortBanners(records: readonly BannerRecord[]): BannerRecord[] {
-  return [...records].sort((first, second) =>
-    first.priority - second.priority || second.updatedAt.localeCompare(first.updatedAt),
-  )
-}
-
-export function sortPriorityHints(records: readonly PriorityHintRecord[]): PriorityHintRecord[] {
-  return [...records].sort((first, second) =>
-    first.priority - second.priority || second.updatedAt.localeCompare(first.updatedAt),
-  )
-}
-
-function validateTitle<TField extends string>(
-  field: TField,
-  title: string,
-  label: string,
-): ValidationIssue<TField>[] {
-  const normalized = normalizeText(title)
-  if (!normalized) return [{ field, code: 'required', message: `请输入${label}` }]
-  if (textLength(normalized) < 2) return [{ field, code: 'too_short', message: `${label}不能少于 2 个字符` }]
-  if (textLength(normalized) > 50) return [{ field, code: 'too_long', message: `${label}不能超过 50 个字符` }]
+function validateTitle<TField extends string>(field: TField, title: string, label: string): ValidationIssue<TField>[] {
+  const value = normalizeText(title)
+  if (!value) return [{ field, code: 'required', message: `请输入${label}` }]
+  if (Array.from(value).length < 2) return [{ field, code: 'too_short', message: `${label}不能少于 2 个字符` }]
+  if (Array.from(value).length > 50) return [{ field, code: 'too_long', message: `${label}不能超过 50 个字符` }]
   return []
 }
 
 function validatePriority<TField extends string>(field: TField, value: number): ValidationIssue<TField>[] {
-  if (!Number.isInteger(value) || value < 0 || value > 9999) {
-    return [{ field, code: 'invalid', message: '优先级必须是 0–9999 的整数' }]
+  return Number.isInteger(value) && value >= 0 && value <= 9999
+    ? []
+    : [{ field, code: 'invalid', message: '优先级必须是 0–9999 的整数' }]
+}
+
+function validateValidity<TField extends 'validFrom' | 'validTo'>(from: string | null, to: string | null): ValidationIssue<TField>[] {
+  if (Boolean(from) !== Boolean(to)) {
+    return [{ field: (!from ? 'validFrom' : 'validTo') as TField, code: 'required', message: '有效期开始和结束日期必须同时填写' }]
   }
+  if (from && to && from > to) return [{ field: 'validTo' as TField, code: 'invalid', message: '有效期结束日期不能早于开始日期' }]
   return []
-}
-
-function validateValidity<TField extends 'validFrom' | 'validTo'>(
-  validFrom: string | null,
-  validTo: string | null,
-): ValidationIssue<TField>[] {
-  if (Boolean(validFrom) !== Boolean(validTo)) {
-    return [{ field: (!validFrom ? 'validFrom' : 'validTo') as TField, code: 'required', message: '有效期开始和结束日期必须同时填写' }]
-  }
-  if (validFrom && validTo && validFrom > validTo) {
-    return [{ field: 'validTo' as TField, code: 'invalid', message: '有效期结束日期不能早于开始日期' }]
-  }
-  return []
-}
-
-function looksLikeCoordinate(value: string): boolean {
-  return /[，,]/.test(value) || /^[-+]?\d+(?:\.\d+)?\s+[-+]?\d+(?:\.\d+)?$/.test(value)
-}
-
-function validCoordinate(value: string): boolean {
-  const match = value.match(/^\s*([-+]?\d+(?:\.\d+)?)\s*[,，]\s*([-+]?\d+(?:\.\d+)?)\s*$/)
-  if (!match) return false
-  const longitude = Number(match[1])
-  const latitude = Number(match[2])
-  return longitude >= -180 && longitude <= 180 && latitude >= -90 && latitude <= 90
-}
-
-function fileExtension(name: string): string {
-  return name.includes('.') ? `.${name.split('.').pop()!.toLocaleLowerCase()}` : ''
-}
-
-function isImageAsset(asset: FileAssetMetadata): boolean {
-  return asset.mimeType.startsWith('image/') || ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(fileExtension(asset.name))
-}
-
-function isSupportedAttachment(asset: FileAssetMetadata): boolean {
-  return isImageAsset(asset) || ['.pdf', '.doc', '.docx'].includes(fileExtension(asset.name))
 }
 
 export function sanitizeContentInput(input: ContentWriteInput): ContentWriteInput {
   return {
-    ...clone(input),
+    ...input,
     title: normalizeText(input.title),
     bodyHtml: input.bodyHtml.trim(),
-    cover: input.cover ? clone(input.cover) : null,
-    attachments: input.attachments.map(clone),
+    cover: input.cover ? cloneAsset(input.cover) : null,
+    attachments: input.attachments.map(cloneAsset),
     activityLocation: normalizeText(input.activityLocation),
     navigationLocation: normalizeText(input.navigationLocation),
   }
 }
 
-export function validateContentInput(
-  input: ContentWriteInput,
-): ValidationIssue<ContentValidationField>[] {
+function coordinatePair(value: string): { lng: number, lat: number } | null {
+  const match = value.match(/^\s*([-+]?\d+(?:\.\d+)?)\s*[,，]\s*([-+]?\d+(?:\.\d+)?)\s*$/)
+  if (!match) return null
+  const lng = Number(match[1])
+  const lat = Number(match[2])
+  return lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90 ? { lng, lat } : null
+}
+
+export function validateContentInput(input: ContentWriteInput): ValidationIssue<ContentValidationField>[] {
   const value = sanitizeContentInput(input)
   const issues: ValidationIssue<ContentValidationField>[] = [
     ...validateTitle('title', value.title, '标题'),
     ...validatePriority('priority', value.priority),
   ]
   if (value.type === 'activity') {
-    if (!value.cover) issues.push({ field: 'cover', code: 'required', message: '请上传活动封面图' })
+    if (!value.cover?.url) issues.push({ field: 'cover', code: 'required', message: '活动封面为必填项；当前需等待后端上传接口' })
     if (!value.activityStartAt) issues.push({ field: 'activityStartAt', code: 'required', message: '请选择活动开始时间' })
     if (!value.activityEndAt) issues.push({ field: 'activityEndAt', code: 'required', message: '请选择活动结束时间' })
     const start = dateValue(value.activityStartAt)
     const end = dateValue(value.activityEndAt)
-    if (start !== null && end !== null && start >= end) {
-      issues.push({ field: 'activityEndAt', code: 'invalid', message: '活动结束时间必须晚于开始时间' })
-    }
+    if (start !== null && end !== null && start >= end) issues.push({ field: 'activityEndAt', code: 'invalid', message: '活动结束时间必须晚于开始时间' })
     if (!value.activityLocation) issues.push({ field: 'activityLocation', code: 'required', message: '请输入活动地点' })
-    if (value.navigationLocation && looksLikeCoordinate(value.navigationLocation) && !validCoordinate(value.navigationLocation)) {
+    if (/[，,]/.test(value.navigationLocation) && !coordinatePair(value.navigationLocation)) {
       issues.push({ field: 'navigationLocation', code: 'invalid', message: '经纬度格式应为“经度, 纬度”，且数值需在有效范围内' })
     }
   }
-  if (value.cover && (!isImageAsset(value.cover) || value.cover.size > MAX_IMAGE_FILE_SIZE)) {
-    issues.push({ field: 'cover', code: 'invalid', message: '封面必须是大小不超过 2MB 的图片文件' })
-  }
-  if (value.type !== 'notice' && value.attachments.length > 0) {
-    issues.push({ field: 'attachments', code: 'invalid', message: '只有公告通知可以添加附件' })
-  }
-  if (value.type === 'notice' && value.attachments.some((asset) => !isSupportedAttachment(asset) || asset.size > MAX_ATTACHMENT_FILE_SIZE)) {
-    issues.push({ field: 'attachments', code: 'invalid', message: '公告附件仅支持图片、PDF、DOC、DOCX，且单文件不能超过 10MB' })
+  if (value.cover?.url.startsWith('blob:') || value.attachments.some(item => item.url.startsWith('blob:'))) {
+    issues.push({ field: 'cover', code: 'invalid', message: '不能提交浏览器临时文件地址，请等待后端上传接口' })
   }
   return issues
 }
 
-export function buildSelectableReferences(
-  snapshot: ContentManagementSnapshot,
-  trafficReferences: readonly ExternalContentReference[] = TRAFFIC_REFERENCE_SEED,
-): SelectableReference[] {
-  const contents: SelectableReference[] = snapshot.contents.map((record) => ({
-    id: record.id,
-    code: record.code,
-    type: record.type,
-    title: record.title,
-    valid: record.publishStatus === 'published' && record.enabled,
-    description: record.publishStatus !== 'published' ? '尚未发布' : record.enabled ? '可引用' : '已停用',
-  }))
-  const traffic: SelectableReference[] = trafficReferences.map((record) => ({
-    id: record.id,
-    code: record.code,
-    type: record.type,
-    title: record.title,
-    valid: record.enabled && record.published,
-    description: record.enabled && record.published ? '可引用' : '不可引用',
-  }))
-  return [...contents, ...traffic]
-}
-
-function referenceIsValid(
-  type: ReferenceType,
-  targetId: string | null,
-  snapshot: ContentManagementSnapshot,
-): boolean {
-  if (!targetId) return false
-  return buildSelectableReferences(snapshot).some((item) => item.id === targetId && item.type === type && item.valid)
-}
-
-export function validateBannerInput(
-  input: BannerWriteInput,
-  snapshot: ContentManagementSnapshot,
-): ValidationIssue<BannerValidationField>[] {
+export function validateBannerInput(input: BannerWriteInput): ValidationIssue<BannerValidationField>[] {
   const issues: ValidationIssue<BannerValidationField>[] = [
     ...validateTitle('title', input.title, 'Banner 标题'),
     ...validatePriority('priority', input.priority),
     ...validateValidity(input.validFrom, input.validTo),
   ]
-  if (!input.image) issues.push({ field: 'image', code: 'required', message: '请上传 Banner 图片' })
-  else if (!isImageAsset(input.image) || input.image.size > MAX_IMAGE_FILE_SIZE) {
-    issues.push({ field: 'image', code: 'invalid', message: 'Banner 必须是大小不超过 2MB 的图片文件' })
-  }
-  if (input.jumpType !== 'none' && !referenceIsValid(input.jumpType, input.targetId, snapshot)) {
-    issues.push({ field: 'targetId', code: 'not_found', message: '请选择当前有效且已启用的跳转目标' })
-  }
+  if (!input.image?.url) issues.push({ field: 'image', code: 'required', message: 'Banner 图片为必填项；当前需等待后端上传接口' })
+  else if (input.image.url.startsWith('blob:')) issues.push({ field: 'image', code: 'invalid', message: '不能提交浏览器临时图片地址' })
+  if (input.jumpType !== 'none' && !input.targetId) issues.push({ field: 'targetId', code: 'not_found', message: '请选择有效的跳转目标' })
   return issues
 }
 
-export function validatePriorityHintInput(
-  input: PriorityHintWriteInput,
-  snapshot: ContentManagementSnapshot,
-): ValidationIssue<PriorityHintValidationField>[] {
+export function validatePriorityHintInput(input: PriorityHintWriteInput): ValidationIssue<PriorityHintValidationField>[] {
   const issues: ValidationIssue<PriorityHintValidationField>[] = [
     ...validateTitle('title', input.title, '提示标题'),
     ...validatePriority('priority', input.priority),
     ...validateValidity(input.validFrom, input.validTo),
   ]
-  if (!referenceIsValid(input.referenceType, input.targetId, snapshot)) {
-    issues.push({ field: 'targetId', code: 'not_found', message: '请选择当前有效且已启用的引用目标' })
-  }
+  if (!input.targetId) issues.push({ field: 'targetId', code: 'not_found', message: '请选择有效的引用目标' })
   return issues
 }
 
-function throwFirstIssue(issues: readonly ValidationIssue[]): void {
-  if (issues.length > 0) {
-    throw new ContentManagementServiceError('validation_failed', issues[0]!.message, issues)
-  }
+export function formatContentRequestDateTime(value: string): string {
+  const source = value.trim()
+  const local = source.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(?::(\d{2}))?$/)
+  return local ? `${local[1]} ${local[2]}:${local[3] ?? '00'}` : source
 }
 
-function nextCode(prefix: string, codes: readonly string[]): string {
-  const max = codes.reduce((value, code) => {
-    const match = code.match(new RegExp(`^${prefix}-(\\d+)$`))
-    return match ? Math.max(value, Number(match[1])) : value
-  }, 0)
-  return `${prefix}-${String(max + 1).padStart(prefix === 'CT' ? 3 : 2, '0')}`
+function formatDateBoundary(value: string | null, endOfDay: boolean): string | null {
+  if (!value) return null
+  return `${value} ${endOfDay ? '23:59:59' : '00:00:00'}`
 }
 
-function isSnapshot(value: unknown): value is ContentManagementSnapshot {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return Array.isArray(item.contents) && Array.isArray(item.banners) &&
-    Array.isArray(item.priorityHints)
+function attachmentBody(assets: readonly RemoteFileAsset[]): ApiAttachmentRequest[] {
+  return assets.map((asset, index) => ({
+    file_name: asset.name,
+    file_url: asset.url,
+    file_type: asset.mimeType,
+    file_size: Math.max(0, Math.trunc(asset.size)),
+    sort_order: Number.isInteger(asset.sortOrder) ? asset.sortOrder : index,
+  }))
 }
 
-export class LocalContentManagementService implements ContentManagementService {
-  private readonly injectedStorage: Storage | undefined
-  private readonly now: () => Date
-  private readonly createId: () => string
-  private readonly sessionPreviewUrls = new Map<string, string>()
-
-  constructor(options: LocalContentManagementServiceOptions = {}) {
-    this.injectedStorage = options.storage
-    this.now = options.now ?? (() => new Date())
-    this.createId = options.createId ?? createClientId
+function contentBody(input: ContentWriteInput): ApiContentWriteRequest {
+  const value = sanitizeContentInput(input)
+  const data: ApiContentWriteRequest = {
+    title: value.title,
+    content_type: value.type,
+    body: value.bodyHtml,
+    is_pinned: value.pinned ? 1 : 0,
+    priority: value.priority,
+    attachments: attachmentBody(value.attachments),
   }
-
-  private get storage(): Storage {
-    return this.injectedStorage ?? resolveBrowserStorage()
-  }
-
-  private read(): ContentManagementSnapshot {
-    const raw = this.storage.getItem(CONTENT_MANAGEMENT_STORAGE_KEY)
-    if (!raw) {
-      const initial = reconcileScheduledContent(createDefaultContentManagementSnapshot(), this.now())
-      this.write(initial)
-      return clone(initial)
+  if (value.cover?.url) data.cover_url = value.cover.url
+  if (value.type === 'activity') {
+    if (value.activityStartAt) data.activity_start_at = formatContentRequestDateTime(value.activityStartAt)
+    if (value.activityEndAt) data.activity_end_at = formatContentRequestDateTime(value.activityEndAt)
+    if (value.activityLocation) data.location = value.activityLocation
+    const point = coordinatePair(value.navigationLocation)
+    if (point) {
+      data.nav_address = null
+      data.nav_lng = point.lng
+      data.nav_lat = point.lat
     }
+    else if (value.navigationLocation) {
+      data.nav_address = value.navigationLocation
+      data.nav_lng = null
+      data.nav_lat = null
+    }
+    else {
+      data.nav_address = null
+      data.nav_lng = null
+      data.nav_lat = null
+    }
+  }
+  return data
+}
+
+function requestId(value: string, field: string): number | string {
+  const normalized = value.trim()
+  if (!/^\d+$/.test(normalized) || BigInt(normalized) <= 0n) {
+    throw new ContentManagementServiceError(`${field}不是有效的 int64 ID`)
+  }
+  const result = Number(normalized)
+  return Number.isSafeInteger(result) ? result : normalized
+}
+
+function bannerBody(input: BannerWriteInput): ApiBannerWriteRequest {
+  if (!input.image?.url) throw new ContentManagementServiceError('Banner 图片为必填项；当前需等待后端上传接口')
+  return {
+    title: normalizeText(input.title),
+    image_url: input.image.url,
+    jump_type: apiBannerJumpType(input.jumpType),
+    jump_target_id: input.jumpType === 'none' || !input.targetId ? null : requestId(input.targetId, 'Banner 跳转目标'),
+    priority: input.priority,
+    valid_start_at: formatDateBoundary(input.validFrom, false),
+    valid_end_at: formatDateBoundary(input.validTo, true),
+    status: input.displayEnabled ? 1 : 0,
+  }
+}
+
+function hintBody(input: PriorityHintWriteInput): ApiHighlightWriteRequest {
+  return {
+    title: normalizeText(input.title),
+    ref_type: apiReferenceType(input.referenceType),
+    ref_id: requestId(input.targetId, '高优提示引用目标'),
+    priority: input.priority,
+    valid_start_at: formatDateBoundary(input.validFrom, false),
+    valid_end_at: formatDateBoundary(input.validTo, true),
+    status: input.displayEnabled ? 1 : 0,
+  }
+}
+
+function contentQuery(page: number, pageSize: number, query: ContentServerQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = { page, page_size: pageSize, content_type: query.contentType }
+  const keyword = normalizeText(query.keyword)
+  if (keyword) params.keyword = keyword
+  if (query.publishStatus !== 'all') params.publish_status = query.publishStatus
+  return params
+}
+
+function bannerQuery(page: number, pageSize: number, query: BannerServerQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = { page, page_size: pageSize }
+  const keyword = normalizeText(query.keyword)
+  if (keyword) params.keyword = keyword
+  if (query.jumpType !== 'all') params.jump_type = apiBannerJumpType(query.jumpType)
+  return params
+}
+
+function hintQuery(page: number, pageSize: number, query: PriorityHintServerQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = { page, page_size: pageSize }
+  const keyword = normalizeText(query.keyword)
+  if (keyword) params.keyword = keyword
+  if (query.referenceType !== 'all') params.ref_type = apiReferenceType(query.referenceType)
+  return params
+}
+
+function headerValue(response: AxiosResponse, name: string): string | null {
+  const direct = response.headers?.[name]
+  if (typeof direct === 'string') return direct
+  const headers = response.headers as { get?: (headerName: string) => unknown }
+  const getter = typeof headers.get === 'function' ? headers.get(name) : null
+  return typeof getter === 'string' ? getter : null
+}
+
+function safeFilename(value: string): string {
+  const sanitized = Array.from(value, character => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127 ? '_' : character).join('')
+  return sanitized.replace(/[\\/]/g, '_').trim() || 'contents.csv'
+}
+
+export function contentExportFilename(contentDisposition: string | null): string {
+  if (!contentDisposition) return 'contents.csv'
+  const encoded = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
     try {
-      const parsed = JSON.parse(raw) as Partial<StoredContentManagement>
-      if (parsed.schemaVersion !== CONTENT_MANAGEMENT_SCHEMA_VERSION || !isSnapshot(parsed.snapshot)) {
-        throw new Error('Unsupported content management schema')
+      return safeFilename(decodeURIComponent(encoded.replace(/^"|"$/g, '')))
+    }
+    catch {
+      // Fall back to the plain filename.
+    }
+  }
+  const plain = contentDisposition.match(/filename\s*=\s*(?:"([^"]+)"|([^;]+))/i)
+  return safeFilename((plain?.[1] ?? plain?.[2] ?? 'contents.csv').trim())
+}
+
+function mapReferenceOption(value: ApiContentOption, requestedType: ReferenceType): SelectableReference {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的引用选项 ID 不完整')
+  const type = requestedType === 'traffic-control'
+    ? 'traffic-control'
+    : value.content_type ? mapReferenceType(value.content_type) : requestedType
+  return {
+    id: String(value.id),
+    code: requiredText(value.code, '引用选项编号'),
+    title: requiredText(value.title, '引用选项标题'),
+    type,
+    valid: true,
+    description: '可引用',
+  }
+}
+
+const defaultFileRequester: ContentManagementFileRequester = config => rawHttpClient.request<Blob>(config)
+
+export function createContentManagementService(
+  request: ContentManagementDataRequester = requestData,
+  requestFile: ContentManagementFileRequester = defaultFileRequester,
+): ContentManagementService {
+  const service: ContentManagementService = {
+    async listContentPage(page, pageSize, query) {
+      return mapApiContentPage(await request<ApiPage<ApiContentVO>>({
+        method: 'GET', url: 'api/v1/admin/contents', params: contentQuery(page, pageSize, query),
+      }))
+    },
+
+    async listContents(query) {
+      const first = await service.listContentPage(1, MAX_PAGE_SIZE, query)
+      const records = [...first.records]
+      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
+        records.push(...(await service.listContentPage(page, MAX_PAGE_SIZE, query)).records)
       }
-      const reconciled = reconcileScheduledContent(parsed.snapshot, this.now())
-      if (JSON.stringify(parsed.snapshot) !== JSON.stringify(reconciled)) this.write(reconciled)
-      return hydrateSessionPreviews(reconciled, this.sessionPreviewUrls)
-    } catch (error) {
-      throw new ContentManagementServiceError('storage_corrupted', '本地内容管理数据无法解析', error)
-    }
+      return sortContents([...new Map(records.map(record => [record.id, record])).values()])
+    },
+
+    async getContent(id) {
+      return mapApiContent(await request<ApiContentVO>({ method: 'GET', url: endpoint('api/v1/admin/contents', id) }))
+    },
+
+    async createContent(input) {
+      const issues = validateContentInput(input)
+      if (issues.length) throw new ContentManagementServiceError(issues[0]!.message)
+      const created = mapApiContent(await request<ApiContentVO, ApiContentWriteRequest>({
+        method: 'POST', url: 'api/v1/admin/contents', data: contentBody(input),
+      }))
+      return input.publishAt ? service.publishContent(created.id, input.publishAt) : created
+    },
+
+    async updateContent(id, input) {
+      const issues = validateContentInput(input)
+      if (issues.length) throw new ContentManagementServiceError(issues[0]!.message)
+      const updated = mapApiContent(await request<ApiContentVO, ApiContentWriteRequest>({
+        method: 'PATCH', url: endpoint('api/v1/admin/contents', id), data: contentBody(input),
+      }))
+      if (input.publishAt) return service.publishContent(id, input.publishAt)
+      return updated.publishStatus === 'published' || updated.publishAt ? service.unpublishContent(id) : updated
+    },
+
+    async publishContent(id, publishAt = null) {
+      const data = publishAt ? { publish_at: formatContentRequestDateTime(publishAt) } : {}
+      return mapApiContent(await request<ApiContentVO, { publish_at?: string }>({
+        method: 'POST', url: endpoint('api/v1/admin/contents', id, '/publish'), data,
+      }))
+    },
+
+    async unpublishContent(id) {
+      return mapApiContent(await request<ApiContentVO>({
+        method: 'POST', url: endpoint('api/v1/admin/contents', id, '/unpublish'), data: {},
+      }))
+    },
+
+    async setContentPinned(id, pinned) {
+      const latest = await service.getContent(id)
+      return mapApiContent(await request<ApiContentVO>({
+        method: 'PATCH', url: endpoint('api/v1/admin/contents', id),
+        data: { title: latest.title, content_type: latest.type, is_pinned: pinned ? 1 : 0 },
+      }))
+    },
+
+    async setContentEnabled(id, enabled) {
+      const latest = await service.getContent(id)
+      return mapApiContent(await request<ApiContentVO>({
+        method: 'PATCH', url: endpoint('api/v1/admin/contents', id),
+        data: { title: latest.title, content_type: latest.type, status: enabled ? 1 : 0 },
+      }))
+    },
+
+    async replaceAttachments(id, attachments) {
+      return mapApiContent(await request<ApiContentVO>({
+        method: 'PUT', url: endpoint('api/v1/admin/contents', id, '/attachments'),
+        data: { attachments: attachmentBody(attachments) },
+      }))
+    },
+
+    async removeContent(id) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/contents', id) })
+    },
+
+    async listBannerPage(page, pageSize, query) {
+      return mapApiBannerPage(await request<ApiPage<ApiBannerVO>>({
+        method: 'GET', url: 'api/v1/admin/banners', params: bannerQuery(page, pageSize, query),
+      }))
+    },
+
+    async listBanners(query) {
+      const first = await service.listBannerPage(1, MAX_PAGE_SIZE, query)
+      const records = [...first.records]
+      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
+        records.push(...(await service.listBannerPage(page, MAX_PAGE_SIZE, query)).records)
+      }
+      return sortBanners([...new Map(records.map(record => [record.id, record])).values()])
+    },
+
+    async getBanner(id) {
+      return mapApiBanner(await request<ApiBannerVO>({ method: 'GET', url: endpoint('api/v1/admin/banners', id) }))
+    },
+
+    async createBanner(input) {
+      const issues = validateBannerInput(input)
+      if (issues.length) throw new ContentManagementServiceError(issues[0]!.message)
+      return mapApiBanner(await request<ApiBannerVO, ApiBannerWriteRequest>({
+        method: 'POST', url: 'api/v1/admin/banners', data: bannerBody(input),
+      }))
+    },
+
+    async updateBanner(id, input) {
+      const issues = validateBannerInput(input)
+      if (issues.length) throw new ContentManagementServiceError(issues[0]!.message)
+      return mapApiBanner(await request<ApiBannerVO, ApiBannerWriteRequest>({
+        method: 'PATCH', url: endpoint('api/v1/admin/banners', id), data: bannerBody(input),
+      }))
+    },
+
+    async setBannerEnabled(id, enabled) {
+      const latest = await service.getBanner(id)
+      return mapApiBanner(await request<ApiBannerVO>({
+        method: 'PATCH', url: endpoint('api/v1/admin/banners', id),
+        data: { title: latest.title, image_url: latest.image.url, status: enabled ? 1 : 0 },
+      }))
+    },
+
+    async removeBanner(id) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/banners', id) })
+    },
+
+    async listPriorityHintPage(page, pageSize, query) {
+      return mapApiPriorityHintPage(await request<ApiPage<ApiHighlightVO>>({
+        method: 'GET', url: 'api/v1/admin/highlights', params: hintQuery(page, pageSize, query),
+      }))
+    },
+
+    async listPriorityHints(query) {
+      const first = await service.listPriorityHintPage(1, MAX_PAGE_SIZE, query)
+      const records = [...first.records]
+      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
+        records.push(...(await service.listPriorityHintPage(page, MAX_PAGE_SIZE, query)).records)
+      }
+      return sortPriorityHints([...new Map(records.map(record => [record.id, record])).values()])
+    },
+
+    async getPriorityHint(id) {
+      return mapApiPriorityHint(await request<ApiHighlightVO>({ method: 'GET', url: endpoint('api/v1/admin/highlights', id) }))
+    },
+
+    async createPriorityHint(input) {
+      const issues = validatePriorityHintInput(input)
+      if (issues.length) throw new ContentManagementServiceError(issues[0]!.message)
+      return mapApiPriorityHint(await request<ApiHighlightVO, ApiHighlightWriteRequest>({
+        method: 'POST', url: 'api/v1/admin/highlights', data: hintBody(input),
+      }))
+    },
+
+    async updatePriorityHint(id, input) {
+      const issues = validatePriorityHintInput(input)
+      if (issues.length) throw new ContentManagementServiceError(issues[0]!.message)
+      return mapApiPriorityHint(await request<ApiHighlightVO, ApiHighlightWriteRequest>({
+        method: 'PATCH', url: endpoint('api/v1/admin/highlights', id), data: hintBody(input),
+      }))
+    },
+
+    async setPriorityHintEnabled(id, enabled) {
+      const latest = await service.getPriorityHint(id)
+      return mapApiPriorityHint(await request<ApiHighlightVO>({
+        method: 'PATCH', url: endpoint('api/v1/admin/highlights', id),
+        data: {
+          title: latest.title,
+          ref_type: apiReferenceType(latest.referenceType),
+          ref_id: requestId(latest.targetId, '高优提示引用目标'),
+          status: enabled ? 1 : 0,
+        },
+      }))
+    },
+
+    async removePriorityHint(id) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/highlights', id) })
+    },
+
+    async listReferenceOptions(type) {
+      const url = type === 'traffic-control' ? 'api/v1/admin/contents/control-options' : 'api/v1/admin/contents/options'
+      const params = type === 'traffic-control' ? undefined : { content_type: type }
+      const result = await request<ApiContentOption[]>({ method: 'GET', url, params })
+      return Array.isArray(result) ? result.map(item => mapReferenceOption(item, type)) : []
+    },
+
+    async exportContents(): Promise<ContentExportFile> {
+      const response = await requestFile({
+        method: 'GET', url: 'api/v1/admin/contents/export', responseType: 'blob', headers: { Accept: 'text/csv' },
+      })
+      return { content: response.data, filename: contentExportFilename(headerValue(response, 'content-disposition')) }
+    },
   }
 
-  private write(snapshot: ContentManagementSnapshot): void {
-    for (const asset of assetsInSnapshot(snapshot)) {
-      if (asset.previewUrl) this.sessionPreviewUrls.set(asset.id, asset.previewUrl)
-    }
-    const envelope: StoredContentManagement = {
-      schemaVersion: CONTENT_MANAGEMENT_SCHEMA_VERSION,
-      snapshot: stripSnapshotPreviews(snapshot),
-    }
-    this.storage.setItem(CONTENT_MANAGEMENT_STORAGE_KEY, JSON.stringify(envelope))
-  }
-
-  private updateContentRecord(id: string, updater: (record: ContentRecord) => void): ContentRecord {
-    const snapshot = this.read()
-    const record = snapshot.contents.find((item) => item.id === id)
-    if (!record) throw new ContentManagementServiceError('not_found', '未找到指定内容')
-    updater(record)
-    record.updatedAt = this.now().toISOString()
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async load(): Promise<ContentManagementSnapshot> {
-    return this.read()
-  }
-
-  async createContent(input: ContentWriteInput): Promise<ContentRecord> {
-    const snapshot = this.read()
-    const value = sanitizeContentInput(input)
-    throwFirstIssue(validateContentInput(value))
-    const timestamp = this.now().toISOString()
-    const publishAt = dateValue(value.publishAt)
-    const record: ContentRecord = {
-      ...value,
-      id: this.createId(),
-      code: nextCode('CT', snapshot.contents.map((item) => item.code)),
-      publishStatus: publishAt !== null && publishAt <= this.now().getTime() ? 'published' : 'draft',
-      enabled: true,
-      metrics: { ...EMPTY_METRICS },
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    snapshot.contents.push(record)
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async updateContent(id: string, input: ContentWriteInput): Promise<ContentRecord> {
-    const snapshot = this.read()
-    const index = snapshot.contents.findIndex((item) => item.id === id)
-    if (index < 0) throw new ContentManagementServiceError('not_found', '未找到指定内容')
-    const previous = snapshot.contents[index]!
-    const value = sanitizeContentInput(input)
-    throwFirstIssue(validateContentInput(value))
-    const publishAt = dateValue(value.publishAt)
-    const record: ContentRecord = {
-      ...previous,
-      ...value,
-      publishStatus: publishAt !== null && publishAt <= this.now().getTime() ? 'published' : 'draft',
-      updatedAt: this.now().toISOString(),
-    }
-    snapshot.contents[index] = record
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async publishContent(id: string): Promise<ContentRecord> {
-    return this.updateContentRecord(id, (record) => {
-      record.publishStatus = 'published'
-      record.publishAt = this.now().toISOString()
-    })
-  }
-
-  async setContentPinned(id: string, pinned: boolean): Promise<ContentRecord> {
-    return this.updateContentRecord(id, (record) => {
-      record.pinned = pinned
-    })
-  }
-
-  async setContentEnabled(id: string, enabled: boolean): Promise<ContentRecord> {
-    return this.updateContentRecord(id, (record) => {
-      record.enabled = enabled
-    })
-  }
-
-  async getDeleteReferenceBlock(id: string): Promise<DeleteReferenceBlock> {
-    const snapshot = this.read()
-    return {
-      bannerCodes: snapshot.banners.filter((item) => item.targetId === id).map((item) => item.code),
-      priorityHintCodes: snapshot.priorityHints.filter((item) => item.targetId === id).map((item) => item.code),
-    }
-  }
-
-  async removeContent(id: string): Promise<void> {
-    const snapshot = this.read()
-    const record = snapshot.contents.find((item) => item.id === id)
-    if (!record) throw new ContentManagementServiceError('not_found', '未找到指定内容')
-    const block = await this.getDeleteReferenceBlock(id)
-    if (block.bannerCodes.length || block.priorityHintCodes.length) {
-      throw new ContentManagementServiceError('referenced', '该内容仍被 Banner 或高优提示引用，请先解除关联', block)
-    }
-    snapshot.contents = snapshot.contents.filter((item) => item.id !== id)
-    this.write(snapshot)
-  }
-
-  async createBanner(input: BannerWriteInput): Promise<BannerRecord> {
-    const snapshot = this.read()
-    if (snapshot.banners.length >= MAX_BANNERS) throw new ContentManagementServiceError('limit_reached', `Banner 最多配置 ${MAX_BANNERS} 条`)
-    throwFirstIssue(validateBannerInput(input, snapshot))
-    const timestamp = this.now().toISOString()
-    const record: BannerRecord = {
-      id: this.createId(),
-      code: nextCode('BN', snapshot.banners.map((item) => item.code)),
-      title: normalizeText(input.title),
-      image: clone(input.image!),
-      jumpType: input.jumpType,
-      targetId: input.jumpType === 'none' ? null : input.targetId,
-      priority: input.priority,
-      displayEnabled: input.displayEnabled,
-      validFrom: input.validFrom,
-      validTo: input.validTo,
-      metrics: { clickPv: 0, clickUv: 0 },
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    snapshot.banners.push(record)
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async updateBanner(id: string, input: BannerWriteInput): Promise<BannerRecord> {
-    const snapshot = this.read()
-    const index = snapshot.banners.findIndex((item) => item.id === id)
-    if (index < 0) throw new ContentManagementServiceError('not_found', '未找到指定 Banner')
-    throwFirstIssue(validateBannerInput(input, snapshot))
-    const record: BannerRecord = {
-      ...snapshot.banners[index]!,
-      ...clone(input),
-      image: clone(input.image!),
-      title: normalizeText(input.title),
-      targetId: input.jumpType === 'none' ? null : input.targetId,
-      updatedAt: this.now().toISOString(),
-    }
-    snapshot.banners[index] = record
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async setBannerEnabled(id: string, enabled: boolean): Promise<BannerRecord> {
-    const snapshot = this.read()
-    const record = snapshot.banners.find((item) => item.id === id)
-    if (!record) throw new ContentManagementServiceError('not_found', '未找到指定 Banner')
-    record.displayEnabled = enabled
-    record.updatedAt = this.now().toISOString()
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async removeBanner(id: string): Promise<void> {
-    const snapshot = this.read()
-    if (!snapshot.banners.some((item) => item.id === id)) throw new ContentManagementServiceError('not_found', '未找到指定 Banner')
-    snapshot.banners = snapshot.banners.filter((item) => item.id !== id)
-    this.write(snapshot)
-  }
-
-  async createPriorityHint(input: PriorityHintWriteInput): Promise<PriorityHintRecord> {
-    const snapshot = this.read()
-    if (snapshot.priorityHints.length >= MAX_PRIORITY_HINTS) throw new ContentManagementServiceError('limit_reached', `高优提示最多配置 ${MAX_PRIORITY_HINTS} 条`)
-    throwFirstIssue(validatePriorityHintInput(input, snapshot))
-    const timestamp = this.now().toISOString()
-    const record: PriorityHintRecord = {
-      id: this.createId(),
-      code: nextCode('HP', snapshot.priorityHints.map((item) => item.code)),
-      title: normalizeText(input.title),
-      referenceType: input.referenceType,
-      targetId: input.targetId,
-      priority: input.priority,
-      displayEnabled: input.displayEnabled,
-      validFrom: input.validFrom,
-      validTo: input.validTo,
-      metrics: { clickPv: 0, clickUv: 0 },
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    snapshot.priorityHints.push(record)
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async updatePriorityHint(id: string, input: PriorityHintWriteInput): Promise<PriorityHintRecord> {
-    const snapshot = this.read()
-    const index = snapshot.priorityHints.findIndex((item) => item.id === id)
-    if (index < 0) throw new ContentManagementServiceError('not_found', '未找到指定高优提示')
-    throwFirstIssue(validatePriorityHintInput(input, snapshot))
-    const record: PriorityHintRecord = {
-      ...snapshot.priorityHints[index]!,
-      ...clone(input),
-      title: normalizeText(input.title),
-      updatedAt: this.now().toISOString(),
-    }
-    snapshot.priorityHints[index] = record
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async setPriorityHintEnabled(id: string, enabled: boolean): Promise<PriorityHintRecord> {
-    const snapshot = this.read()
-    const record = snapshot.priorityHints.find((item) => item.id === id)
-    if (!record) throw new ContentManagementServiceError('not_found', '未找到指定高优提示')
-    record.displayEnabled = enabled
-    record.updatedAt = this.now().toISOString()
-    this.write(snapshot)
-    return clone(record)
-  }
-
-  async removePriorityHint(id: string): Promise<void> {
-    const snapshot = this.read()
-    if (!snapshot.priorityHints.some((item) => item.id === id)) throw new ContentManagementServiceError('not_found', '未找到指定高优提示')
-    snapshot.priorityHints = snapshot.priorityHints.filter((item) => item.id !== id)
-    this.write(snapshot)
-  }
-
+  return service
 }
 
-export class MockExternalContentReferenceService implements ExternalContentReferenceService {
-  async listTrafficControls(): Promise<ExternalContentReference[]> {
-    return TRAFFIC_REFERENCE_SEED.map((record) => ({ ...record }))
-  }
-}
-
-export const externalContentReferenceService = new MockExternalContentReferenceService()
-export const contentManagementService = new LocalContentManagementService()
+export const contentManagementService = createContentManagementService()

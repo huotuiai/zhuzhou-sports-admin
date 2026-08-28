@@ -1,37 +1,79 @@
+import type { SignedRequestConfig } from '@/lib/http'
 import type {
   GeoPoint,
   TicketGate,
-  TicketGateAuditAction,
-  TicketGateAuditLog,
+  TicketGateFloorOption,
+  TicketGatePage,
+  TicketGateQuery,
   TicketGateService,
   TicketGateStatus,
-  TicketGateStatusInput,
   TicketGateValidationIssue,
   TicketGateValidationResult,
   TicketGateWriteInput,
 } from '../types'
-import { createClientId } from '@/lib/id'
+import { ApiError, requestData } from '@/lib/http'
 
-export const TICKET_GATE_STORAGE_KEY = 'zz-sports-ticket-gates:v2'
-export const LEGACY_TICKET_GATE_STORAGE_KEY = 'zz-sports-ticket-gates:v1'
-const SCHEMA_VERSION = 2
-
-interface StoredTicketGates {
-  schemaVersion: typeof SCHEMA_VERSION
-  records: TicketGate[]
-  auditLogs: TicketGateAuditLog[]
+export interface ApiGateVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  code: string
+  name: string
+  floor_id: number | string
+  location_desc: string | null
+  lng: number
+  lat: number
+  nav_address: string | null
+  open_status: number
+  status_remark: string | null
+  sort_order: number
+  status: number
+  floor_name: string
+  zone_ids: Array<number | string>
+  zone_names: string[]
+  match_open: boolean | number
 }
 
-interface LegacyTicketGate {
-  id: string
+export interface ApiGatePage {
+  list: ApiGateVO[]
+  total: number | string
+  page: number
+  page_size: number
+}
+
+export interface ApiGateFloorVO {
+  id: number | string
   name: string
+  sort_order: number
+  status: number
+}
+
+interface ApiGateCreateRequest {
   code: string
-  venueArea: string
-  location: string
-  enabled: boolean
-  remark: string
-  createdAt: string
-  updatedAt: string
+  name: string
+  floor_id: number
+  location_desc: string
+  lng: number
+  lat: number
+  nav_address: string
+  open_status: 0 | 1 | 2
+  status_remark: string
+  sort_order: number
+  status: 1
+}
+
+type ApiGateUpdateRequest = Omit<ApiGateCreateRequest, 'code' | 'status'>
+
+interface ApiGateStatusRequest {
+  name: string
+  lng: number
+  lat: number
+  open_status: 0 | 1 | 2
+  status_remark: string
+}
+
+export interface TicketGateDataRequester {
+  <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
 }
 
 export class TicketGateServiceError extends Error {
@@ -41,17 +83,8 @@ export class TicketGateServiceError extends Error {
   }
 }
 
-export interface LocalTicketGateServiceOptions {
-  storage?: Storage
-  createId?: () => string
-  now?: () => Date
-}
-
-function resolveStorage(): Storage {
-  if (typeof globalThis.localStorage === 'undefined') {
-    throw new TicketGateServiceError('当前环境不支持本地存储')
-  }
-  return globalThis.localStorage
+function responseError(message: string): ApiError {
+  return new ApiError(message, { kind: 'response' })
 }
 
 function normalizeText(value: string): string {
@@ -62,6 +95,32 @@ function identity(value: string): string {
   return normalizeText(value).toLocaleLowerCase('zh-CN')
 }
 
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
+  return value
+}
+
+function integer(value: unknown, fallback = 0): number {
+  const result = Number(value)
+  return Number.isInteger(result) ? result : fallback
+}
+
+function nonNegativeInteger(value: unknown): number {
+  return Math.max(0, integer(value))
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === 1
+}
+
+function stringIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : []
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
 function isFinitePoint(value: unknown): value is GeoPoint {
   if (!value || typeof value !== 'object') return false
   const point = value as Record<string, unknown>
@@ -69,64 +128,74 @@ function isFinitePoint(value: unknown): value is GeoPoint {
     typeof point.lat === 'number' && Number.isFinite(point.lat) && point.lat >= -90 && point.lat <= 90
 }
 
-export function parseMapCoordinates(value: string): GeoPoint[] {
-  const source = value.trim()
-  if (!source) return []
-  if (!source.startsWith('[')) {
-    const coordinateParts = source.split(',').map((item) => item.trim())
-    const point = { lng: Number(coordinateParts[0]), lat: Number(coordinateParts[1]) }
-    if (coordinateParts.length !== 2 || coordinateParts.some((item) => !item) || !isFinitePoint(point)) {
-      throw new TicketGateServiceError('定位格式应为“经度, 纬度”')
-    }
-    return [point]
-  }
-  const parsed: unknown = JSON.parse(source)
-  if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isFinitePoint)) {
-    throw new TicketGateServiceError('地图坐标必须是包含有效 lng、lat 的 JSON 数组')
-  }
-  return parsed.map((point) => ({ lng: point.lng, lat: point.lat }))
+function isStatus(value: unknown): value is TicketGateStatus {
+  return value === 'open' || value === 'closed' || value === 'restricted'
 }
 
-export function formatMapCoordinates(points: readonly GeoPoint[]): string {
-  if (points.length === 1) return `${points[0]!.lng}, ${points[0]!.lat}`
-  return points.length ? JSON.stringify(points) : ''
+function mapOpenStatus(value: unknown): TicketGateStatus {
+  if (integer(value, 1) === 0) return 'closed'
+  if (integer(value, 1) === 2) return 'restricted'
+  return 'open'
 }
 
-function clonePoint(point: GeoPoint | null): GeoPoint | null {
-  return point ? { ...point } : null
+function apiOpenStatus(value: TicketGateStatus): 0 | 1 | 2 {
+  if (value === 'closed') return 0
+  if (value === 'restricted') return 2
+  return 1
+}
+
+function bodyId(value: string): number {
+  const result = Number(value)
+  if (!Number.isSafeInteger(result) || result <= 0) {
+    throw new ApiError('接口 ID 超出浏览器可安全提交的范围', { kind: 'configuration' })
+  }
+  return result
+}
+
+function endpoint(path: string, id: string): string {
+  return `${path}/${encodeURIComponent(id)}`
 }
 
 function cloneGate(record: TicketGate): TicketGate {
   return {
     ...record,
-    mapPoints: record.mapPoints.map((point) => ({ ...point })),
-    navigationPoint: clonePoint(record.navigationPoint),
+    point: { ...record.point },
+    zoneIds: [...record.zoneIds],
+    zoneNames: [...record.zoneNames],
   }
 }
 
-function cloneAudit(log: TicketGateAuditLog): TicketGateAuditLog {
-  return { ...log }
+export function parseMapCoordinates(value: string): GeoPoint {
+  const source = value.trim()
+  const coordinateParts = source.split(',').map((item) => item.trim())
+  const point = { lng: Number(coordinateParts[0]), lat: Number(coordinateParts[1]) }
+  if (coordinateParts.length !== 2 || coordinateParts.some((item) => !item) || !isFinitePoint(point)) {
+    throw new TicketGateServiceError('定位格式应为“经度, 纬度”')
+  }
+  return point
+}
+
+export function formatMapCoordinates(point: GeoPoint): string {
+  return `${point.lng}, ${point.lat}`
 }
 
 export function sanitizeTicketGateInput(input: TicketGateWriteInput): TicketGateWriteInput {
-  const statusRemark = input.status === 'open' ? '' : normalizeText(input.statusRemark)
   return {
     code: normalizeText(input.code).toUpperCase(),
     name: normalizeText(input.name),
-    floor: input.floor,
+    floorId: normalizeText(input.floorId),
     locationDescription: normalizeText(input.locationDescription),
     mapCoordinates: input.mapCoordinates.trim(),
     navigationAddress: normalizeText(input.navigationAddress),
-    navigationLongitude: input.navigationLongitude,
-    navigationLatitude: input.navigationLatitude,
-    sortOrder: input.sortOrder,
+    sortOrder: Number(input.sortOrder),
     status: input.status,
-    statusRemark,
+    statusRemark: input.status === 'open' ? '' : normalizeText(input.statusRemark),
   }
 }
 
 export function validateTicketGateInput(
   input: TicketGateWriteInput,
+  floors: readonly TicketGateFloorOption[] = [],
   records: readonly TicketGate[] = [],
   excludedId?: string,
 ): TicketGateValidationResult {
@@ -136,7 +205,8 @@ export function validateTicketGateInput(
   if (!value.code) issues.push({ field: 'code', code: 'required', message: '请输入检票口编号' })
   else if (!/^[A-Z0-9-]{2,10}$/.test(value.code)) {
     issues.push({ field: 'code', code: 'invalid', message: '编号须为 2–10 位字母、数字或连字符' })
-  } else if (records.some((item) => item.id !== excludedId && identity(item.code) === identity(value.code))) {
+  }
+  else if (records.some((item) => item.id !== excludedId && identity(item.code) === identity(value.code))) {
     issues.push({ field: 'code', code: 'duplicate', message: '检票口编号不能重复' })
   }
 
@@ -145,85 +215,74 @@ export function validateTicketGateInput(
     issues.push({ field: 'name', code: 'duplicate', message: '检票口名称不能重复' })
   }
 
-  if (!['一层', '二层'].includes(value.floor)) {
-    issues.push({ field: 'floor', code: 'invalid', message: '请选择有效楼层' })
+  if (!value.floorId) issues.push({ field: 'floorId', code: 'required', message: '请选择楼层' })
+  else if (floors.length && !floors.some((item) => item.id === value.floorId)) {
+    issues.push({ field: 'floorId', code: 'invalid', message: '请选择有效楼层' })
   }
 
   if (!value.mapCoordinates) {
     issues.push({ field: 'mapCoordinates', code: 'required', message: '请输入定位（经纬度）' })
-  } else {
+  }
+  else {
     try {
-      if (parseMapCoordinates(value.mapCoordinates).length !== 1) {
-        issues.push({ field: 'mapCoordinates', code: 'invalid', message: '定位只能填写一组经纬度' })
-      }
-    } catch {
+      parseMapCoordinates(value.mapCoordinates)
+    }
+    catch {
       issues.push({ field: 'mapCoordinates', code: 'invalid', message: '定位格式应为“经度, 纬度”' })
     }
   }
 
-  const hasLongitude = value.navigationLongitude !== null && Number.isFinite(value.navigationLongitude)
-  const hasLatitude = value.navigationLatitude !== null && Number.isFinite(value.navigationLatitude)
-  if (hasLongitude !== hasLatitude) {
-    issues.push({ field: hasLongitude ? 'navigationLatitude' : 'navigationLongitude', code: 'invalid', message: '导航经纬度必须成对填写' })
-  } else if (hasLongitude && hasLatitude && !isFinitePoint({ lng: value.navigationLongitude, lat: value.navigationLatitude })) {
-    issues.push({ field: 'navigationLongitude', code: 'invalid', message: '请输入有效的导航经纬度' })
-  }
   if (!Number.isInteger(value.sortOrder) || value.sortOrder <= 0) {
     issues.push({ field: 'sortOrder', code: 'positive_integer', message: '排序号必须是大于 0 的整数' })
   }
+  if (!isStatus(value.status)) issues.push({ field: 'status', code: 'invalid', message: '请选择有效的检票口状态' })
 
   return { valid: issues.length === 0, issues }
 }
 
-function toRecord(input: TicketGateWriteInput): Omit<TicketGate, 'id' | 'createdAt' | 'updatedAt'> {
-  const value = sanitizeTicketGateInput(input)
-  const hasNavigationPoint = value.navigationLongitude !== null && value.navigationLatitude !== null &&
-    Number.isFinite(value.navigationLongitude) && Number.isFinite(value.navigationLatitude)
+export function mapApiGate(value: ApiGateVO): TicketGate {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的检票口 ID 不完整')
+  if (value.floor_id === undefined || value.floor_id === null) throw responseError('服务器返回的检票口楼层 ID 不完整')
+  const point = { lng: Number(value.lng), lat: Number(value.lat) }
+  // if (!isFinitePoint(point)) throw responseError('服务器返回的检票口定位不合法')
   return {
-    code: value.code,
-    name: value.name,
-    floor: value.floor,
-    locationDescription: value.locationDescription,
-    mapPoints: parseMapCoordinates(value.mapCoordinates),
-    navigationAddress: value.navigationAddress,
-    navigationPoint: hasNavigationPoint
-      ? { lng: value.navigationLongitude!, lat: value.navigationLatitude! }
-      : null,
-    sortOrder: value.sortOrder,
-    status: value.status,
-    statusRemark: value.statusRemark,
+    id: String(value.id),
+    code: requiredText(value.code, '检票口编号'),
+    name: requiredText(value.name, '检票口名称'),
+    floorId: String(value.floor_id),
+    floorName: requiredText(value.floor_name, '检票口楼层名称'),
+    locationDescription: typeof value.location_desc === 'string' ? value.location_desc : '',
+    point,
+    navigationAddress: typeof value.nav_address === 'string' ? value.nav_address : '',
+    sortOrder: integer(value.sort_order),
+    status: mapOpenStatus(value.open_status),
+    statusRemark: typeof value.status_remark === 'string' ? value.status_remark : '',
+    enabled: integer(value.status, 1) !== 0,
+    zoneIds: stringIds(value.zone_ids),
+    zoneNames: stringList(value.zone_names),
+    matchOpen: flag(value.match_open),
+    createdAt: requiredText(value.create_at, '检票口创建时间'),
+    updatedAt: requiredText(value.update_at, '检票口更新时间'),
   }
 }
 
-function isStatus(value: unknown): value is TicketGateStatus {
-  return value === 'open' || value === 'closed' || value === 'restricted'
+export function mapApiGateFloor(value: ApiGateFloorVO): TicketGateFloorOption {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的楼层 ID 不完整')
+  return {
+    id: String(value.id),
+    name: requiredText(value.name, '楼层名称'),
+    enabled: integer(value.status, 1) !== 0,
+    sortOrder: integer(value.sort_order),
+  }
 }
 
-function isTicketGate(value: unknown): value is TicketGate {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.code === 'string' && typeof item.name === 'string' &&
-    (item.floor === '一层' || item.floor === '二层') && typeof item.locationDescription === 'string' &&
-    Array.isArray(item.mapPoints) && item.mapPoints.every(isFinitePoint) &&
-    typeof item.navigationAddress === 'string' && (item.navigationPoint === null || isFinitePoint(item.navigationPoint)) &&
-    typeof item.sortOrder === 'number' && Number.isInteger(item.sortOrder) && item.sortOrder > 0 &&
-    isStatus(item.status) && typeof item.statusRemark === 'string' &&
-    typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
-}
-
-function isAuditLog(value: unknown): value is TicketGateAuditLog {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.gateId === 'string' && typeof item.gateCode === 'string' &&
-    ['create', 'update', 'status-update', 'delete'].includes(String(item.action)) && typeof item.createdAt === 'string'
-}
-
-function isLegacyTicketGate(value: unknown): value is LegacyTicketGate {
-  if (!value || typeof value !== 'object') return false
-  const item = value as Record<string, unknown>
-  return typeof item.id === 'string' && typeof item.name === 'string' && typeof item.code === 'string' &&
-    typeof item.venueArea === 'string' && typeof item.location === 'string' && typeof item.enabled === 'boolean' &&
-    typeof item.remark === 'string' && typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
+export function mapApiGatePage(value: ApiGatePage): TicketGatePage {
+  return {
+    records: Array.isArray(value.list) ? value.list.map(mapApiGate) : [],
+    total: nonNegativeInteger(value.total),
+    page: Math.max(1, integer(value.page, 1)),
+    pageSize: Math.max(1, integer(value.page_size, 20)),
+  }
 }
 
 export function sortTicketGates(records: readonly TicketGate[]): TicketGate[] {
@@ -232,146 +291,122 @@ export function sortTicketGates(records: readonly TicketGate[]): TicketGate[] {
     .map(cloneGate)
 }
 
-function migrateLegacy(records: readonly LegacyTicketGate[]): TicketGate[] {
-  return records.map((record, index) => ({
-    id: record.id,
-    code: normalizeText(record.code).toUpperCase(),
-    name: normalizeText(record.name),
-    floor: `${record.venueArea} ${record.location}`.includes('二层') ? '二层' : '一层',
-    locationDescription: normalizeText(record.location),
-    mapPoints: [],
-    navigationAddress: '',
-    navigationPoint: null,
-    sortOrder: index + 1,
-    status: record.enabled ? 'open' : 'closed',
-    statusRemark: record.enabled ? '' : normalizeText(record.remark),
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-  }))
+function queryParameters(page: number, pageSize: number, query: TicketGateQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = { page, page_size: pageSize }
+  const keyword = normalizeText(query.keyword)
+  if (keyword) params.keyword = keyword
+  if (query.floorId !== 'all') params.floor_id = query.floorId
+  if (query.status !== 'all') params.open_status = apiOpenStatus(query.status)
+  return params
 }
 
-export class LocalTicketGateService implements TicketGateService {
-  private readonly injectedStorage?: Storage
-  private readonly createId: () => string
-  private readonly now: () => Date
-
-  constructor(options: LocalTicketGateServiceOptions = {}) {
-    this.injectedStorage = options.storage
-    this.createId = options.createId ?? createClientId
-    this.now = options.now ?? (() => new Date())
-  }
-
-  private get storage(): Storage {
-    return this.injectedStorage ?? resolveStorage()
-  }
-
-  private write(envelope: StoredTicketGates): void {
-    this.storage.setItem(TICKET_GATE_STORAGE_KEY, JSON.stringify({
-      schemaVersion: SCHEMA_VERSION,
-      records: envelope.records.map(cloneGate),
-      auditLogs: envelope.auditLogs.map(cloneAudit),
-    } satisfies StoredTicketGates))
-  }
-
-  private read(): StoredTicketGates {
-    const raw = this.storage.getItem(TICKET_GATE_STORAGE_KEY)
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Partial<StoredTicketGates>
-        if (parsed.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.records) || !parsed.records.every(isTicketGate) ||
-          !Array.isArray(parsed.auditLogs) || !parsed.auditLogs.every(isAuditLog)) throw new Error('Invalid ticket gate data')
-        return { schemaVersion: SCHEMA_VERSION, records: parsed.records.map(cloneGate), auditLogs: parsed.auditLogs.map(cloneAudit) }
-      } catch (error) {
-        throw new TicketGateServiceError('本地检票口数据无法解析', { cause: error })
-      }
-    }
-
-    const legacyRaw = this.storage.getItem(LEGACY_TICKET_GATE_STORAGE_KEY)
-    if (!legacyRaw) return { schemaVersion: SCHEMA_VERSION, records: [], auditLogs: [] }
-    try {
-      const parsed = JSON.parse(legacyRaw) as { schemaVersion?: unknown, records?: unknown }
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.records) || !parsed.records.every(isLegacyTicketGate)) {
-        throw new Error('Invalid legacy ticket gate data')
-      }
-      const migrated: StoredTicketGates = { schemaVersion: SCHEMA_VERSION, records: migrateLegacy(parsed.records), auditLogs: [] }
-      this.write(migrated)
-      return migrated
-    } catch (error) {
-      throw new TicketGateServiceError('旧版检票口数据无法迁移', { cause: error })
-    }
-  }
-
-  private appendAudit(envelope: StoredTicketGates, gate: Pick<TicketGate, 'id' | 'code'>, action: TicketGateAuditAction): void {
-    envelope.auditLogs.push({ id: this.createId(), gateId: gate.id, gateCode: gate.code, action, createdAt: this.now().toISOString() })
-    if (envelope.auditLogs.length > 500) envelope.auditLogs.splice(0, envelope.auditLogs.length - 500)
-  }
-
-  async list(): Promise<TicketGate[]> {
-    return sortTicketGates(this.read().records)
-  }
-
-  async listAuditLogs(): Promise<TicketGateAuditLog[]> {
-    return this.read().auditLogs.map(cloneAudit).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  }
-
-  async create(input: TicketGateWriteInput): Promise<TicketGate> {
-    const envelope = this.read()
-    const validation = validateTicketGateInput(input, envelope.records)
-    if (!validation.valid) throw new TicketGateServiceError(validation.issues[0]!.message)
-    const timestamp = this.now().toISOString()
-    const record: TicketGate = { ...toRecord(input), id: this.createId(), createdAt: timestamp, updatedAt: timestamp }
-    envelope.records.push(record)
-    this.appendAudit(envelope, record, 'create')
-    this.write(envelope)
-    return cloneGate(record)
-  }
-
-  async update(id: string, input: TicketGateWriteInput): Promise<TicketGate> {
-    const envelope = this.read()
-    const index = envelope.records.findIndex((item) => item.id === id)
-    if (index < 0) throw new TicketGateServiceError('未找到要更新的检票口')
-    const previous = envelope.records[index]!
-    const immutableCodeInput = { ...input, code: previous.code }
-    const validation = validateTicketGateInput(immutableCodeInput, envelope.records, id)
-    if (!validation.valid) throw new TicketGateServiceError(validation.issues[0]!.message)
-    const record: TicketGate = {
-      ...toRecord(immutableCodeInput),
-      id,
-      createdAt: previous.createdAt,
-      updatedAt: this.now().toISOString(),
-    }
-    envelope.records[index] = record
-    this.appendAudit(envelope, record, 'update')
-    this.write(envelope)
-    return cloneGate(record)
-  }
-
-  async updateStatus(id: string, input: TicketGateStatusInput): Promise<TicketGate> {
-    const envelope = this.read()
-    const index = envelope.records.findIndex((item) => item.id === id)
-    if (index < 0) throw new TicketGateServiceError('未找到要更新状态的检票口')
-    if (!isStatus(input.status)) throw new TicketGateServiceError('请选择有效的检票口状态')
-    const previous = envelope.records[index]!
-    const record: TicketGate = {
-      ...previous,
-      status: input.status,
-      statusRemark: input.status === 'open' ? '' : normalizeText(input.statusRemark),
-      updatedAt: this.now().toISOString(),
-    }
-    envelope.records[index] = record
-    this.appendAudit(envelope, record, 'status-update')
-    this.write(envelope)
-    return cloneGate(record)
-  }
-
-  async remove(id: string): Promise<void> {
-    const envelope = this.read()
-    const record = envelope.records.find((item) => item.id === id)
-    if (!record) throw new TicketGateServiceError('未找到要删除的检票口')
-    envelope.records = envelope.records.filter((item) => item.id !== id)
-    this.appendAudit(envelope, record, 'delete')
-    this.write(envelope)
+function createBody(input: TicketGateWriteInput): ApiGateCreateRequest {
+  const value = sanitizeTicketGateInput(input)
+  const point = parseMapCoordinates(value.mapCoordinates)
+  return {
+    code: value.code,
+    name: value.name,
+    floor_id: bodyId(value.floorId),
+    location_desc: value.locationDescription,
+    lng: point.lng,
+    lat: point.lat,
+    nav_address: value.navigationAddress,
+    open_status: apiOpenStatus(value.status),
+    status_remark: value.statusRemark,
+    sort_order: value.sortOrder,
+    status: 1,
   }
 }
 
-export const ticketGateService: TicketGateService = new LocalTicketGateService()
+function updateBody(input: TicketGateWriteInput): ApiGateUpdateRequest {
+  const data = createBody(input)
+  return {
+    name: data.name,
+    floor_id: data.floor_id,
+    location_desc: data.location_desc,
+    lng: data.lng,
+    lat: data.lat,
+    nav_address: data.nav_address,
+    open_status: data.open_status,
+    status_remark: data.status_remark,
+    sort_order: data.sort_order,
+  }
+}
+
+const DEFAULT_QUERY: TicketGateQuery = { keyword: '', status: 'all', floorId: 'all' }
+const MAX_PAGE_SIZE = 100
+
+export function createTicketGateService(request: TicketGateDataRequester = requestData): TicketGateService {
+  const service: TicketGateService = {
+    async listPage(page, pageSize, query) {
+      return mapApiGatePage(await request<ApiGatePage>({
+        method: 'GET',
+        url: 'api/v1/admin/gates',
+        params: queryParameters(page, pageSize, query),
+      }))
+    },
+
+    async list(query = DEFAULT_QUERY) {
+      const first = await service.listPage(1, MAX_PAGE_SIZE, query)
+      const records = [...first.records]
+      const pageCount = Math.ceil(first.total / Math.max(1, first.pageSize))
+      for (let page = 2; page <= pageCount; page += 1) {
+        records.push(...(await service.listPage(page, MAX_PAGE_SIZE, query)).records)
+      }
+      return sortTicketGates([...new Map(records.map((record) => [record.id, record])).values()])
+    },
+
+    async listFloors() {
+      const values = await request<ApiGateFloorVO[]>({ method: 'GET', url: 'api/v1/admin/floors' })
+      return (Array.isArray(values) ? values.map(mapApiGateFloor) : [])
+        .sort((first, second) => first.sortOrder - second.sortOrder || first.name.localeCompare(second.name, 'zh-CN'))
+    },
+
+    async get(id) {
+      return mapApiGate(await request<ApiGateVO>({ method: 'GET', url: endpoint('api/v1/admin/gates', id) }))
+    },
+
+    async create(input) {
+      const validation = validateTicketGateInput(input)
+      if (!validation.valid) throw new TicketGateServiceError(validation.issues[0]!.message)
+      const data = createBody(input)
+      return mapApiGate(await request<ApiGateVO, ApiGateCreateRequest>({ method: 'POST', url: 'api/v1/admin/gates', data }))
+    },
+
+    async update(id, input) {
+      const validation = validateTicketGateInput(input)
+      if (!validation.valid) throw new TicketGateServiceError(validation.issues[0]!.message)
+      const data = updateBody(input)
+      return mapApiGate(await request<ApiGateVO, ApiGateUpdateRequest>({
+        method: 'PATCH',
+        url: endpoint('api/v1/admin/gates', id),
+        data,
+      }))
+    },
+
+    async updateStatus(id, input) {
+      if (!isStatus(input.status)) throw new TicketGateServiceError('请选择有效的检票口状态')
+      const detail = await service.get(id)
+      const data: ApiGateStatusRequest = {
+        name: detail.name,
+        lng: detail.point.lng,
+        lat: detail.point.lat,
+        open_status: apiOpenStatus(input.status),
+        status_remark: input.status === 'open' ? '' : normalizeText(input.statusRemark),
+      }
+      return mapApiGate(await request<ApiGateVO, ApiGateStatusRequest>({
+        method: 'PATCH',
+        url: endpoint('api/v1/admin/gates', id),
+        data,
+      }))
+    },
+
+    async remove(id) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/gates', id) })
+    },
+  }
+
+  return service
+}
+
+export const ticketGateService = createTicketGateService()

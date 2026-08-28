@@ -30,7 +30,6 @@ import type {
   ContentRecord,
   ContentValidationField,
   ContentWriteInput,
-  DeleteReferenceBlock,
   NewsQuery,
   PriorityHintQuery,
   PriorityHintRecord,
@@ -86,7 +85,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 type SheetKind = 'content' | 'banner' | 'hint'
 type DeleteTarget =
@@ -182,8 +180,8 @@ const bannerFormRef = ref<BannerFormHandle | null>(null)
 const hintFormRef = ref<PriorityHintFormHandle | null>(null)
 const discardConfirmOpen = ref(false)
 const deleteTarget = ref<DeleteTarget | null>(null)
-const deleteReferenceBlock = ref<DeleteReferenceBlock | null>(null)
 const loadError = ref('')
+const pageReady = ref(false)
 
 const sheetOpen = computed(() => sheetKind.value !== null)
 const sheetDirty = computed(() => {
@@ -241,7 +239,9 @@ function contentToForm(record: ContentRecord): ContentWriteInput {
     activityStartAt: localDateTime(record.activityStartAt),
     activityEndAt: localDateTime(record.activityEndAt),
     activityLocation: record.activityLocation,
-    navigationLocation: record.navigationLocation,
+    navigationLocation: record.navLng !== null && record.navLat !== null
+      ? `${record.navLng}, ${record.navLat}`
+      : record.navAddress,
   }
 }
 
@@ -280,16 +280,22 @@ function openCreate(): void {
   if (activeTab.value === 'hint') openSheet('hint', 'create', null, emptyHintForm())
 }
 
-function openContentEdit(record: ContentRecord): void {
-  openSheet('content', 'edit', record.id, contentToForm(record))
+async function openContentEdit(record: ContentRecord): Promise<void> {
+  const detail = await store.getContent(record.id)
+  if (!detail) return showStoreError('内容详情加载失败')
+  openSheet('content', 'edit', detail.id, contentToForm(detail))
 }
 
-function openBannerEdit(record: BannerRecord): void {
-  openSheet('banner', 'edit', record.id, bannerToForm(record))
+async function openBannerEdit(record: BannerRecord): Promise<void> {
+  const detail = await store.getBanner(record.id)
+  if (!detail) return showStoreError('Banner 详情加载失败')
+  openSheet('banner', 'edit', detail.id, bannerToForm(detail))
 }
 
-function openHintEdit(record: PriorityHintRecord): void {
-  openSheet('hint', 'edit', record.id, hintToForm(record))
+async function openHintEdit(record: PriorityHintRecord): Promise<void> {
+  const detail = await store.getPriorityHint(record.id)
+  if (!detail) return showStoreError('高优提示详情加载失败')
+  openSheet('hint', 'edit', detail.id, hintToForm(detail))
 }
 
 function closeSheet(): void {
@@ -318,7 +324,7 @@ async function saveSheet(): Promise<void> {
     return
   }
   if (sheetKind.value === 'banner') {
-    bannerIssues.value = validateBannerInput(bannerForm.value, store.snapshot)
+    bannerIssues.value = validateBannerInput(bannerForm.value)
     await nextTick()
     if (!bannerFormRef.value?.validateAndFocus() || bannerIssues.value.length) return
     const success = sheetMode.value === 'create'
@@ -330,7 +336,7 @@ async function saveSheet(): Promise<void> {
     return
   }
   if (sheetKind.value === 'hint') {
-    hintIssues.value = validatePriorityHintInput(hintForm.value, store.snapshot)
+    hintIssues.value = validatePriorityHintInput(hintForm.value)
     await nextTick()
     if (!hintFormRef.value?.validateAndFocus() || hintIssues.value.length) return
     const success = sheetMode.value === 'create'
@@ -352,12 +358,7 @@ async function runAction(operation: Promise<boolean>, successMessage: string): P
   else showStoreError('操作失败')
 }
 
-async function requestContentDelete(record: ContentRecord): Promise<void> {
-  const block = await store.getDeleteReferenceBlock(record.id)
-  if (block.bannerCodes.length || block.priorityHintCodes.length) {
-    deleteReferenceBlock.value = block
-    return
-  }
+function requestContentDelete(record: ContentRecord): void {
   deleteTarget.value = { kind: 'content', record }
 }
 
@@ -365,7 +366,7 @@ async function confirmDelete(): Promise<void> {
   const target = deleteTarget.value
   if (!target) return
   const success = target.kind === 'content'
-    ? await store.removeContent(target.record.id)
+    ? await store.removeContent(target.record.id, target.record.type)
     : target.kind === 'banner'
       ? await store.removeBanner(target.record.id)
       : await store.removePriorityHint(target.record.id)
@@ -378,19 +379,23 @@ function selectTab(tab: ContentManagementTab): void {
   void router.replace({ query: { ...route.query, tab } })
 }
 
-function applyQuery(): void {
-  if (activeTab.value === 'activity') store.setActivityQuery({ ...activityQueryDraft.value })
-  if (activeTab.value === 'news') store.setNewsQuery({ ...newsQueryDraft.value })
-  if (activeTab.value === 'banner') store.setBannerQuery({ ...bannerQueryDraft.value })
-  if (activeTab.value === 'hint') store.setHintQuery({ ...hintQueryDraft.value })
+async function applyQuery(): Promise<void> {
+  const success = activeTab.value === 'activity'
+    ? await store.setActivityQuery({ ...activityQueryDraft.value })
+    : activeTab.value === 'news'
+      ? await store.setNewsQuery({ ...newsQueryDraft.value })
+      : activeTab.value === 'banner'
+        ? await store.setBannerQuery({ ...bannerQueryDraft.value })
+        : await store.setHintQuery({ ...hintQueryDraft.value })
+  if (!success) showStoreError('查询失败')
 }
 
-function resetQuery(): void {
-  store.resetQuery(activeTab.value)
+async function resetQuery(): Promise<void> {
   if (activeTab.value === 'activity') activityQueryDraft.value = { ...DEFAULT_ACTIVITY_QUERY }
   if (activeTab.value === 'news') newsQueryDraft.value = { ...DEFAULT_NEWS_QUERY }
   if (activeTab.value === 'banner') bannerQueryDraft.value = { ...DEFAULT_BANNER_QUERY }
   if (activeTab.value === 'hint') hintQueryDraft.value = { ...DEFAULT_HINT_QUERY }
+  if (!await store.resetQuery(activeTab.value)) showStoreError('重置筛选失败')
 }
 
 function formatDateTime(value: string | null): string {
@@ -412,10 +417,10 @@ function jumpTypeLabel(type: BannerRecord['jumpType']): string {
   return type === 'none' ? '无跳转' : contentTypeLabel(type)
 }
 
-function targetLabel(targetId: string | null): string {
+function targetLabel(targetId: string | null, targetTitle?: string | null): string {
   if (!targetId) return '—'
   const reference = store.selectableReferences.find((item) => item.id === targetId)
-  return reference ? `${reference.code} · ${reference.title}` : '引用目标已失效'
+  return reference ? `${reference.code} · ${reference.title}` : targetTitle || '引用目标已失效'
 }
 
 function statusLabel(record: ContentRecord): string {
@@ -454,14 +459,6 @@ function exportCurrent(): void {
       ['内容编号', '标题', '类型', '发布状态', '状态', '置顶', '优先级', '发布时间', '点击PV', '点击UV', '浏览PV', '浏览UV'],
       records.map((record) => [record.code, record.title, contentTypeLabel(record.type), record.publishStatus === 'published' ? '已发布' : '草稿', statusLabel(record), record.pinned ? '是' : '否', record.priority, formatDateTime(record.publishAt), record.metrics.clickPv, record.metrics.clickUv, record.metrics.viewPv, record.metrics.viewUv]))
   }
-  if (activeTab.value === 'banner') {
-    downloadCsv(`内容管理-Banner-${date}.csv`, ['图窗编号', '标题', '跳转类型', '跳转目标', '优先级', '展示状态', '有效期', '点击PV', '点击UV'],
-      store.bannerRecords.map((record) => [record.code, record.title, jumpTypeLabel(record.jumpType), targetLabel(record.targetId), record.priority, record.displayEnabled ? '启用' : '停用', formatValidity(record.validFrom, record.validTo), record.metrics.clickPv, record.metrics.clickUv]))
-  }
-  if (activeTab.value === 'hint') {
-    downloadCsv(`内容管理-高优提示-${date}.csv`, ['提示编号', '提示标题', '引用类型', '引用目标', '优先级', '展示状态', '有效期', '点击PV', '点击UV'],
-      store.priorityHintRecords.map((record) => [record.code, record.title, contentTypeLabel(record.referenceType), targetLabel(record.targetId), record.priority, record.displayEnabled ? '启用' : '停用', formatValidity(record.validFrom, record.validTo), record.metrics.clickPv, record.metrics.clickUv]))
-  }
   toast.success('已导出当前筛选结果。')
 }
 
@@ -477,10 +474,17 @@ function handleBeforeUnload(event: BeforeUnloadEvent): void {
 
 async function load(): Promise<void> {
   loadError.value = ''
+  if (String(route.query.status ?? '') === 'draft') {
+    activityQueryDraft.value.publishStatus = 'draft'
+    newsQueryDraft.value.publishStatus = 'draft'
+    Object.assign(store.activityQuery, activityQueryDraft.value)
+    Object.assign(store.newsQuery, newsQueryDraft.value)
+  }
   if (!await store.load()) {
     loadError.value = store.error ?? '内容管理数据加载失败'
     showStoreError(loadError.value)
   }
+  pageReady.value = true
 }
 
 watch(() => route.query.tab, (value) => {
@@ -488,6 +492,20 @@ watch(() => route.query.tab, (value) => {
     void router.replace({ query: { ...route.query, tab: 'activity' } })
   }
 }, { immediate: true })
+
+watch(activeTab, async (tab, previous) => {
+  if (!pageReady.value || tab === previous) return
+  if (!await store.loadTab(tab)) showStoreError('当前页签加载失败')
+})
+
+watch(() => route.query.status, async (status) => {
+  if (!pageReady.value || status !== 'draft') return
+  activityQueryDraft.value.publishStatus = 'draft'
+  newsQueryDraft.value.publishStatus = 'draft'
+  Object.assign(store.activityQuery, activityQueryDraft.value)
+  Object.assign(store.newsQuery, newsQueryDraft.value)
+  if (!await store.loadTab(activeTab.value === 'news' ? 'news' : 'activity')) showStoreError('草稿数据加载失败')
+})
 
 onMounted(load)
 useIntervalFn(store.refreshTemporalState, 60_000)
@@ -510,11 +528,11 @@ onBeforeRouteLeave(() => confirmLeave())
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <Button size="lg" class="h-11 px-4" :disabled="activeTab === 'banner' && store.snapshot.banners.length >= MAX_BANNERS || activeTab === 'hint' && store.snapshot.priorityHints.length >= MAX_PRIORITY_HINTS" @click="openCreate">
+          <Button size="lg" class="h-11 px-4" :disabled="activeTab === 'banner' && store.bannerTotal >= MAX_BANNERS || activeTab === 'hint' && store.priorityHintTotal >= MAX_PRIORITY_HINTS" @click="openCreate">
             <Plus aria-hidden="true" />
             {{ activeTab === 'activity' ? '新增活动' : activeTab === 'news' ? '新增内容' : activeTab === 'banner' ? '新增 Banner' : '新增高优提示' }}
           </Button>
-          <Button variant="outline" size="lg" class="h-11" @click="exportCurrent">
+          <Button v-if="activeTab === 'activity' || activeTab === 'news'" variant="outline" size="lg" class="h-11" @click="exportCurrent">
             <Download aria-hidden="true" />导出
           </Button>
         </div>
@@ -543,8 +561,8 @@ onBeforeRouteLeave(() => confirmLeave())
       <div v-if="activeTab === 'banner' || activeTab === 'hint'" class="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/6 px-4 py-3 text-sm">
         <Megaphone class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
         <p class="text-muted-foreground">
-          <template v-if="activeTab === 'banner'">按优先级升序展示，最多配置 {{ MAX_BANNERS }} 条；当前共 {{ store.snapshot.banners.length }} 条。</template>
-          <template v-else>最多配置 {{ MAX_PRIORITY_HINTS }} 条，按优先级升序取当前有效的前 2 条展示；当前共 {{ store.snapshot.priorityHints.length }} 条。</template>
+          <template v-if="activeTab === 'banner'">按优先级升序展示，最多配置 {{ MAX_BANNERS }} 条；当前共 {{ store.bannerTotal }} 条。</template>
+          <template v-else>最多配置 {{ MAX_PRIORITY_HINTS }} 条，按优先级升序取当前有效的前 2 条展示；当前共 {{ store.priorityHintTotal }} 条。</template>
         </p>
       </div>
 
@@ -596,9 +614,9 @@ onBeforeRouteLeave(() => confirmLeave())
             <div class="flex justify-end gap-1">
               <Button variant="ghost" size="lg" class="h-10 px-3" @click="openContentEdit(row)"><PencilLine aria-hidden="true" />编辑</Button>
               <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-10 w-10" :aria-label="`${row.title}更多操作`"><CircleEllipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuLabel>{{ row.code }}</DropdownMenuLabel><DropdownMenuSeparator />
-                <DropdownMenuItem v-if="row.publishStatus === 'draft'" @select="runAction(store.publishContent(row.id), '内容已发布。')">发布</DropdownMenuItem>
-                <DropdownMenuItem @select="runAction(store.setContentPinned(row.id, !row.pinned), row.pinned ? '已取消置顶。' : '内容已置顶。')">{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem>
-                <DropdownMenuItem v-if="row.publishStatus === 'published'" @select="runAction(store.setContentEnabled(row.id, !row.enabled), row.enabled ? '内容已停用。' : '内容已启用。')">{{ row.enabled ? '停用' : '启用' }}</DropdownMenuItem>
+                <DropdownMenuItem v-if="row.publishStatus === 'draft'" @select="runAction(store.publishContent(row.id, row.type), '内容已发布。')">发布</DropdownMenuItem>
+                <DropdownMenuItem @select="runAction(store.setContentPinned(row.id, !row.pinned, row.type), row.pinned ? '已取消置顶。' : '内容已置顶。')">{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem>
+                <DropdownMenuItem v-if="row.publishStatus === 'published'" @select="runAction(store.setContentEnabled(row.id, !row.enabled, row.type), row.enabled ? '内容已停用。' : '内容已启用。')">{{ row.enabled ? '停用' : '启用' }}</DropdownMenuItem>
                 <DropdownMenuSeparator /><DropdownMenuItem variant="destructive" @select="requestContentDelete(row)"><Trash2 aria-hidden="true" />删除</DropdownMenuItem>
               </DropdownMenuContent></DropdownMenu>
             </div>
@@ -611,14 +629,14 @@ onBeforeRouteLeave(() => confirmLeave())
         <DataTable :columns="bannerColumns" :rows="store.paginatedBanners" row-key="id" :loading="store.isLoading" empty-text="暂无 Banner" caption="Banner 图窗列表">
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs">{{ row.code }}</span></template>
           <template #cell-title="{ row }"><p class="max-w-64 truncate font-medium" :title="row.title">{{ row.title }}</p></template>
-          <template #cell-image="{ row }"><img v-if="row.image.previewUrl" :src="row.image.previewUrl" :alt="`${row.title}图片`" class="h-10 w-20 rounded-lg border object-cover"><span v-else class="inline-flex h-10 w-20 items-center justify-center rounded-lg border bg-muted/45 text-xs text-muted-foreground" :title="row.image.name"><ImageIcon class="mr-1 size-4" aria-hidden="true" />图片</span></template>
+          <template #cell-image="{ row }"><img v-if="row.image.url" :src="row.image.url" :alt="`${row.title}图片`" class="h-10 w-20 rounded-lg border object-cover"><span v-else class="inline-flex h-10 w-20 items-center justify-center rounded-lg border bg-muted/45 text-xs text-muted-foreground" :title="row.image.name"><ImageIcon class="mr-1 size-4" aria-hidden="true" />图片</span></template>
           <template #cell-jumpType="{ row }"><Badge variant="outline">{{ jumpTypeLabel(row.jumpType) }}</Badge></template>
-          <template #cell-targetId="{ row }"><div class="max-w-72"><span class="block truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId)">{{ targetLabel(row.targetId) }}</span><span v-if="row.targetId && !store.targetIsValid(row.targetId)" class="mt-1 block text-[10px] text-destructive">引用目标已失效</span></div></template>
+          <template #cell-targetId="{ row }"><div class="max-w-72"><span class="block truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId, row.targetTitle)">{{ targetLabel(row.targetId, row.targetTitle) }}</span><span v-if="row.targetId && !store.targetIsValid(row.targetId)" class="mt-1 block text-[10px] text-destructive">引用目标已失效</span></div></template>
           <template #cell-priority="{ row }"><span class="font-semibold tabular-nums">{{ row.priority }}</span></template>
           <template #cell-displayEnabled="{ row }"><div class="flex flex-col items-center gap-1"><Badge :variant="row.displayEnabled ? 'outline' : 'secondary'" :class="row.displayEnabled ? 'border-success/30 bg-success/10 text-success' : 'text-muted-foreground'">{{ row.displayEnabled ? '启用' : '停用' }}</Badge><span v-if="row.displayEnabled && !store.isBannerEffective(row)" class="text-[10px] text-warning">当前不可展示</span></div></template>
           <template #cell-validity="{ row }"><span class="whitespace-nowrap text-xs text-muted-foreground">{{ formatValidity(row.validFrom, row.validTo) }}</span></template>
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
-          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="lg" class="h-10 px-3" @click="openBannerEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-10 w-10" :aria-label="`${row.title}更多操作`"><CircleEllipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem @select="runAction(store.setBannerEnabled(row.id, !row.displayEnabled), row.displayEnabled ? 'Banner 已停用。' : 'Banner 已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" @select="deleteTarget = { kind: 'banner', record: row }"><Trash2 aria-hidden="true" />删除</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></template>
+          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openBannerEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(store.setBannerEnabled(row.id, !row.displayEnabled), row.displayEnabled ? 'Banner 已停用。' : 'Banner 已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'banner', record: row }">删除</Button></div></template>
         </DataTable>
         <PaginationBar :page="store.pages.banner" :page-size="CONTENT_MANAGEMENT_PAGE_SIZE" :page-sizes="[20]" :total="store.bannerRecords.length" :disabled="store.isLoading" @update:page="store.setPage('banner', $event)" />
       </template>
@@ -628,18 +646,18 @@ onBeforeRouteLeave(() => confirmLeave())
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs">{{ row.code }}</span></template>
           <template #cell-title="{ row }"><div class="max-w-64"><p class="truncate font-medium" :title="row.title">{{ row.title }}</p><p v-if="store.activePriorityHintIds.includes(row.id)" class="mt-1 text-[11px] font-medium text-primary">当前展示位</p></div></template>
           <template #cell-referenceType="{ row }"><Badge variant="outline">{{ contentTypeLabel(row.referenceType) }}</Badge></template>
-          <template #cell-targetId="{ row }"><div class="max-w-72"><span class="block truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId)">{{ targetLabel(row.targetId) }}</span><span v-if="!store.targetIsValid(row.targetId)" class="mt-1 block text-[10px] text-destructive">引用目标已失效</span></div></template>
+          <template #cell-targetId="{ row }"><div class="max-w-72"><span class="block truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId, row.targetTitle)">{{ targetLabel(row.targetId, row.targetTitle) }}</span><span v-if="!store.targetIsValid(row.targetId)" class="mt-1 block text-[10px] text-destructive">引用目标已失效</span></div></template>
           <template #cell-priority="{ row }"><span class="font-semibold tabular-nums">{{ row.priority }}</span></template>
           <template #cell-displayEnabled="{ row }"><div class="flex flex-col items-center gap-1"><Badge :variant="row.displayEnabled ? 'outline' : 'secondary'" :class="row.displayEnabled ? 'border-success/30 bg-success/10 text-success' : 'text-muted-foreground'">{{ row.displayEnabled ? '启用' : '停用' }}</Badge><span v-if="row.displayEnabled && !store.isPriorityHintEffective(row)" class="text-[10px] text-warning">当前不可展示</span></div></template>
           <template #cell-validity="{ row }"><span class="whitespace-nowrap text-xs text-muted-foreground">{{ formatValidity(row.validFrom, row.validTo) }}</span></template>
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
-          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="lg" class="h-10 px-3" @click="openHintEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-10 w-10" :aria-label="`${row.title}更多操作`"><CircleEllipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem @select="runAction(store.setPriorityHintEnabled(row.id, !row.displayEnabled), row.displayEnabled ? '高优提示已停用。' : '高优提示已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" @select="deleteTarget = { kind: 'hint', record: row }"><Trash2 aria-hidden="true" />删除</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div></template>
+          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openHintEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(store.setPriorityHintEnabled(row.id, !row.displayEnabled), row.displayEnabled ? '高优提示已停用。' : '高优提示已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'hint', record: row }">删除</Button></div></template>
         </DataTable>
         <PaginationBar :page="store.pages.hint" :page-size="CONTENT_MANAGEMENT_PAGE_SIZE" :page-sizes="[20]" :total="store.priorityHintRecords.length" :disabled="store.isLoading" @update:page="store.setPage('hint', $event)" />
       </template>
     </div>
 
-    <CrudSheet :open="sheetOpen" :mode="sheetMode" :title="sheetKind === 'content' ? `${sheetMode === 'create' ? '新增' : '编辑'}${contentForm.type === 'activity' ? '活动' : '内容'}` : sheetKind === 'banner' ? `${sheetMode === 'create' ? '新增' : '编辑'} Banner` : `${sheetMode === 'create' ? '新增' : '编辑'}高优提示`" :description="sheetKind === 'content' ? '维护内容字段并按发布时间决定草稿或发布状态。' : sheetKind === 'banner' ? '配置首页轮播图及其跳转目标。' : '配置首页高优提示及引用目标。'" :saving="store.isSaving" :dirty="sheetDirty" size="wide" @submit="saveSheet" @request-close="requestSheetClose">
+    <CrudSheet :open="sheetOpen" :mode="sheetMode" :title="sheetKind === 'content' ? `${sheetMode === 'create' ? '新增' : '编辑'}${contentForm.type === 'activity' ? '活动' : '内容'}` : sheetKind === 'banner' ? `${sheetMode === 'create' ? '新增' : '编辑'} Banner` : `${sheetMode === 'create' ? '新增' : '编辑'}高优提示`" :description="sheetKind === 'content' ? '维护内容信息；发布时间由保存后的发布接口处理。' : sheetKind === 'banner' ? '配置首页轮播图及其跳转目标。' : '配置首页高优提示及引用目标。'" :saving="store.isSaving" :dirty="sheetDirty" size="wide" @submit="saveSheet" @request-close="requestSheetClose">
       <ContentForm v-if="sheetKind === 'content'" ref="contentFormRef" :value="contentForm" :issues="contentIssues" :saving="store.isSaving" @update:value="contentForm = $event" />
       <BannerForm v-else-if="sheetKind === 'banner'" ref="bannerFormRef" :value="bannerForm" :references="store.selectableReferences" :issues="bannerIssues" :saving="store.isSaving" @update:value="bannerForm = $event" />
       <PriorityHintForm v-else ref="hintFormRef" :value="hintForm" :references="store.selectableReferences" :issues="hintIssues" :saving="store.isSaving" @update:value="hintForm = $event" />
@@ -650,12 +668,8 @@ onBeforeRouteLeave(() => confirmLeave())
     </AlertDialog>
 
     <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)">
-      <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除{{ deleteTarget?.record.code }}？</AlertDialogTitle><AlertDialogDescription>删除后不可恢复，历史统计不会用于新记录。该操作仅影响本地演示数据。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><Button variant="destructive" :disabled="store.isSaving" @click="confirmDelete"><LoaderCircle v-if="store.isSaving" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Trash2 v-else aria-hidden="true" />{{ store.isSaving ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent>
+      <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除{{ deleteTarget?.record.code }}？</AlertDialogTitle><AlertDialogDescription>删除后不可恢复，历史操作日志保留。若记录仍被引用，将直接展示后端返回的失败原因。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><Button variant="destructive" :disabled="store.isSaving" @click="confirmDelete"><LoaderCircle v-if="store.isSaving" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Trash2 v-else aria-hidden="true" />{{ store.isSaving ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
-
-    <Dialog :open="Boolean(deleteReferenceBlock)" @update:open="!$event && (deleteReferenceBlock = null)">
-      <DialogContent class="max-w-md"><DialogHeader><DialogTitle>该内容无法删除</DialogTitle><DialogDescription>请先解除下列 Banner 或高优提示引用，再重新删除内容。</DialogDescription></DialogHeader><div class="rounded-xl border bg-destructive/5 p-4 text-sm"><p v-if="deleteReferenceBlock?.bannerCodes.length"><strong>Banner：</strong>{{ deleteReferenceBlock.bannerCodes.join('、') }}</p><p v-if="deleteReferenceBlock?.priorityHintCodes.length" class="mt-2"><strong>高优提示：</strong>{{ deleteReferenceBlock.priorityHintCodes.join('、') }}</p></div><DialogFooter><Button @click="deleteReferenceBlock = null">我知道了</Button></DialogFooter></DialogContent>
-    </Dialog>
 
   </section>
 </template>

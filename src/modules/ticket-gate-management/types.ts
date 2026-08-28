@@ -1,7 +1,5 @@
-export type TicketGateFloor = '一层' | '二层'
 export type TicketGateStatus = 'open' | 'closed' | 'restricted'
 export type TicketGateStatusFilter = 'all' | TicketGateStatus
-export type TicketGateFloorFilter = 'all' | TicketGateFloor
 export type GateRelationDirection = 'entry' | 'exit' | 'bidirectional'
 
 export interface GeoPoint {
@@ -13,28 +11,37 @@ export interface TicketGate {
   id: string
   code: string
   name: string
-  floor: TicketGateFloor
+  floorId: string
+  floorName: string
   locationDescription: string
-  mapPoints: GeoPoint[]
+  point: GeoPoint
   navigationAddress: string
-  navigationPoint: GeoPoint | null
   sortOrder: number
   status: TicketGateStatus
   statusRemark: string
+  enabled: boolean
+  zoneIds: string[]
+  zoneNames: string[]
+  matchOpen: boolean
   createdAt: string
   updatedAt: string
 }
 
-/** 表单使用“经度, 纬度”字符串承接定位；服务层兼容旧版 JSON 坐标数据。 */
+export interface TicketGateFloorOption {
+  id: string
+  name: string
+  enabled: boolean
+  sortOrder: number
+}
+
+/** 表单使用“经度, 纬度”字符串承接接口要求的单个定位点。 */
 export interface TicketGateWriteInput {
   code: string
   name: string
-  floor: TicketGateFloor
+  floorId: string
   locationDescription: string
   mapCoordinates: string
   navigationAddress: string
-  navigationLongitude: number | null
-  navigationLatitude: number | null
   sortOrder: number
   status: TicketGateStatus
   statusRemark: string
@@ -46,18 +53,27 @@ export interface TicketGateStatusInput {
 }
 
 export interface TicketGateService {
-  list(): Promise<TicketGate[]>
+  list(query?: TicketGateQuery): Promise<TicketGate[]>
+  listPage(page: number, pageSize: number, query: TicketGateQuery): Promise<TicketGatePage>
+  listFloors(): Promise<TicketGateFloorOption[]>
+  get(id: string): Promise<TicketGate>
   create(input: TicketGateWriteInput): Promise<TicketGate>
   update(id: string, input: TicketGateWriteInput): Promise<TicketGate>
   updateStatus(id: string, input: TicketGateStatusInput): Promise<TicketGate>
   remove(id: string): Promise<void>
-  listAuditLogs(): Promise<TicketGateAuditLog[]>
 }
 
 export interface TicketGateQuery {
   keyword: string
   status: TicketGateStatusFilter
-  floor: TicketGateFloorFilter
+  floorId: 'all' | string
+}
+
+export interface TicketGatePage {
+  records: TicketGate[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 export type TicketGateValidationField = keyof TicketGateWriteInput
@@ -71,16 +87,6 @@ export interface TicketGateValidationIssue {
 export interface TicketGateValidationResult {
   valid: boolean
   issues: readonly TicketGateValidationIssue[]
-}
-
-export type TicketGateAuditAction = 'create' | 'update' | 'status-update' | 'delete'
-
-export interface TicketGateAuditLog {
-  id: string
-  gateId: string
-  gateCode: string
-  action: TicketGateAuditAction
-  createdAt: string
 }
 
 export interface SeatZoneGateBinding {

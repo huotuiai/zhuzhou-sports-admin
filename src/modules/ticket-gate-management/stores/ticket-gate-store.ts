@@ -1,8 +1,8 @@
 import type {
-  SeatZoneGateBinding,
   TicketGate,
+  TicketGateFloorOption,
+  TicketGatePage,
   TicketGateQuery,
-  TicketGateRelationService,
   TicketGateService,
   TicketGateStatusInput,
   TicketGateValidationResult,
@@ -10,90 +10,76 @@ import type {
 } from '../types'
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { ticketGateRelationService } from '../services/ticket-gate-relation-service'
-import { sanitizeTicketGateInput, sortTicketGates, ticketGateService, validateTicketGateInput } from '../services/ticket-gate-service'
+import {
+  sanitizeTicketGateInput,
+  ticketGateService,
+  validateTicketGateInput,
+} from '../services/ticket-gate-service'
 
 const PAGE_SIZE = 20
 
+export const DEFAULT_TICKET_GATE_QUERY: Readonly<TicketGateQuery> = {
+  keyword: '',
+  status: 'all',
+  floorId: 'all',
+}
+
 function message(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请稍后重试'
+  return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
 }
 
-function includes(source: string, keyword: string): boolean {
-  return source.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword)
+function normalizeQuery(query: TicketGateQuery): TicketGateQuery {
+  return {
+    keyword: query.keyword.trim().normalize('NFKC'),
+    status: query.status,
+    floorId: query.floorId,
+  }
 }
 
-export function createTicketGateStore(
-  service: TicketGateService,
-  relationService: TicketGateRelationService = ticketGateRelationService,
-  storeId = 'ticket-gate',
-) {
+function cloneFloor(floor: TicketGateFloorOption): TicketGateFloorOption {
+  return { ...floor }
+}
+
+export function createTicketGateStore(service: TicketGateService, storeId = 'ticket-gate') {
   return defineStore(storeId, () => {
     const records = ref<TicketGate[]>([])
-    const seatZoneBindings = ref<SeatZoneGateBinding[]>([])
-    const query = reactive<TicketGateQuery>({ keyword: '', status: 'all', floor: 'all' })
+    const floors = ref<TicketGateFloorOption[]>([])
+    const query = reactive<TicketGateQuery>({ ...DEFAULT_TICKET_GATE_QUERY })
     const page = ref(1)
     const pageSize = ref(PAGE_SIZE)
+    const total = ref(0)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
+    const detailLoadingId = ref<string | null>(null)
     const deletingId = ref<string | null>(null)
     const error = ref<string | null>(null)
 
-    const filteredRecords = computed(() => {
-      const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
-      return records.value.filter((item) => {
-        if (keyword && ![item.code, item.name].some((value) => includes(value, keyword))) return false
-        if (query.status !== 'all' && item.status !== query.status) return false
-        if (query.floor !== 'all' && item.floor !== query.floor) return false
-        return true
-      })
-    })
-    const total = computed(() => filteredRecords.value.length)
-    const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+    const pageCount = computed(() => Math.max(1, Math.ceil(total.value / Math.max(1, pageSize.value))))
     const currentPage = computed(() => Math.min(Math.max(page.value, 1), pageCount.value))
-    const paginatedRecords = computed(() => {
-      const start = (currentPage.value - 1) * pageSize.value
-      return filteredRecords.value.slice(start, start + pageSize.value)
-    })
+    const filteredRecords = computed(() => records.value)
+    const paginatedRecords = computed(() => records.value)
 
-    function setQuery(patch: Partial<TicketGateQuery>): void {
-      Object.assign(query, patch)
-      page.value = 1
+    function applyPage(result: TicketGatePage): void {
+      records.value = result.records
+      total.value = result.total
+      page.value = result.page
+      pageSize.value = result.pageSize
     }
 
-    function resetQuery(): void {
-      Object.assign(query, { keyword: '', status: 'all', floor: 'all' })
-      page.value = 1
-    }
-
-    function setPage(value: number): void {
-      if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
-    }
-
-    function setPageSize(value: number): void {
-      if (Number.isInteger(value) && value > 0) {
-        pageSize.value = value
-        page.value = 1
-      }
-    }
-
-    function validate(input: TicketGateWriteInput, excludedId?: string): TicketGateValidationResult {
-      return validateTicketGateInput(input, records.value, excludedId)
-    }
-
-    function coveredZones(gateId: string): string[] {
-      return seatZoneBindings.value
-        .filter((item) => item.gateId === gateId)
-        .map((item) => item.zoneCode)
-        .sort((a, b) => a.localeCompare(b, 'zh-CN', { numeric: true }))
-    }
-
-    async function countSeatZoneBindings(gateId: string): Promise<number> {
+    async function loadPage(nextPage = page.value): Promise<boolean> {
+      isLoading.value = true
+      error.value = null
       try {
-        return await relationService.countSeatZoneBindings(gateId)
-      } catch (cause) {
+        applyPage(await service.listPage(nextPage, pageSize.value, normalizeQuery(query)))
+        return true
+      }
+      catch (cause) {
         error.value = message(cause)
-        return -1
+        return false
+      }
+      finally {
+        isLoading.value = false
       }
     }
 
@@ -101,18 +87,74 @@ export function createTicketGateStore(
       isLoading.value = true
       error.value = null
       try {
-        const [nextRecords, nextBindings] = await Promise.all([
-          service.list(),
-          relationService.listSeatZoneBindings(),
+        const [nextFloors, nextPage] = await Promise.all([
+          service.listFloors(),
+          service.listPage(page.value, pageSize.value, normalizeQuery(query)),
         ])
-        records.value = nextRecords
-        seatZoneBindings.value = nextBindings
+        floors.value = nextFloors.map(cloneFloor)
+        applyPage(nextPage)
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = message(cause)
         return false
-      } finally {
+      }
+      finally {
         isLoading.value = false
+      }
+    }
+
+    async function setQuery(patch: Partial<TicketGateQuery>): Promise<boolean> {
+      Object.assign(query, normalizeQuery({ ...query, ...patch }))
+      page.value = 1
+      return loadPage(1)
+    }
+
+    async function resetQuery(): Promise<boolean> {
+      Object.assign(query, DEFAULT_TICKET_GATE_QUERY)
+      page.value = 1
+      return loadPage(1)
+    }
+
+    async function setPage(value: number): Promise<boolean> {
+      if (!Number.isFinite(value)) return false
+      const nextPage = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
+      if (nextPage === page.value) return true
+      return loadPage(nextPage)
+    }
+
+    async function setPageSize(value: number): Promise<boolean> {
+      if (!Number.isInteger(value) || value <= 0) return false
+      pageSize.value = value
+      page.value = 1
+      return loadPage(1)
+    }
+
+    function validate(input: TicketGateWriteInput, excludedId?: string): TicketGateValidationResult {
+      return validateTicketGateInput(input, floors.value, records.value, excludedId)
+    }
+
+    async function get(id: string): Promise<TicketGate | null> {
+      detailLoadingId.value = id
+      error.value = null
+      try {
+        return await service.get(id)
+      }
+      catch (cause) {
+        error.value = message(cause)
+        return null
+      }
+      finally {
+        detailLoadingId.value = null
+      }
+    }
+
+    async function refreshAfterMutation(targetPage = page.value): Promise<void> {
+      try {
+        applyPage(await service.listPage(targetPage, pageSize.value, normalizeQuery(query)))
+      }
+      catch (cause) {
+        error.value = `操作已成功，但最新列表刷新失败：${message(cause)}`
       }
     }
 
@@ -126,12 +168,15 @@ export function createTicketGateStore(
       error.value = null
       try {
         const record = await service.create(sanitizeTicketGateInput(input))
-        records.value = sortTicketGates([...records.value, record])
+        page.value = 1
+        await refreshAfterMutation(1)
         return record
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = message(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
       }
     }
@@ -146,12 +191,14 @@ export function createTicketGateStore(
       error.value = null
       try {
         const record = await service.update(id, sanitizeTicketGateInput(input))
-        records.value = sortTicketGates([...records.value.filter((item) => item.id !== id), record])
+        await refreshAfterMutation()
         return record
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = message(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
       }
     }
@@ -161,12 +208,14 @@ export function createTicketGateStore(
       error.value = null
       try {
         const record = await service.updateStatus(id, input)
-        records.value = sortTicketGates([...records.value.filter((item) => item.id !== id), record])
+        await refreshAfterMutation()
         return record
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = message(cause)
         return null
-      } finally {
+      }
+      finally {
         isSaving.value = false
       }
     }
@@ -175,18 +224,32 @@ export function createTicketGateStore(
       deletingId.value = id
       error.value = null
       try {
-        const bindingCount = await relationService.countSeatZoneBindings(id)
-        if (bindingCount > 0) throw new Error(`该检票口已绑定 ${bindingCount} 个座位分区，请先在座位规划管理中移除绑定`)
         await service.remove(id)
-        await relationService.cleanupGate(id)
-        records.value = records.value.filter((item) => item.id !== id)
-        page.value = Math.min(page.value, pageCount.value)
+        const targetPage = records.value.length === 1 && page.value > 1 ? page.value - 1 : page.value
+        await refreshAfterMutation(targetPage)
         return true
-      } catch (cause) {
+      }
+      catch (cause) {
         error.value = message(cause)
         return false
-      } finally {
+      }
+      finally {
         deletingId.value = null
+      }
+    }
+
+    async function exportCurrent(): Promise<TicketGate[] | null> {
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.list(normalizeQuery(query))
+      }
+      catch (cause) {
+        error.value = message(cause)
+        return null
+      }
+      finally {
+        isExporting.value = false
       }
     }
 
@@ -196,31 +259,34 @@ export function createTicketGateStore(
 
     return {
       records,
-      seatZoneBindings,
+      floors,
       query,
       page,
       pageSize,
+      total,
       isLoading,
       isSaving,
+      isExporting,
+      detailLoadingId,
       deletingId,
       error,
-      filteredRecords,
-      total,
       pageCount,
       currentPage,
+      filteredRecords,
       paginatedRecords,
+      load,
+      loadPage,
       setQuery,
       resetQuery,
       setPage,
       setPageSize,
       validate,
-      coveredZones,
-      countSeatZoneBindings,
-      load,
+      get,
       create,
       update,
       updateStatus,
       remove,
+      exportCurrent,
       resetError,
     }
   })

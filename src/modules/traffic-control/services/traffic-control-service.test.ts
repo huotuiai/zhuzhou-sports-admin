@@ -1,15 +1,52 @@
-import type { TrafficControlWriteInput } from '../types'
+import type { AxiosResponse } from 'axios'
+import type { SignedRequestConfig } from '@/lib/http'
+import type { TrafficControlType, TrafficControlWriteInput } from '../types'
 import { describe, expect, it } from 'vitest'
-import { LEGACY_AREA_CONTROL_STORAGE_KEY, LocalTrafficControlService, TRAFFIC_CONTROL_STORAGE_KEY, validateTrafficControlInput } from './traffic-control-service'
+import {
+  createTrafficControlService,
+  formatControlRequestDateTime,
+  mapApiControl,
+  parseControlGeometry,
+  serializeControlGeometry,
+  trafficControlExportFilename,
+  validateTrafficControlInput,
+  type ApiControlPage,
+  type ApiControlVO,
+} from './traffic-control-service'
 
-class MemoryStorage implements Storage {
-  private values = new Map<string, string>()
-  get length(): number { return this.values.size }
-  clear(): void { this.values.clear() }
-  getItem(key: string): string | null { return this.values.get(key) ?? null }
-  key(index: number): string | null { return [...this.values.keys()][index] ?? null }
-  removeItem(key: string): void { this.values.delete(key) }
-  setItem(key: string, value: string): void { this.values.set(key, value) }
+function apiControl(overrides: Partial<ApiControlVO> = {}): ApiControlVO {
+  return {
+    id: '9007199254740995',
+    create_at: '2026-08-20T08:00:00+08:00',
+    update_at: '2026-08-20T09:00:00+08:00',
+    code: 'GZ-001',
+    title: '东门道路管制',
+    control_type: 'roadblock',
+    area_name: '体育中心东门',
+    geometry_json: JSON.stringify({
+      type: 'Polygon',
+      coordinates: [[[113.1, 27.8], [113.2, 27.8], [113.2, 27.9], [113.1, 27.8]]],
+    }),
+    start_at: '2026-08-28T10:00:00+08:00',
+    end_at: '2026-08-28T12:00:00+08:00',
+    detour_desc: null,
+    publish_status: 'published',
+    data_source: 'sync',
+    sync_status: 'success',
+    last_sync_at: '2026-08-20T09:00:00+08:00',
+    external_id: 'external-1',
+    publisher_id: '9007199254740997',
+    publish_at: '2026-08-20T08:30:00+08:00',
+    is_pinned: 1,
+    sort_order: 10,
+    remark: null,
+    overlap: [{ kind: 'parking', id: '9007199254740999', name: 'P1 停车场' }],
+    ...overrides,
+  }
+}
+
+function page(records: ApiControlVO[], overrides: Partial<ApiControlPage> = {}): ApiControlPage {
+  return { list: records, total: records.length, page: 1, page_size: 100, ...overrides }
 }
 
 function input(overrides: Partial<TrafficControlWriteInput> = {}): TrafficControlWriteInput {
@@ -17,87 +54,173 @@ function input(overrides: Partial<TrafficControlWriteInput> = {}): TrafficContro
     title: '东门道路管制',
     type: 'road-closure',
     areaName: '体育中心东门',
-    startAt: '2026-08-18T12:00',
-    endAt: '2026-08-18T18:00',
+    startAt: '2027-08-28T10:00',
+    endAt: '2027-08-28T12:00',
     detourInstructions: '请绕行南门',
     geometry: null,
-    publishAt: null,
     pinned: false,
     sortOrder: 10,
     ...overrides,
   }
 }
 
-describe('LocalTrafficControlService', () => {
-  it('seeds the four prototype records with publication metadata', async () => {
-    const service = new LocalTrafficControlService({ storage: new MemoryStorage(), now: () => new Date('2026-08-13T10:00:00+08:00') })
-    const records = await service.list()
-    expect(records).toHaveLength(4)
-    expect(records.map((item) => item.code)).toEqual(['GZ-001', 'GZ-002', 'GZ-004', 'GZ-003'])
-    expect(records.find((item) => item.code === 'GZ-003')).toMatchObject({ publishStatus: 'draft', publishAt: null, publisher: '张警官' })
+describe('traffic control API service', () => {
+  it('maps snake-case fields, int64 IDs, nullable values and overlaps', () => {
+    const record = mapApiControl(apiControl())
+    expect(record).toMatchObject({
+      id: '9007199254740995',
+      type: 'road-closure',
+      detourInstructions: '',
+      publisherId: '9007199254740997',
+      pinned: true,
+      dataSource: 'sync',
+      syncStatus: 'success',
+      externalId: 'external-1',
+      remark: '',
+      coordinateSystem: 'GCJ-02',
+      overlaps: [{ kind: 'parking', id: '9007199254740999', name: 'P1 停车场' }],
+    })
+    expect(record.geometry).toMatchObject({ type: 'polygon' })
+    expect(record.geometry?.type === 'polygon' ? record.geometry.path[0] : null).toEqual({ lng: 113.1, lat: 27.8 })
+    expect(record.areaSquareMeters).toBeGreaterThan(0)
   })
 
-  it('persists CRUD with monotonic codes and permits an empty geometry', async () => {
-    const storage = new MemoryStorage()
-    let id = 0
-    const service = new LocalTrafficControlService({ storage, createId: () => `id-${++id}`, now: () => new Date('2026-08-18T00:00:00+08:00') })
-    const first = await service.create(input())
-    expect(first).toMatchObject({ code: 'GZ-005', geometry: null, areaSquareMeters: null, coordinateSystem: 'GCJ-02', publishStatus: 'draft' })
-    const second = await service.create(input({ title: '西门限行', type: 'restriction' }))
-    expect(second.code).toBe('GZ-006')
-    await service.remove(second.id)
-    const third = await service.create(input({ title: '北门绕行', type: 'detour' }))
-    expect(third.code).toBe('GZ-007')
-    const updated = await service.update(first.id, input({ title: '东门历史管制', startAt: '2025-01-01T08:00', endAt: '2025-01-01T09:00' }))
-    expect(updated).toMatchObject({ id: first.id, code: 'GZ-005', title: '东门历史管制' })
+  it.each([
+    ['roadblock', 'road-closure'],
+    ['limit', 'restriction'],
+    ['detour', 'detour'],
+    ['temp', 'temporary'],
+    ['other', 'other'],
+  ] as const)('maps API control type %s to %s', (apiType, type) => {
+    expect(mapApiControl(apiControl({ control_type: apiType })).type).toBe(type)
   })
 
-  it('uses only the new versioned key and never reads or deletes legacy areas', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(LEGACY_AREA_CONTROL_STORAGE_KEY, JSON.stringify({ schemaVersion: 1, records: [{ name: '旧区域' }] }))
-    const service = new LocalTrafficControlService({ storage, now: () => new Date('2026-08-18T00:00:00+08:00') })
-    expect(await service.list()).toHaveLength(4)
-    await service.create(input())
-    expect(storage.getItem(TRAFFIC_CONTROL_STORAGE_KEY)).not.toBeNull()
-    expect(storage.getItem(LEGACY_AREA_CONTROL_STORAGE_KEY)).toContain('旧区域')
+  it('parses only valid GeoJSON Polygon data', () => {
+    expect(parseControlGeometry(null)).toBeNull()
+    expect(() => parseControlGeometry('{broken')).toThrow('无法解析')
+    expect(() => parseControlGeometry(JSON.stringify({ type: 'Point', coordinates: [113.1, 27.8] }))).toThrow('不是 GeoJSON Polygon')
   })
 
-  it('continues from the greatest existing code when stored sequence metadata is behind', async () => {
-    const storage = new MemoryStorage()
-    const service = new LocalTrafficControlService({ storage, now: () => new Date('2026-08-18T00:00:00+08:00') })
-    await service.create(input())
-    const envelope = JSON.parse(storage.getItem(TRAFFIC_CONTROL_STORAGE_KEY)!) as { lastSequence: number, records: Array<{ code: string }> }
-    envelope.lastSequence = 4
-    envelope.records[0]!.code = 'GZ-012'
-    storage.setItem(TRAFFIC_CONTROL_STORAGE_KEY, JSON.stringify(envelope))
-    expect((await service.create(input({ title: '新增管制' }))).code).toBe('GZ-013')
+  it('serializes polygon, rectangle and circle as closed Polygon rings', () => {
+    const polygon = JSON.parse(serializeControlGeometry({
+      type: 'polygon',
+      path: [{ lng: 113.1, lat: 27.8 }, { lng: 113.2, lat: 27.8 }, { lng: 113.2, lat: 27.9 }],
+    })) as { type: string, coordinates: number[][][] }
+    const rectangle = JSON.parse(serializeControlGeometry({
+      type: 'rectangle',
+      southWest: { lng: 113.1, lat: 27.8 },
+      northEast: { lng: 113.2, lat: 27.9 },
+    })) as { coordinates: number[][][] }
+    const circle = JSON.parse(serializeControlGeometry({
+      type: 'circle',
+      center: { lng: 113.1, lat: 27.8 },
+      radiusMeters: 100,
+    })) as { coordinates: number[][][] }
+    expect(polygon.type).toBe('Polygon')
+    expect(polygon.coordinates[0]![0]).toEqual(polygon.coordinates[0]!.at(-1))
+    expect(rectangle.coordinates[0]).toHaveLength(5)
+    expect(circle.coordinates[0]).toHaveLength(49)
   })
 
-  it('rejects damaged storage and validates time, sort and geometry rules', async () => {
-    const storage = new MemoryStorage()
-    storage.setItem(TRAFFIC_CONTROL_STORAGE_KEY, '{broken')
-    await expect(new LocalTrafficControlService({ storage }).list()).rejects.toThrow('无法解析')
-
-    const result = validateTrafficControlInput(input({ title: 'A', areaName: '', startAt: '2026-08-18T18:00', endAt: '2026-08-18T12:00', sortOrder: -1 }), { now: new Date('2026-08-18T00:00:00+08:00') })
-    expect(result.issues.map((item) => item.field)).toEqual(['title', 'areaName', 'dateRange', 'sortOrder'])
-    expect(validateTrafficControlInput(input({ geometry: { type: 'circle', center: { lng: 113.1, lat: 27.8 }, radiusMeters: 0 } })).issues.some((item) => item.field === 'geometry')).toBe(true)
+  it('validates form values and formats local request times', () => {
+    expect(validateTrafficControlInput(input()).valid).toBe(true)
+    expect(validateTrafficControlInput(input({ title: 'A', areaName: '', sortOrder: -1 })).issues.map(item => item.field)).toEqual(['title', 'areaName', 'sortOrder'])
+    expect(formatControlRequestDateTime('2027-08-28T10:20')).toBe('2027-08-28 10:20:00')
+    expect(formatControlRequestDateTime('2027-08-28T10:20:30')).toBe('2027-08-28 10:20:30')
   })
 
-  it('supports draft publishing and one-way revocation', async () => {
-    const service = new LocalTrafficControlService({ storage: new MemoryStorage(), now: () => new Date('2026-08-18T00:00:00+08:00') })
-    const draft = await service.create(input())
-    expect((await service.publish(draft.id)).publishStatus).toBe('published')
-    expect((await service.revoke(draft.id)).publishStatus).toBe('revoked')
-    await expect(service.publish(draft.id)).rejects.toThrow('不可再发布')
+  it('sends supported filters and automatically reads all pages', async () => {
+    const configs: SignedRequestConfig[] = []
+    const requester = async <T>(config: SignedRequestConfig): Promise<T> => {
+      configs.push(config)
+      const requestedPage = Number((config.params as Record<string, unknown>).page)
+      return page(
+        [apiControl({ id: requestedPage, code: `GZ-00${requestedPage}`, control_type: 'limit' })],
+        { total: 101, page: requestedPage, page_size: 100 },
+      ) as T
+    }
+    const service = createTrafficControlService(requester)
+    const records = await service.list({ keyword: ' 东门 ', type: 'restriction', publishStatus: 'draft' })
+    expect(records.map(record => record.id)).toEqual(['1', '2'])
+    expect(configs).toEqual([
+      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 1, page_size: 100, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
+      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 2, page_size: 100, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
+    ])
   })
 
-  it('automatically publishes a scheduled draft when its publish time arrives', async () => {
-    const storage = new MemoryStorage()
-    const earlyService = new LocalTrafficControlService({ storage, now: () => new Date('2026-08-18T00:00:00+08:00') })
-    const scheduled = await earlyService.create(input({ publishAt: '2026-08-18T10:00' }))
-    expect(scheduled.publishStatus).toBe('draft')
+  it('calls detail and mutation endpoints with documented bodies', async () => {
+    const configs: SignedRequestConfig[] = []
+    const responses = [
+      apiControl({ id: 21 }),
+      apiControl({ id: 21, publish_status: 'draft' }),
+      apiControl({ id: 21, title: '东门最新管制', geometry_json: null }),
+      apiControl({ id: 21, publish_status: 'published' }),
+      apiControl({ id: 21, publish_status: 'revoked' }),
+      { deleted: true },
+    ]
+    const requester = async <T>(config: SignedRequestConfig): Promise<T> => {
+      configs.push(config)
+      return responses.shift() as T
+    }
+    const service = createTrafficControlService(requester)
+    await service.get('21')
+    await service.create(input({ type: 'temporary' }))
+    await service.update('21', input({ title: '东门最新管制' }))
+    await service.publish('21')
+    await service.revoke('21')
+    await service.remove('21')
 
-    const dueService = new LocalTrafficControlService({ storage, now: () => new Date('2026-08-18T11:00:00+08:00') })
-    expect((await dueService.list()).find((item) => item.id === scheduled.id)?.publishStatus).toBe('published')
+    expect(configs[0]).toEqual({ method: 'GET', url: 'api/v1/admin/controls/21' })
+    expect(configs[1]).toMatchObject({
+      method: 'POST',
+      url: 'api/v1/admin/controls',
+      data: {
+        title: '东门道路管制', control_type: 'temp', area_name: '体育中心东门',
+        start_at: '2027-08-28 10:00:00', end_at: '2027-08-28 12:00:00',
+        detour_desc: '请绕行南门', is_pinned: 0, sort_order: 10,
+      },
+    })
+    expect(configs[1]?.data).not.toHaveProperty('code')
+    expect(configs[1]?.data).not.toHaveProperty('publish_at')
+    expect(configs[1]?.data).not.toHaveProperty('geometry_json')
+    expect(configs[2]).toMatchObject({
+      method: 'PATCH',
+      url: 'api/v1/admin/controls/21',
+      data: { title: '东门最新管制', control_type: 'roadblock', geometry_json: null },
+    })
+    expect(configs[2]?.data).not.toHaveProperty('code')
+    expect(configs[2]?.data).not.toHaveProperty('publish_at')
+    expect(configs.slice(3)).toMatchObject([
+      { method: 'POST', url: 'api/v1/admin/controls/21/publish' },
+      { method: 'POST', url: 'api/v1/admin/controls/21/revoke' },
+      { method: 'DELETE', url: 'api/v1/admin/controls/21' },
+    ])
+  })
+
+  it('downloads the server CSV with a safe response filename', async () => {
+    const blob = new Blob(['csv'], { type: 'text/csv' })
+    let fileConfig: SignedRequestConfig | null = null
+    const service = createTrafficControlService(
+      async () => page([]) as never,
+      async (config) => {
+        fileConfig = config
+        return { data: blob, headers: { 'content-disposition': "attachment; filename*=UTF-8''control%20zones.csv" } } as unknown as AxiosResponse<Blob>
+      },
+    )
+    await expect(service.export()).resolves.toEqual({ content: blob, filename: 'control zones.csv' })
+    expect(fileConfig).toEqual({ method: 'GET', url: 'api/v1/admin/controls/export', responseType: 'blob', headers: { Accept: 'text/csv' } })
+    expect(trafficControlExportFilename('../../bad.csv')).toBe('control_zones.csv')
+  })
+
+  it('round-trips every UI type through request mapping', async () => {
+    const sent: string[] = []
+    const requester = async <T>(config: SignedRequestConfig): Promise<T> => {
+      sent.push((config.data as { control_type: string }).control_type)
+      return apiControl({ control_type: (config.data as { control_type: string }).control_type }) as T
+    }
+    const service = createTrafficControlService(requester)
+    const types: TrafficControlType[] = ['road-closure', 'restriction', 'detour', 'temporary', 'other']
+    for (const type of types) await service.create(input({ type }))
+    expect(sent).toEqual(['roadblock', 'limit', 'detour', 'temp', 'other'])
   })
 })

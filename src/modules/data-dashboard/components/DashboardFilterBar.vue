@@ -5,8 +5,9 @@ import type {
   DashboardDatePreset,
   DashboardDateRange,
   DashboardFilterState,
+  DashboardStatsQuery,
 } from '../types'
-import { normalizeDashboardRange, rangeForPreset } from '../services/dashboard-service'
+import { normalizeDashboardRange, queryForPreset } from '../services/dashboard-service'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -21,7 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: DashboardFilterState]
-  apply: [range: DashboardDateRange]
+  apply: [query: DashboardStatsQuery]
   validationError: [message: string]
 }>()
 
@@ -52,7 +53,7 @@ function applyCustom(state: DashboardFilterState): void {
   try {
     const range = normalizeDashboardRange({ start: state.customStart, end: state.customEnd }, localToday())
     if (range.end !== state.customEnd) updateState({ customEnd: range.end })
-    emit('apply', range)
+    emit('apply', { preset: 'custom', activityId: '', ...range })
   } catch (error) {
     emit('validationError', error instanceof Error ? error.message : '日期范围无效')
   }
@@ -62,7 +63,7 @@ function handlePresetChange(value: unknown): void {
   if (!isPreset(value)) return
   const next = updateState({ preset: value, activityId: '' })
   if (value === 'custom') return
-  emit('apply', rangeForPreset(value, localToday()))
+  emit('apply', queryForPreset(value, localToday()))
   if (next.customStart || next.customEnd) updateState({ customStart: '', customEnd: '' })
 }
 
@@ -74,22 +75,30 @@ function handleCustomDate(field: 'customStart' | 'customEnd', value: string | nu
 function handleActivityChange(value: unknown): void {
   const id = typeof value === 'string' ? value : ''
   if (!id || id === 'none') {
-    updateState({ activityId: '' })
+    const next = updateState({ activityId: '' })
+    if (next.preset === 'custom' && next.customStart && next.customEnd) applyCustom(next)
+    else emit('apply', queryForPreset(next.preset === 'custom' ? 'last-7-days' : next.preset, localToday()))
     return
   }
   const activity = props.activities.find((item) => item.id === id)
   if (!activity) return
-  const next = updateState({
+  const start = activity.start ?? props.currentRange.start
+  const end = activity.end ?? props.currentRange.end
+  updateState({
     preset: 'custom',
     activityId: id,
-    customStart: activity.start,
-    customEnd: activity.end,
+    customStart: start,
+    customEnd: end,
   })
-  applyCustom(next)
+  emit('apply', { preset: 'custom', activityId: id, start, end })
 }
 
 function formatRange(range: DashboardDateRange): string {
   return `${range.start.replaceAll('-', '.')} — ${range.end.replaceAll('-', '.')}`
+}
+
+function formatActivityRange(activity: DashboardActivityOption): string {
+  return activity.start && activity.end ? `${activity.start.slice(5)}—${activity.end.slice(5)}` : '时间以接口为准'
 }
 </script>
 
@@ -121,7 +130,7 @@ function formatRange(range: DashboardDateRange): string {
             <SelectContent>
               <SelectItem value="none">不按活动筛选</SelectItem>
               <SelectItem v-for="activity in activities" :key="activity.id" :value="activity.id">
-                {{ activity.name }}（{{ activity.start.slice(5) }}—{{ activity.end.slice(5) }}）
+                {{ activity.name }}（{{ formatActivityRange(activity) }}）
               </SelectItem>
             </SelectContent>
           </Select>
