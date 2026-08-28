@@ -1,6 +1,8 @@
 import type {
   ParkingLot,
   ParkingLotCreateInput,
+  ParkingLotCreateOptions,
+  ParkingLotDetail,
   ParkingLotQuery,
   ParkingLotService,
   ParkingLotUpdateInput,
@@ -41,6 +43,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
     const pageSize = ref(20)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const detailLoadingId = ref<string | null>(null)
     const updatingAvailabilityId = ref<string | null>(null)
     const deletingId = ref<string | null>(null)
     const error = ref<string | null>(null)
@@ -108,7 +111,27 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       }
     }
 
-    async function create(input: ParkingLotCreateInput): Promise<ParkingLot | null> {
+    async function get(id: string): Promise<ParkingLotDetail | null> {
+      detailLoadingId.value = id
+      error.value = null
+      try {
+        const detail = await service.get(id)
+        records.value = sortParkingLots([
+          ...records.value.filter(record => record.id !== id),
+          detail.record,
+        ])
+        return detail
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        detailLoadingId.value = null
+      }
+    }
+
+    async function create(input: ParkingLotCreateInput, options?: ParkingLotCreateOptions): Promise<ParkingLot | null> {
       const validation = validateCreate(input)
       if (!validation.valid) {
         error.value = validation.issues[0]!.message
@@ -117,8 +140,25 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       isSaving.value = true
       error.value = null
       try {
-        const record = await service.create(sanitizeParkingLotCreateInput(input))
+        const record = await service.create(sanitizeParkingLotCreateInput(input), options)
         records.value = sortParkingLots([...records.value, record])
+        return record
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        isSaving.value = false
+      }
+    }
+
+    async function updateEnabled(id: string, enabled: boolean): Promise<ParkingLot | null> {
+      isSaving.value = true
+      error.value = null
+      try {
+        const record = await service.updateEnabled(id, enabled)
+        records.value = sortParkingLots([...records.value.filter(item => item.id !== id), record])
         return record
       }
       catch (cause) {
@@ -202,6 +242,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       pageSize,
       isLoading,
       isSaving,
+      detailLoadingId,
       updatingAvailabilityId,
       deletingId,
       error,
@@ -217,8 +258,10 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       validateCreate,
       validateUpdate,
       load,
+      get,
       create,
       update,
+      updateEnabled,
       updateAvailability,
       remove,
       resetError,

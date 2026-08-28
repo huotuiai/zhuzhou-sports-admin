@@ -1,11 +1,14 @@
+import type { SignedRequestConfig } from '@/lib/http'
 import type {
   ParkingAvailabilityUpdateMethod,
   ParkingFeeType,
   ParkingLot,
   ParkingLotBaseInput,
   ParkingLotCreateInput,
+  ParkingLotCreateOptions,
+  ParkingLotDetail,
+  ParkingLotGateBindingValue,
   ParkingLotService,
-  ParkingLotUpdateInput,
   ParkingLotUpdateOptions,
   ParkingLotValidationField,
   ParkingLotValidationIssue,
@@ -13,80 +16,89 @@ import type {
   ParkingOpenStatus,
 } from '../types'
 import { isValidGeoPoint } from '@/components/map/geometry'
-import { createClientId } from '@/lib/id'
+import { ApiError, requestData } from '@/lib/http'
 
-export const PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v4'
-export const LEGACY_V3_PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v3'
-export const LEGACY_V2_PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v2'
-export const LEGACY_PARKING_LOT_STORAGE_KEY = 'zz-sports-parking-lots:v1'
-export const PARKING_LOT_SCHEMA_VERSION = 4
+type ApiParkingOpenStatus = 0 | 1 | 2
+type ApiParkingUpdateMode = 'manual' | 'sync'
 
-interface StoredParkingLots {
-  schemaVersion: typeof PARKING_LOT_SCHEMA_VERSION
-  records: ParkingLot[]
+export interface ApiParkingDirectGate {
+  gate_id: number | string
+  gate_name?: string | null
+  walk_minutes: number | string | null
 }
 
-type LegacyV3ParkingLot = Omit<ParkingLot, 'availabilityUpdateMethod'>
-
-interface StoredV3ParkingLots {
-  schemaVersion: 3
-  records: LegacyV3ParkingLot[]
-}
-
-type LegacyV2ParkingLot = Omit<ParkingLot, 'feeStandard' | 'availabilityUpdateMethod'> & { hourlyRateYuan: number | null }
-
-interface StoredV2ParkingLots {
-  schemaVersion: 2
-  records: LegacyV2ParkingLot[]
-}
-
-interface LegacyParkingLot {
-  id: string
-  name: string
+export interface ApiParkingVO {
+  id: number | string
+  create_at: string
+  update_at: string
   code: string
-  address: string
-  totalSpaces: number
-  enabled: boolean
+  name: string
+  location_desc: string | null
+  lng: number
+  lat: number
+  nav_address: string | null
+  capacity: number | string
+  remain: number | string | null
+  update_mode: string
+  last_remain_at: string | null
+  is_free: number | boolean
+  fee_desc: string | null
+  open_status: number
+  recommend_weight: number | string
+  sort_order: number | string
+  external_code: string | null
+  remark: string | null
+  status: number | boolean
+  direct_gates: ApiParkingDirectGate[] | null
+}
+
+export interface ApiParkingPage {
+  list: ApiParkingVO[]
+  total: number | string
+  page: number | string
+  page_size: number | string
+}
+
+interface ApiParkingWriteRequest {
+  code?: string
+  name: string
+  location_desc: string
+  lng: number
+  lat: number
+  nav_address: string
+  capacity: number
+  remain?: number
+  update_mode: ApiParkingUpdateMode
+  is_free: 0 | 1
+  fee_desc: string
+  open_status: ApiParkingOpenStatus
+  recommend_weight: number
+  sort_order: number
   remark: string
-  createdAt: string
-  updatedAt: string
+  status: 0 | 1
+  direct_gates?: Array<{ gate_id: number, walk_minutes: number }>
 }
 
-interface StoredLegacyParkingLots {
-  schemaVersion: 1
-  records: LegacyParkingLot[]
+interface ApiParkingEnabledRequest {
+  name: string
+  lng: number
+  lat: number
+  status: 0 | 1
 }
 
-export type ParkingLotServiceErrorCode =
-  | 'invalid_input'
-  | 'duplicate_code'
-  | 'available_exceeds_total'
-  | 'invalid_available_spaces'
-  | 'not_found'
-  | 'storage_unavailable'
-  | 'storage_corrupted'
+export interface ParkingLotDataRequester {
+  <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
 
 export class ParkingLotServiceError extends Error {
-  readonly code: ParkingLotServiceErrorCode
-
-  constructor(code: ParkingLotServiceErrorCode, message: string, options?: ErrorOptions) {
+  constructor(message: string, options?: ErrorOptions) {
     super(message, options)
     this.name = 'ParkingLotServiceError'
-    this.code = code
   }
 }
 
-export interface LocalParkingLotServiceOptions {
-  storage?: Storage
-  createId?: () => string
-  now?: () => Date
-}
-
-function resolveBrowserStorage(): Storage {
-  if (typeof globalThis.localStorage === 'undefined') {
-    throw new ParkingLotServiceError('storage_unavailable', '当前环境不支持本地存储')
-  }
-  return globalThis.localStorage
+function responseError(message: string): ApiError {
+  return new ApiError(message, { kind: 'response' })
 }
 
 function normalizeText(value: string): string {
@@ -95,6 +107,37 @@ function normalizeText(value: string): string {
 
 function codeIdentity(code: string): string {
   return normalizeText(code).toLocaleUpperCase('en-US')
+}
+
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
+  return value
+}
+
+function optionalText(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function integer(value: unknown, field: string): number {
+  const result = Number(value)
+  if (!Number.isInteger(result)) throw responseError(`服务器返回的${field}无效`)
+  return result
+}
+
+function positiveInteger(value: unknown, field: string): number {
+  const result = integer(value, field)
+  if (result <= 0) throw responseError(`服务器返回的${field}无效`)
+  return result
+}
+
+function nonNegativeInteger(value: unknown, field: string): number {
+  const result = integer(value, field)
+  if (result < 0) throw responseError(`服务器返回的${field}无效`)
+  return result
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === 1
 }
 
 function clonePoint(point: ParkingLot['point']): ParkingLot['point'] {
@@ -115,6 +158,45 @@ function isOpenStatus(value: unknown): value is ParkingOpenStatus {
 
 function isAvailabilityUpdateMethod(value: unknown): value is ParkingAvailabilityUpdateMethod {
   return value === 'integrated' || value === 'manual'
+}
+
+function mapUpdateMethod(value: unknown): ParkingAvailabilityUpdateMethod {
+  if (value === 'manual') return 'manual'
+  if (value === 'sync') return 'integrated'
+  throw responseError('服务器返回的余位更新方式无效')
+}
+
+function apiUpdateMethod(value: ParkingAvailabilityUpdateMethod): ApiParkingUpdateMode {
+  return value === 'integrated' ? 'sync' : 'manual'
+}
+
+function mapOpenStatus(value: unknown): ParkingOpenStatus {
+  const status = integer(value, '停车场开放状态')
+  if (status === 0 || status === 2) return 'closed'
+  if (status === 1) return 'open'
+  throw responseError('服务器返回的停车场开放状态无效')
+}
+
+function rawOpenStatus(value: unknown): ApiParkingOpenStatus {
+  const status = integer(value, '停车场开放状态')
+  if (status === 0 || status === 1 || status === 2) return status
+  throw responseError('服务器返回的停车场开放状态无效')
+}
+
+function apiOpenStatus(value: ParkingOpenStatus): 0 | 1 {
+  return value === 'open' ? 1 : 0
+}
+
+function bodyId(value: string): number {
+  const result = Number(value)
+  if (!Number.isSafeInteger(result) || result <= 0) {
+    throw new ApiError('检票口 ID 超出浏览器可安全提交的范围', { kind: 'configuration' })
+  }
+  return result
+}
+
+function endpoint(id: string, suffix = ''): string {
+  return `api/v1/admin/parkings/${encodeURIComponent(id)}${suffix}`
 }
 
 function characterCount(value: string): number {
@@ -140,7 +222,7 @@ export function sanitizeParkingLotBaseInput(input: ParkingLotBaseInput): Parking
 }
 
 export function sanitizeParkingLotCreateInput(input: ParkingLotCreateInput): ParkingLotCreateInput {
-  return { ...sanitizeParkingLotBaseInput(input), code: codeIdentity(input.code) }
+  return { ...sanitizeParkingLotBaseInput(input), code: codeIdentity(input.code), availabilityUpdateMethod: 'manual' }
 }
 
 function pushLengthIssue(
@@ -210,8 +292,7 @@ export function validateParkingLotCreateInput(
 }
 
 function throwForValidation(issues: readonly ParkingLotValidationIssue[]): never {
-  const issue = issues[0]!
-  throw new ParkingLotServiceError(issue.code === 'duplicate' ? 'duplicate_code' : 'invalid_input', issue.message)
+  throw new ParkingLotServiceError(issues[0]?.message ?? '停车场信息校验失败')
 }
 
 export function sortParkingLots(records: readonly ParkingLot[]): ParkingLot[] {
@@ -224,272 +305,195 @@ export function sortParkingLots(records: readonly ParkingLot[]): ParkingLot[] {
     .map(cloneParkingLot)
 }
 
-function isLegacyParkingLot(value: unknown): value is LegacyParkingLot {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Record<string, unknown>
-  return typeof record.id === 'string' && typeof record.name === 'string' && typeof record.code === 'string' &&
-    typeof record.address === 'string' && Number.isInteger(record.totalSpaces) && Number(record.totalSpaces) >= 0 &&
-    typeof record.enabled === 'boolean' && typeof record.remark === 'string' &&
-    typeof record.createdAt === 'string' && typeof record.updatedAt === 'string'
-}
-
-function isLegacyV3ParkingLot(value: unknown): value is LegacyV3ParkingLot {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Record<string, unknown>
-  const point = record.point
-  return typeof record.id === 'string' && typeof record.code === 'string' && typeof record.name === 'string' &&
-    typeof record.locationDescription === 'string' &&
-    (point === null || (typeof point === 'object' && isValidGeoPoint(point as { lng: number, lat: number }))) &&
-    typeof record.navigationAddress === 'string' && Number.isInteger(record.totalSpaces) && Number(record.totalSpaces) > 0 &&
-    Number.isInteger(record.availableSpaces) && Number(record.availableSpaces) >= 0 &&
-    Number(record.availableSpaces) <= Number(record.totalSpaces) &&
-    isFeeType(record.feeType) && typeof record.feeStandard === 'string' &&
-    isOpenStatus(record.openStatus) && typeof record.enabled === 'boolean' &&
-    Number.isInteger(record.recommendationWeight) && Number(record.recommendationWeight) >= 0 &&
-    Number(record.recommendationWeight) <= 100 &&
-    Number.isInteger(record.sortOrder) && Number(record.sortOrder) >= 0 && typeof record.remark === 'string' &&
-    record.coordinateSystem === 'GCJ-02' && typeof record.availabilityUpdatedAt === 'string' &&
-    typeof record.createdAt === 'string' && typeof record.updatedAt === 'string'
-}
-
-function isParkingLot(value: unknown): value is ParkingLot {
-  return isLegacyV3ParkingLot(value) &&
-    isAvailabilityUpdateMethod((value as Record<string, unknown>).availabilityUpdateMethod)
-}
-
-function isV2ParkingLot(value: unknown): value is LegacyV2ParkingLot {
-  if (!value || typeof value !== 'object') return false
-  const record = value as Record<string, unknown>
-  const point = record.point
-  return typeof record.id === 'string' && typeof record.code === 'string' && typeof record.name === 'string' &&
-    typeof record.locationDescription === 'string' &&
-    (point === null || (typeof point === 'object' && isValidGeoPoint(point as { lng: number, lat: number }))) &&
-    typeof record.navigationAddress === 'string' && Number.isInteger(record.totalSpaces) && Number(record.totalSpaces) > 0 &&
-    Number.isInteger(record.availableSpaces) && Number(record.availableSpaces) >= 0 &&
-    Number(record.availableSpaces) <= Number(record.totalSpaces) && isFeeType(record.feeType) &&
-    (record.hourlyRateYuan === null || typeof record.hourlyRateYuan === 'number') &&
-    isOpenStatus(record.openStatus) && typeof record.enabled === 'boolean' &&
-    Number.isInteger(record.recommendationWeight) && Number(record.recommendationWeight) >= 0 &&
-    Number(record.recommendationWeight) <= 100 && Number.isInteger(record.sortOrder) && Number(record.sortOrder) >= 0 &&
-    typeof record.remark === 'string' && record.coordinateSystem === 'GCJ-02' &&
-    typeof record.availabilityUpdatedAt === 'string' && typeof record.createdAt === 'string' &&
-    typeof record.updatedAt === 'string'
-}
-
-export class LocalParkingLotService implements ParkingLotService {
-  private readonly injectedStorage: Storage | undefined
-  private readonly createId: () => string
-  private readonly now: () => Date
-
-  constructor(options: LocalParkingLotServiceOptions = {}) {
-    this.injectedStorage = options.storage
-    this.createId = options.createId ?? createClientId
-    this.now = options.now ?? (() => new Date())
-  }
-
-  private get storage(): Storage {
-    return this.injectedStorage ?? resolveBrowserStorage()
-  }
-
-  private parseCurrent(raw: string): ParkingLot[] {
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredParkingLots>
-      if (
-        parsed.schemaVersion !== PARKING_LOT_SCHEMA_VERSION ||
-        !Array.isArray(parsed.records) ||
-        !parsed.records.every(isParkingLot)
-      ) throw new Error('Unsupported or invalid parking schema')
-      return parsed.records.map(cloneParkingLot)
+function mapDirectGates(value: unknown): ParkingLotGateBindingValue[] {
+  if (value === null || value === undefined) return []
+  if (!Array.isArray(value)) throw responseError('服务器返回的附近检票口数据无效')
+  return value.map((item) => {
+    if (!item || typeof item !== 'object') throw responseError('服务器返回的附近检票口数据无效')
+    const gate = item as Record<string, unknown>
+    if (gate.gate_id === undefined || gate.gate_id === null) throw responseError('服务器返回的检票口 ID 不完整')
+    return {
+      gateId: String(gate.gate_id),
+      walkingMinutes: positiveInteger(gate.walk_minutes, '检票口步行时间'),
     }
-    catch (error) {
-      throw new ParkingLotServiceError('storage_corrupted', '本地停车场数据无法解析', { cause: error })
+  })
+}
+
+export function mapApiParkingLot(value: ApiParkingVO): ParkingLot {
+  if (value.id === undefined || value.id === null) throw responseError('服务器返回的停车场 ID 不完整')
+  const point = { lng: Number(value.lng), lat: Number(value.lat) }
+  if (!isValidGeoPoint(point)) throw responseError('服务器返回的停车场定位无效')
+  const totalSpaces = positiveInteger(value.capacity, '停车场总车位')
+  const availableSpaces = value.remain === null || value.remain === undefined
+    ? 0
+    : nonNegativeInteger(value.remain, '停车场空余车位')
+  if (availableSpaces > totalSpaces) throw responseError('服务器返回的空余车位超过总车位')
+  return {
+    id: String(value.id),
+    code: requiredText(value.code, '停车场编号'),
+    name: requiredText(value.name, '停车场名称'),
+    locationDescription: optionalText(value.location_desc),
+    point,
+    navigationAddress: optionalText(value.nav_address),
+    totalSpaces,
+    availableSpaces,
+    availabilityUpdateMethod: mapUpdateMethod(value.update_mode),
+    feeType: flag(value.is_free) ? 'free' : 'paid',
+    feeStandard: optionalText(value.fee_desc),
+    openStatus: mapOpenStatus(value.open_status),
+    enabled: flag(value.status),
+    recommendationWeight: nonNegativeInteger(value.recommend_weight, '停车场推荐权重'),
+    sortOrder: nonNegativeInteger(value.sort_order, '停车场排序'),
+    remark: optionalText(value.remark),
+    coordinateSystem: 'GCJ-02',
+    availabilityUpdatedAt: optionalText(value.last_remain_at),
+    createdAt: requiredText(value.create_at, '停车场创建时间'),
+    updatedAt: requiredText(value.update_at, '停车场更新时间'),
+  }
+}
+
+export function mapApiParkingDetail(value: ApiParkingVO): ParkingLotDetail {
+  return {
+    record: mapApiParkingLot(value),
+    nearbyGateBindings: mapDirectGates(value.direct_gates),
+  }
+}
+
+function directGateBody(bindings: readonly ParkingLotGateBindingValue[]): Array<{ gate_id: number, walk_minutes: number }> {
+  const gateIds = new Set<string>()
+  return bindings.map((binding) => {
+    if (gateIds.has(binding.gateId)) throw new ParkingLotServiceError('同一检票口不能重复绑定')
+    gateIds.add(binding.gateId)
+    const walkingMinutes = Number(binding.walkingMinutes)
+    if (!Number.isInteger(walkingMinutes) || walkingMinutes <= 0) {
+      throw new ParkingLotServiceError('步行时间必须是大于 0 的整数')
     }
+    return { gate_id: bodyId(binding.gateId), walk_minutes: walkingMinutes }
+  })
+}
+
+function writeBody(input: ParkingLotBaseInput, originalOpenStatus: ApiParkingOpenStatus): ApiParkingWriteRequest {
+  const value = sanitizeParkingLotBaseInput(input)
+  if (!value.point) throw new ParkingLotServiceError('请输入定位经纬度')
+  return {
+    name: value.name,
+    location_desc: value.locationDescription,
+    lng: value.point.lng,
+    lat: value.point.lat,
+    nav_address: value.navigationAddress,
+    capacity: value.totalSpaces,
+    update_mode: apiUpdateMethod(value.availabilityUpdateMethod),
+    is_free: value.feeType === 'free' ? 1 : 0,
+    fee_desc: value.feeStandard,
+    open_status: value.openStatus === 'closed' && originalOpenStatus === 2 ? 2 : apiOpenStatus(value.openStatus),
+    recommend_weight: value.recommendationWeight,
+    sort_order: value.sortOrder,
+    remark: value.remark,
+    status: value.enabled ? 1 : 0,
+  }
+}
+
+const MAX_PAGE_SIZE = 100
+
+export function createParkingLotService(request: ParkingLotDataRequester = requestData): ParkingLotService {
+  async function rawDetail(id: string): Promise<ApiParkingVO> {
+    return request<ApiParkingVO>({ method: 'GET', url: endpoint(id) })
   }
 
-  private migrateV2(raw: string): ParkingLot[] {
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredV2ParkingLots>
-      if (parsed.schemaVersion !== 2 || !Array.isArray(parsed.records) || !parsed.records.every(isV2ParkingLot)) {
-        throw new Error('Invalid v2 parking schema')
+  async function listPage(page: number): Promise<ApiParkingPage> {
+    return request<ApiParkingPage>({
+      method: 'GET',
+      url: 'api/v1/admin/parkings',
+      params: { page, page_size: MAX_PAGE_SIZE },
+    })
+  }
+
+  return {
+    async list() {
+      const first = await listPage(1)
+      const records = Array.isArray(first.list) ? first.list.map(mapApiParkingLot) : []
+      const total = nonNegativeInteger(first.total, '停车场总数')
+      const pageSize = positiveInteger(first.page_size, '停车场每页条数')
+      const pageCount = Math.ceil(total / pageSize)
+      for (let page = 2; page <= pageCount; page += 1) {
+        const next = await listPage(page)
+        if (Array.isArray(next.list)) records.push(...next.list.map(mapApiParkingLot))
       }
-      return parsed.records.map(({ hourlyRateYuan, ...record }): ParkingLot => ({
-        ...record,
-        point: clonePoint(record.point),
-        availabilityUpdateMethod: 'manual',
-        feeStandard: record.feeType === 'paid' && hourlyRateYuan !== null
-          ? `${hourlyRateYuan.toLocaleString('zh-CN')} 元/小时`
-          : '',
+      return sortParkingLots([...new Map(records.map((record) => [record.id, record])).values()])
+    },
+
+    async get(id) {
+      return mapApiParkingDetail(await rawDetail(id))
+    },
+
+    async create(input, options: ParkingLotCreateOptions = {}) {
+      const validation = validateParkingLotCreateInput(input)
+      if (!validation.valid) throwForValidation(validation.issues)
+      const value = sanitizeParkingLotCreateInput(input)
+      const data: ApiParkingWriteRequest = {
+        ...writeBody(value, apiOpenStatus(value.openStatus)),
+        code: value.code,
+        remain: value.totalSpaces,
+        update_mode: 'manual',
+        direct_gates: directGateBody(options.nearbyGateBindings ?? []),
+      }
+      return mapApiParkingLot(await request<ApiParkingVO, ApiParkingWriteRequest>({
+        method: 'POST',
+        url: 'api/v1/admin/parkings',
+        data,
       }))
-    }
-    catch (error) {
-      throw new ParkingLotServiceError('storage_corrupted', '旧版本地停车场数据无法解析', { cause: error })
-    }
-  }
+    },
 
-  private migrateV3(raw: string): ParkingLot[] {
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredV3ParkingLots>
-      if (parsed.schemaVersion !== 3 || !Array.isArray(parsed.records) || !parsed.records.every(isLegacyV3ParkingLot)) {
-        throw new Error('Invalid v3 parking schema')
-      }
-      return parsed.records.map((record): ParkingLot => ({
-        ...record,
-        point: clonePoint(record.point),
-        availabilityUpdateMethod: 'manual',
-      }))
-    }
-    catch (error) {
-      throw new ParkingLotServiceError('storage_corrupted', '旧版本地停车场数据无法解析', { cause: error })
-    }
-  }
-
-  private migrateLegacy(raw: string): ParkingLot[] {
-    try {
-      const parsed = JSON.parse(raw) as Partial<StoredLegacyParkingLots>
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.records) || !parsed.records.every(isLegacyParkingLot)) {
-        throw new Error('Invalid legacy parking schema')
-      }
-      return parsed.records.map((record, index): ParkingLot => {
-        const totalSpaces = Math.max(1, record.totalSpaces)
-        return {
-          id: record.id,
-          code: codeIdentity(record.code),
-          name: normalizeText(record.name),
-          locationDescription: '',
-          point: null,
-          navigationAddress: normalizeText(record.address),
-          totalSpaces,
-          availableSpaces: totalSpaces,
-          availabilityUpdateMethod: 'manual',
-          feeType: 'free',
-          feeStandard: '',
-          openStatus: 'open',
-          enabled: record.enabled,
-          recommendationWeight: 50,
-          sortOrder: index + 1,
-          remark: normalizeText(record.remark),
-          coordinateSystem: 'GCJ-02',
-          availabilityUpdatedAt: record.updatedAt,
-          createdAt: record.createdAt,
-          updatedAt: record.updatedAt,
-        }
+    async update(id, input, options: ParkingLotUpdateOptions = {}) {
+      const validation = validateParkingLotBaseInput(input)
+      if (!validation.valid) throwForValidation(validation.issues)
+      const latest = await rawDetail(id)
+      const value = sanitizeParkingLotBaseInput({
+        ...input,
+        availabilityUpdateMethod: mapUpdateMethod(latest.update_mode),
       })
-    }
-    catch (error) {
-      throw new ParkingLotServiceError('storage_corrupted', '旧版本地停车场数据无法解析', { cause: error })
-    }
-  }
+      const data = writeBody(value, rawOpenStatus(latest.open_status))
+      if (options.clampAvailableSpaces) data.remain = value.totalSpaces
+      if (options.nearbyGateBindings !== undefined) data.direct_gates = directGateBody(options.nearbyGateBindings)
+      return mapApiParkingLot(await request<ApiParkingVO, ApiParkingWriteRequest>({
+        method: 'PATCH',
+        url: endpoint(id),
+        data,
+      }))
+    },
 
-  private read(): ParkingLot[] {
-    const currentRaw = this.storage.getItem(PARKING_LOT_STORAGE_KEY)
-    if (currentRaw !== null) return this.parseCurrent(currentRaw)
-    const v3Raw = this.storage.getItem(LEGACY_V3_PARKING_LOT_STORAGE_KEY)
-    if (v3Raw !== null) {
-      const migrated = this.migrateV3(v3Raw)
-      this.write(migrated)
-      return migrated
-    }
-    const v2Raw = this.storage.getItem(LEGACY_V2_PARKING_LOT_STORAGE_KEY)
-    if (v2Raw !== null) {
-      const migrated = this.migrateV2(v2Raw)
-      this.write(migrated)
-      return migrated
-    }
-    const legacyRaw = this.storage.getItem(LEGACY_PARKING_LOT_STORAGE_KEY)
-    if (legacyRaw === null) return []
-    const migrated = this.migrateLegacy(legacyRaw)
-    this.write(migrated)
-    return migrated
-  }
+    async updateEnabled(id, enabled) {
+      const latest = await rawDetail(id)
+      const point = { lng: Number(latest.lng), lat: Number(latest.lat) }
+      if (!isValidGeoPoint(point)) throw responseError('服务器返回的停车场定位无效')
+      const data: ApiParkingEnabledRequest = {
+        name: requiredText(latest.name, '停车场名称'),
+        lng: point.lng,
+        lat: point.lat,
+        status: enabled ? 1 : 0,
+      }
+      return mapApiParkingLot(await request<ApiParkingVO, ApiParkingEnabledRequest>({
+        method: 'PATCH',
+        url: endpoint(id),
+        data,
+      }))
+    },
 
-  private write(records: readonly ParkingLot[]): void {
-    this.storage.setItem(PARKING_LOT_STORAGE_KEY, JSON.stringify({
-      schemaVersion: PARKING_LOT_SCHEMA_VERSION,
-      records: records.map(cloneParkingLot),
-    } satisfies StoredParkingLots))
-  }
+    async updateAvailability(id, availableSpaces) {
+      if (!Number.isInteger(availableSpaces) || availableSpaces < 0) {
+        throw new ParkingLotServiceError('空余车位必须是非负整数')
+      }
+      return mapApiParkingLot(await request<ApiParkingVO, { remain: number }>({
+        method: 'POST',
+        url: endpoint(id, '/remain'),
+        data: { remain: availableSpaces },
+      }))
+    },
 
-  async list(): Promise<ParkingLot[]> {
-    return sortParkingLots(this.read())
-  }
-
-  async create(input: ParkingLotCreateInput): Promise<ParkingLot> {
-    const records = this.read()
-    const validation = validateParkingLotCreateInput(input, records)
-    if (!validation.valid) throwForValidation(validation.issues)
-    const timestamp = this.now().toISOString()
-    const sanitized = sanitizeParkingLotCreateInput(input)
-    const record: ParkingLot = {
-      ...sanitized,
-      id: this.createId(),
-      availableSpaces: sanitized.totalSpaces,
-      coordinateSystem: 'GCJ-02',
-      availabilityUpdatedAt: timestamp,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    this.write([...records, record])
-    return cloneParkingLot(record)
-  }
-
-  async update(
-    id: string,
-    input: ParkingLotUpdateInput,
-    options: ParkingLotUpdateOptions = {},
-  ): Promise<ParkingLot> {
-    const records = this.read()
-    const index = records.findIndex((record) => record.id === id)
-    if (index < 0) throw new ParkingLotServiceError('not_found', '未找到要更新的停车场')
-    const validation = validateParkingLotBaseInput(input)
-    if (!validation.valid) throwForValidation(validation.issues)
-    const previous = records[index]!
-    const sanitized = sanitizeParkingLotBaseInput(input)
-    if (sanitized.totalSpaces < previous.availableSpaces && !options.clampAvailableSpaces) {
-      throw new ParkingLotServiceError(
-        'available_exceeds_total',
-        '新的总车位数小于当前空余车位，请确认是否同步下调空余车位',
-      )
-    }
-    const timestamp = this.now().toISOString()
-    const shouldClamp = sanitized.totalSpaces < previous.availableSpaces
-    const record: ParkingLot = {
-      ...previous,
-      ...sanitized,
-      code: previous.code,
-      availableSpaces: shouldClamp ? sanitized.totalSpaces : previous.availableSpaces,
-      availabilityUpdatedAt: shouldClamp ? timestamp : previous.availabilityUpdatedAt,
-      updatedAt: timestamp,
-    }
-    records[index] = record
-    this.write(records)
-    return cloneParkingLot(record)
-  }
-
-  async updateAvailability(id: string, availableSpaces: number): Promise<ParkingLot> {
-    const records = this.read()
-    const index = records.findIndex((record) => record.id === id)
-    if (index < 0) throw new ParkingLotServiceError('not_found', '未找到要更新余位的停车场')
-    const previous = records[index]!
-    if (!Number.isInteger(availableSpaces) || availableSpaces < 0 || availableSpaces > previous.totalSpaces) {
-      throw new ParkingLotServiceError(
-        'invalid_available_spaces',
-        `空余车位必须是 0–${previous.totalSpaces} 的整数`,
-      )
-    }
-    const timestamp = this.now().toISOString()
-    const record = { ...previous, availableSpaces, availabilityUpdatedAt: timestamp, updatedAt: timestamp }
-    records[index] = record
-    this.write(records)
-    return cloneParkingLot(record)
-  }
-
-  async remove(id: string): Promise<void> {
-    const records = this.read()
-    if (!records.some((record) => record.id === id)) {
-      throw new ParkingLotServiceError('not_found', '未找到要删除的停车场')
-    }
-    this.write(records.filter((record) => record.id !== id))
+    async remove(id) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint(id) })
+    },
   }
 }
 
-export const parkingLotService: ParkingLotService = new LocalParkingLotService()
+export const parkingLotService = createParkingLotService()

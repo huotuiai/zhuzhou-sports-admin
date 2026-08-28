@@ -9,7 +9,7 @@ import type {
   ShuttleStation,
 } from '@/modules/shuttle-management/types'
 import type { TicketGate } from '@/modules/ticket-gate-management/types'
-import { AlertTriangle, BusFront, Clock3, List, LoaderCircle, Map as MapIcon, MapPin, PencilLine, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
+import { AlertTriangle, BusFront, Clock3, Download, List, Map as MapIcon, MapPin, PencilLine, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -26,7 +26,6 @@ import ShuttleRouteMapView from '@/modules/shuttle-management/components/Shuttle
 import ShuttleStationConfig from '@/modules/shuttle-management/components/ShuttleStationConfig.vue'
 import { useShuttleRouteStore } from '@/modules/shuttle-management/stores/shuttle-route-store'
 import { shuttleDirectionLabel, shuttleOperatingStatusLabel } from '@/modules/shuttle-management/types'
-import { ticketGateRelationService } from '@/modules/ticket-gate-management/services/ticket-gate-relation-service'
 import { ticketGateService } from '@/modules/ticket-gate-management/services/ticket-gate-service'
 import { useThemeStore } from '@/stores/theme'
 
@@ -66,8 +65,6 @@ const stationFormRef = ref<{ validateAndCommit(): boolean } | null>(null)
 const discardKind = ref<DiscardKind | null>(null)
 const directionConfirmOpen = ref(false)
 const deleteTarget = ref<ShuttleRoute | null>(null)
-const deleteRelationCount = ref(0)
-const checkingDeleteId = ref<string | null>(null)
 const ticketGates = ref<TicketGate[]>([])
 const ticketGatesLoading = ref(false)
 const ticketGatesError = ref('')
@@ -89,7 +86,6 @@ function emptyRoute(): ShuttleRouteCreateInput {
     departureIntervalMinutes: 10,
     durationMinutes: 45,
     operatingStatus: 'operating',
-    realtimeStatusText: '',
     sortOrder: 0,
     enabled: true,
   }
@@ -114,7 +110,6 @@ function toRouteInput(route: ShuttleRoute): ShuttleRouteCreateInput {
     departureIntervalMinutes: route.departureIntervalMinutes,
     durationMinutes: route.durationMinutes,
     operatingStatus: route.operatingStatus,
-    realtimeStatusText: route.realtimeStatusText,
     sortOrder: route.sortOrder,
     enabled: route.enabled,
   }
@@ -130,7 +125,6 @@ function toUpdateInput(value: ShuttleRouteCreateInput): ShuttleRouteUpdateInput 
     departureIntervalMinutes: value.departureIntervalMinutes,
     durationMinutes: value.durationMinutes,
     operatingStatus: value.operatingStatus,
-    realtimeStatusText: value.realtimeStatusText,
     sortOrder: value.sortOrder,
     enabled: value.enabled,
   }
@@ -265,39 +259,20 @@ async function saveStations(): Promise<void> {
   toast.success('站点配置已保存。')
 }
 
-async function requestDelete(route: ShuttleRoute): Promise<void> {
-  checkingDeleteId.value = route.id
-  try {
-    deleteRelationCount.value = (await ticketGateRelationService.listShuttleRouteRelations(route.id)).length
-    deleteTarget.value = route
-  }
-  catch (cause) {
-    toast.error(cause instanceof Error && cause.message ? cause.message : '删除影响无法读取，请稍后重试。')
-  }
-  finally {
-    checkingDeleteId.value = null
-  }
+function requestDelete(route: ShuttleRoute): void {
+  deleteTarget.value = route
 }
 
 function closeDelete(): void {
   deleteTarget.value = null
-  deleteRelationCount.value = 0
 }
 
 async function remove(): Promise<void> {
   if (!deleteTarget.value) return
   const target = deleteTarget.value
-  const relationCount = deleteRelationCount.value
   if (await store.remove(target.id)) {
-    try {
-      await ticketGateRelationService.cleanupShuttleRoute(target.id)
-      closeDelete()
-      toast.success(relationCount ? '接驳线路、站点及检票口关联已删除。' : '接驳线路及其站点已删除。')
-    }
-    catch (cause) {
-      closeDelete()
-      toast.warning(cause instanceof Error && cause.message ? `线路已删除，但检票口关联清理失败：${cause.message}` : '线路已删除，但检票口关联清理失败。')
-    }
+    closeDelete()
+    toast.success('接驳线路已删除。')
   }
   else toast.error(store.error ?? '删除失败，请稍后重试。')
 }
@@ -355,6 +330,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <div><h1 id="shuttle-route-title" class="text-2xl font-semibold tracking-tight">接驳车管理</h1><p class="mt-1 text-sm text-muted-foreground">接驳线路 / 站点 / 排班</p></div>
         </div>
         <div class="flex items-center gap-2">
+          <Button variant="outline" size="lg" class="h-11 px-4" disabled title="等待导出接口接入"><Download aria-hidden="true" />导出</Button>
           <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
             <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表</Button>
             <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图</Button>
@@ -382,7 +358,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-duration="{ row }"><span class="tabular-nums">{{ row.durationMinutes }} 分钟</span></template>
           <template #cell-operatingStatus="{ row }"><Badge variant="outline" :class="operatingClass(row)">{{ shuttleOperatingStatusLabel(row.operatingStatus) }}</Badge></template>
           <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
-          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" @click="openStations(row)"><MapPin aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="Boolean(checkingDeleteId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><LoaderCircle v-if="checkingDeleteId === row.id" class="animate-spin" aria-hidden="true" /><Trash2 v-else aria-hidden="true" /></Button></div></template>
+          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" @click="openStations(row)"><MapPin aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="Boolean(store.deletingId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button></div></template>
         </DataTable>
         <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20]" @update:page="store.setPage" @update:page-size="store.setPageSize" />
       </template>
@@ -402,6 +378,6 @@ useEventListener(window, 'beforeunload', beforeUnload)
 
     <AlertDialog :open="directionConfirmOpen" @update:open="directionConfirmOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认变更线路方向？</AlertDialogTitle><AlertDialogDescription>方向变更将影响 H5 进出场推荐；该线路现有 {{ store.records.find((item) => item.id === editingId)?.stations.length ?? 0 }} 个站点的方向语义也会同步变更。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">返回检查</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmDirectionSave">确认变更并保存</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
-    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && closeDelete()"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>删除后线路基础信息及其 {{ deleteTarget?.stations.length ?? 0 }} 个站点将一并移除<span v-if="deleteRelationCount">，{{ deleteRelationCount }} 条检票口—接驳站关联也将解除</span>，且无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 aria-hidden="true" />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && closeDelete()"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>删除后不可恢复，是否确认删除该线路？</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 aria-hidden="true" />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>
 </template>

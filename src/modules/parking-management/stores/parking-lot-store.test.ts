@@ -1,6 +1,8 @@
 import type {
   ParkingLot,
   ParkingLotCreateInput,
+  ParkingLotCreateOptions,
+  ParkingLotDetail,
   ParkingLotService,
   ParkingLotUpdateInput,
   ParkingLotUpdateOptions,
@@ -37,6 +39,10 @@ function lot(id: string, overrides: Partial<ParkingLot> = {}): ParkingLot {
 
 class StubParkingLotService implements ParkingLotService {
   records: ParkingLot[] = []
+  detailCalls: string[] = []
+  createOptions: Array<ParkingLotCreateOptions | undefined> = []
+  updateOptions: Array<ParkingLotUpdateOptions | undefined> = []
+  enabledCalls: Array<{ id: string, enabled: boolean }> = []
   failList = false
   failSave = false
   failDelete = false
@@ -46,8 +52,19 @@ class StubParkingLotService implements ParkingLotService {
     return structuredClone(this.records)
   }
 
-  async create(input: ParkingLotCreateInput): Promise<ParkingLot> {
+  async get(id: string): Promise<ParkingLotDetail> {
+    this.detailCalls.push(id)
+    const record = this.records.find(item => item.id === id)
+    if (!record) throw new Error('不存在')
+    return {
+      record: structuredClone(record),
+      nearbyGateBindings: [{ gateId: '11', walkingMinutes: 5 }],
+    }
+  }
+
+  async create(input: ParkingLotCreateInput, options?: ParkingLotCreateOptions): Promise<ParkingLot> {
     if (this.failSave) throw new Error('保存失败')
+    this.createOptions.push(options)
     const created = lot('created', { ...input, availableSpaces: input.totalSpaces })
     this.records.push(created)
     return structuredClone(created)
@@ -55,6 +72,7 @@ class StubParkingLotService implements ParkingLotService {
 
   async update(id: string, input: ParkingLotUpdateInput, options?: ParkingLotUpdateOptions): Promise<ParkingLot> {
     if (this.failSave) throw new Error('保存失败')
+    this.updateOptions.push(options)
     const index = this.records.findIndex((record) => record.id === id)
     if (index < 0) throw new Error('不存在')
     const previous = this.records[index]!
@@ -66,6 +84,15 @@ class StubParkingLotService implements ParkingLotService {
     }
     this.records[index] = updated
     return structuredClone(updated)
+  }
+
+  async updateEnabled(id: string, enabled: boolean): Promise<ParkingLot> {
+    if (this.failSave) throw new Error('更新失败')
+    this.enabledCalls.push({ id, enabled })
+    const index = this.records.findIndex(record => record.id === id)
+    if (index < 0) throw new Error('不存在')
+    this.records[index] = { ...this.records[index]!, enabled }
+    return structuredClone(this.records[index]!)
   }
 
   async updateAvailability(id: string, availableSpaces: number): Promise<ParkingLot> {
@@ -165,16 +192,24 @@ describe('parking lot store', () => {
     expect(store.validateUpdate(updateInput({ name: ' ' })).valid).toBe(false)
   })
 
-  it('creates, updates, updates availability and deletes without a refresh', async () => {
+  it('loads details and performs API-backed mutations without changing the current interactions', async () => {
     service.records = [lot('A-001')]
     const store = createParkingLotStore(service, 'parking-crud')()
     await store.load()
-    expect((await store.create(input()))?.id).toBe('created')
-    expect((await store.update('A-001', updateInput({ name: '更新后' })))?.name).toBe('更新后')
+    expect((await store.get('A-001'))?.nearbyGateBindings).toEqual([{ gateId: '11', walkingMinutes: 5 }])
+    expect((await store.create(input(), { nearbyGateBindings: [{ gateId: '12', walkingMinutes: 8 }] }))?.id).toBe('created')
+    expect((await store.update('A-001', updateInput({ name: '更新后' }), {
+      nearbyGateBindings: [{ gateId: '11', walkingMinutes: 6 }],
+    }))?.name).toBe('更新后')
+    expect((await store.updateEnabled('A-001', false))?.enabled).toBe(false)
     expect((await store.updateAvailability('A-001', 12))?.availableSpaces).toBe(12)
     expect(store.updatingAvailabilityId).toBeNull()
     await expect(store.remove('created')).resolves.toBe(true)
     expect(store.records.some((record) => record.id === 'created')).toBe(false)
+    expect(service.detailCalls).toEqual(['A-001'])
+    expect(service.createOptions[0]?.nearbyGateBindings).toEqual([{ gateId: '12', walkingMinutes: 8 }])
+    expect(service.updateOptions[0]?.nearbyGateBindings).toEqual([{ gateId: '11', walkingMinutes: 6 }])
+    expect(service.enabledCalls).toEqual([{ id: 'A-001', enabled: false }])
   })
 
   it('retains records and exposes errors when operations fail', async () => {

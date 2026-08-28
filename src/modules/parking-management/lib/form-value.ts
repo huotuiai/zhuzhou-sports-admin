@@ -6,9 +6,8 @@ import type {
 } from '../types'
 import { parseGeoPointInput, serializeGeoPoint } from '@/components/map/geometry'
 
-export function parkingLotFormToCreateInput(value: ParkingLotFormValue): ParkingLotCreateInput {
+function parkingLotFormToBaseInput(value: ParkingLotFormValue): ParkingLotUpdateInput {
   return {
-    code: value.code,
     name: value.name,
     locationDescription: value.locationDescription,
     point: value.coordinateInput.trim() ? parseGeoPointInput(value.coordinateInput) : null,
@@ -25,23 +24,16 @@ export function parkingLotFormToCreateInput(value: ParkingLotFormValue): Parking
   }
 }
 
-export function parkingLotFormToUpdateInput(value: ParkingLotFormValue): ParkingLotUpdateInput {
-  const input = parkingLotFormToCreateInput(value)
+export function parkingLotFormToCreateInput(value: ParkingLotFormValue): ParkingLotCreateInput {
   return {
-    name: input.name,
-    locationDescription: input.locationDescription,
-    point: input.point,
-    navigationAddress: input.navigationAddress,
-    totalSpaces: input.totalSpaces,
-    availabilityUpdateMethod: input.availabilityUpdateMethod,
-    feeType: input.feeType,
-    feeStandard: input.feeStandard,
-    openStatus: input.openStatus,
-    enabled: input.enabled,
-    recommendationWeight: input.recommendationWeight,
-    sortOrder: input.sortOrder,
-    remark: input.remark,
+    ...parkingLotFormToBaseInput(value),
+    code: value.code,
+    availabilityUpdateMethod: 'manual',
   }
+}
+
+export function parkingLotFormToUpdateInput(value: ParkingLotFormValue): ParkingLotUpdateInput {
+  return parkingLotFormToBaseInput(value)
 }
 
 export function parkingLotToFormValue(

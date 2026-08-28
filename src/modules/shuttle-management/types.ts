@@ -8,7 +8,6 @@ export interface ShuttleStation {
   name: string
   point: GeoPoint | null
   navigationAddress: string
-  arrivalOffsetMinutes: number | null
   arrivalGateIds: string[]
 }
 
@@ -23,7 +22,6 @@ export interface ShuttleRoute {
   departureIntervalMinutes: number
   durationMinutes: number
   operatingStatus: ShuttleOperatingStatus
-  realtimeStatusText: string
   sortOrder: number
   enabled: boolean
   stations: ShuttleStation[]
@@ -41,7 +39,6 @@ export interface ShuttleRouteBaseInput {
   departureIntervalMinutes: number
   durationMinutes: number
   operatingStatus: ShuttleOperatingStatus
-  realtimeStatusText: string
   sortOrder: number
   enabled: boolean
 }
@@ -74,7 +71,7 @@ export interface ShuttleRouteValidationIssue {
   message: string
 }
 
-export type ShuttleStationValidationField = 'stations' | 'name' | 'point' | 'arrivalOffsetMinutes'
+export type ShuttleStationValidationField = 'stations' | 'name' | 'point'
 
 export interface ShuttleStationValidationIssue {
   field: ShuttleStationValidationField

@@ -66,7 +66,6 @@ import {
   parkingAvailabilityUpdateMethodLabel,
   parkingFeeTypeLabel,
 } from '@/modules/parking-management/types'
-import { ticketGateRelationService } from '@/modules/ticket-gate-management/services/ticket-gate-relation-service'
 import { ticketGateService } from '@/modules/ticket-gate-management/services/ticket-gate-service'
 import { useThemeStore } from '@/stores/theme'
 
@@ -168,13 +167,14 @@ async function openEdit(record: ParkingLot): Promise<void> {
   store.resetError()
   loadingRelationsId.value = record.id
   try {
-    const relations = await ticketGateRelationService.listParkingLotRelations(record.id)
+    const detail = await store.get(record.id)
+    if (!detail) {
+      toast.error(store.error ?? '停车场详情加载失败')
+      return
+    }
     sheetMode.value = 'edit'
     editingId.value = record.id
-    const value = parkingLotToFormValue(record, relations.map((relation) => ({
-      gateId: relation.gateId,
-      walkingMinutes: relation.walkingMinutes,
-    })))
+    const value = parkingLotToFormValue(detail.record, detail.nearbyGateBindings)
     formValue.value = cloneForm(value)
     initialFormValue.value = cloneForm(value)
     formIssues.value = []
@@ -223,24 +223,20 @@ function parsedFormInput(): ReturnType<typeof parkingLotFormToCreateInput> | nul
 
 async function persistForm(clampAvailableSpaces = false): Promise<void> {
   const created = sheetMode.value === 'create'
+  const nearbyGateBindings = formValue.value.nearbyGateBindings.map(binding => ({
+    gateId: binding.gateId,
+    walkingMinutes: Number(binding.walkingMinutes),
+  }))
   const saved = created
-    ? await store.create(parkingLotFormToCreateInput(formValue.value))
+    ? await store.create(parkingLotFormToCreateInput(formValue.value), { nearbyGateBindings })
     : editingId.value
-      ? await store.update(editingId.value, parkingLotFormToUpdateInput(formValue.value), { clampAvailableSpaces })
+      ? await store.update(editingId.value, parkingLotFormToUpdateInput(formValue.value), {
+          clampAvailableSpaces,
+          nearbyGateBindings,
+        })
       : null
   if (!saved) {
     toast.error(store.error ?? '停车场保存失败，当前填写内容已保留。')
-    return
-  }
-  try {
-    await ticketGateRelationService.replaceParkingLotRelations(saved.id, formValue.value.nearbyGateBindings.map((binding) => ({
-      gateId: binding.gateId,
-      walkingMinutes: Number(binding.walkingMinutes),
-    })))
-  }
-  catch (error) {
-    closeSheet()
-    toast.warning(`停车场信息已保存，但附近检票口绑定保存失败：${error instanceof Error ? error.message : '请稍后重试'}`)
     return
   }
   closeSheet()
@@ -328,19 +324,12 @@ async function removeParkingLot(): Promise<void> {
     toast.error(store.error ?? '停车场删除失败。')
     return
   }
-  try {
-    await ticketGateRelationService.cleanupParkingLot(target.id)
-    toast.success('停车场及其检票口关联已删除。')
-  }
-  catch {
-    toast.warning('停车场已删除，关联数据将在下次打开检票口配置时自动清理。')
-  }
+  toast.success('停车场及其检票口关联已删除。')
   deleteTarget.value = null
 }
 
 async function toggleParkingLot(record: ParkingLot): Promise<void> {
-  const value = parkingLotToFormValue(record)
-  const saved = await store.update(record.id, parkingLotFormToUpdateInput({ ...value, enabled: !record.enabled }))
+  const saved = await store.updateEnabled(record.id, !record.enabled)
   if (!saved) {
     toast.error(store.error ?? '停车场状态更新失败。')
     return

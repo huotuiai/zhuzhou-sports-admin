@@ -1,3 +1,4 @@
+import type { SignedRequestConfig } from '@/lib/http'
 import type {
   ShuttleDirection,
   ShuttleOperatingStatus,
@@ -11,26 +12,86 @@ import type {
   ValidationResult,
 } from '../types'
 import { isValidGeoPoint } from '@/components/map/geometry'
-import { createClientId } from '@/lib/id'
+import { ApiError, requestData } from '@/lib/http'
 
-export const SHUTTLE_ROUTE_STORAGE_KEY = 'zz-sports-shuttle-routes:v2'
-export const LEGACY_SHUTTLE_ROUTE_STORAGE_KEY = 'zz-sports-shuttle-routes:v1'
-export const LEGACY_SHUTTLE_POINT_STORAGE_KEY = 'zz-sports-shuttle-points:v1'
-const SCHEMA_VERSION = 2
-const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/
+type ApiShuttleDirection = 1 | 2
+type ApiShuttleOperatingStatus = 0 | 1 | 2
 
-interface StoredShuttleRoutes {
-  schemaVersion: typeof SCHEMA_VERSION
-  records: ShuttleRoute[]
+export interface ApiShuttleStopVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  line_id: number | string
+  code: string | null
+  name: string
+  seq: number | string
+  lng: number | string | null
+  lat: number | string | null
+  nav_address: string | null
+  arrival_offset_minutes: number | string | null
+  status: number | boolean
+  arrival_gate_ids: Array<number | string> | null
 }
 
-type LegacyShuttleStation = Omit<ShuttleStation, 'arrivalGateIds'>
-type LegacyShuttleRoute = Omit<ShuttleRoute, 'stations'> & { stations: LegacyShuttleStation[] }
+export interface ApiShuttleLineVO {
+  id: number | string
+  create_at: string
+  update_at: string
+  code: string
+  name: string
+  direction: number | string
+  description: string | null
+  first_bus: string
+  last_bus: string
+  interval_minutes: number | string
+  duration_minutes: number | string
+  operate_status: number | string
+  realtime_text: string | null
+  data_source: string
+  sync_status: string | null
+  last_sync_at: string | null
+  realtime_lng: number | string | null
+  realtime_lat: number | string | null
+  realtime_eta: string | null
+  sort_order: number | string
+  status: number | boolean
+  stop_count: number | string
+  stops?: ApiShuttleStopVO[] | null
+}
 
-export interface LocalShuttleRouteServiceOptions {
-  storage?: Storage
-  createId?: () => string
-  now?: () => Date
+export interface ApiShuttleLinePage {
+  list: ApiShuttleLineVO[]
+  total: number | string
+  page: number | string
+  page_size: number | string
+}
+
+interface ApiShuttleLineWriteRequest {
+  code?: string
+  name: string
+  direction: ApiShuttleDirection
+  description: string
+  first_bus: string
+  last_bus: string
+  interval_minutes: number
+  duration_minutes: number
+  operate_status: ApiShuttleOperatingStatus
+  sort_order: number
+  status: 0 | 1
+}
+
+interface ApiShuttleStopWriteRequest {
+  name: string
+  seq: number
+  lng: number
+  lat: number
+  nav_address: string
+  arrival_gate_ids: number[]
+  status?: 1
+}
+
+export interface ShuttleRouteDataRequester {
+  <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
 }
 
 export class ShuttleRouteServiceError extends Error {
@@ -40,9 +101,8 @@ export class ShuttleRouteServiceError extends Error {
   }
 }
 
-function resolveStorage(): Storage {
-  if (!globalThis.localStorage) throw new ShuttleRouteServiceError('当前环境不支持本地存储')
-  return globalThis.localStorage
+function responseError(message: string): ApiError {
+  return new ApiError(message, { kind: 'response' })
 }
 
 function normalizeText(value: string): string {
@@ -53,6 +113,37 @@ function normalizedIdentity(value: string): string {
   return normalizeText(value).toLocaleLowerCase('zh-CN')
 }
 
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
+  return value
+}
+
+function optionalText(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function integer(value: unknown, field: string): number {
+  const result = Number(value)
+  if (!Number.isSafeInteger(result)) throw responseError(`服务器返回的${field}无效`)
+  return result
+}
+
+function positiveInteger(value: unknown, field: string): number {
+  const result = integer(value, field)
+  if (result <= 0) throw responseError(`服务器返回的${field}无效`)
+  return result
+}
+
+function nonNegativeInteger(value: unknown, field: string): number {
+  const result = integer(value, field)
+  if (result < 0) throw responseError(`服务器返回的${field}无效`)
+  return result
+}
+
+function flag(value: unknown): boolean {
+  return value === true || value === 1 || value === '1'
+}
+
 function isDirection(value: unknown): value is ShuttleDirection {
   return value === 'inbound' || value === 'outbound'
 }
@@ -61,56 +152,59 @@ function isOperatingStatus(value: unknown): value is ShuttleOperatingStatus {
   return value === 'operating' || value === 'suspended' || value === 'partial'
 }
 
-function isLegacyStation(value: unknown): value is LegacyShuttleStation {
-  if (!value || typeof value !== 'object') return false
-  const station = value as Record<string, unknown>
-  return typeof station.id === 'string' && typeof station.name === 'string' &&
-    (station.point === null || (typeof station.point === 'object' && isValidGeoPoint(station.point as { lng: number, lat: number }))) &&
-    typeof station.navigationAddress === 'string' &&
-    (station.arrivalOffsetMinutes === null || (Number.isInteger(station.arrivalOffsetMinutes) && Number(station.arrivalOffsetMinutes) >= 0))
+function mapDirection(value: unknown): ShuttleDirection {
+  const direction = integer(value, '线路方向')
+  if (direction === 1) return 'inbound'
+  if (direction === 2) return 'outbound'
+  throw responseError('服务器返回的线路方向无效')
 }
 
-function isStation(value: unknown): value is ShuttleStation {
-  if (!isLegacyStation(value)) return false
-  const station = value as unknown as Record<string, unknown>
-  return Array.isArray(station.arrivalGateIds) && station.arrivalGateIds.every((id) => typeof id === 'string' && Boolean(id.trim()))
+function apiDirection(value: ShuttleDirection): ApiShuttleDirection {
+  return value === 'inbound' ? 1 : 2
 }
 
-function isRouteRecord(value: unknown, stationGuard: (station: unknown) => boolean): boolean {
-  if (!value || typeof value !== 'object') return false
-  const route = value as Record<string, unknown>
-  return typeof route.id === 'string' && typeof route.code === 'string' && /^[A-Z0-9]{2,10}$/i.test(route.code) &&
-    typeof route.name === 'string' && Boolean(route.name.trim()) && isDirection(route.direction) && typeof route.description === 'string' &&
-    typeof route.firstDeparture === 'string' && TIME_PATTERN.test(route.firstDeparture) &&
-    typeof route.lastDeparture === 'string' && TIME_PATTERN.test(route.lastDeparture) && route.firstDeparture < route.lastDeparture &&
-    Number.isInteger(route.departureIntervalMinutes) && Number(route.departureIntervalMinutes) >= 5 &&
-    Number.isInteger(route.durationMinutes) && Number(route.durationMinutes) > 0 && isOperatingStatus(route.operatingStatus) &&
-    (route.realtimeStatusText === undefined || typeof route.realtimeStatusText === 'string') &&
-    Number.isInteger(route.sortOrder) && Number(route.sortOrder) >= 0 && typeof route.enabled === 'boolean' &&
-    Array.isArray(route.stations) && route.stations.length <= 20 && route.stations.every(stationGuard) &&
-    route.coordinateSystem === 'GCJ-02' && typeof route.createdAt === 'string' && typeof route.updatedAt === 'string'
+function mapOperatingStatus(value: unknown): ShuttleOperatingStatus {
+  const status = integer(value, '线路运营状态')
+  if (status === 0) return 'suspended'
+  if (status === 1) return 'operating'
+  if (status === 2) return 'partial'
+  throw responseError('服务器返回的线路运营状态无效')
 }
 
-function isRoute(value: unknown): value is ShuttleRoute {
-  return isRouteRecord(value, isStation)
-}
-
-function isLegacyRoute(value: unknown): value is LegacyShuttleRoute {
-  return isRouteRecord(value, isLegacyStation)
+function apiOperatingStatus(value: ShuttleOperatingStatus): ApiShuttleOperatingStatus {
+  if (value === 'suspended') return 0
+  if (value === 'partial') return 2
+  return 1
 }
 
 function cloneStation(station: ShuttleStation): ShuttleStation {
-  return { ...station, point: station.point ? { ...station.point } : null, arrivalGateIds: [...station.arrivalGateIds] }
+  return {
+    id: station.id,
+    name: station.name,
+    point: station.point ? { ...station.point } : null,
+    navigationAddress: station.navigationAddress,
+    arrivalGateIds: [...station.arrivalGateIds],
+  }
 }
 
 function cloneRoute(route: ShuttleRoute): ShuttleRoute {
-  return { ...route, realtimeStatusText: route.realtimeStatusText ?? '', stations: route.stations.map(cloneStation) }
+  return { ...route, stations: route.stations.map(cloneStation) }
 }
 
-export function sortShuttleRoutes(records: readonly ShuttleRoute[]): ShuttleRoute[] {
-  return [...records]
-    .sort((first, second) => first.sortOrder - second.sortOrder || second.updatedAt.localeCompare(first.updatedAt) || first.code.localeCompare(second.code))
-    .map(cloneRoute)
+function endpoint(id: string, suffix = ''): string {
+  return `api/v1/admin/shuttle/lines/${encodeURIComponent(id)}${suffix}`
+}
+
+function stopEndpoint(id: string): string {
+  return `api/v1/admin/shuttle/stops/${encodeURIComponent(id)}`
+}
+
+function bodyId(value: string): number {
+  const result = Number(value)
+  if (!Number.isSafeInteger(result) || result <= 0) {
+    throw new ApiError('检票口 ID 超出浏览器可安全提交的范围', { kind: 'configuration' })
+  }
+  return result
 }
 
 export function sanitizeShuttleRouteBaseInput(input: ShuttleRouteUpdateInput): ShuttleRouteUpdateInput {
@@ -123,7 +217,6 @@ export function sanitizeShuttleRouteBaseInput(input: ShuttleRouteUpdateInput): S
     departureIntervalMinutes: Number(input.departureIntervalMinutes),
     durationMinutes: Number(input.durationMinutes),
     operatingStatus: input.operatingStatus,
-    realtimeStatusText: normalizeText(input.realtimeStatusText),
     sortOrder: Number(input.sortOrder),
     enabled: Boolean(input.enabled),
   }
@@ -139,28 +232,16 @@ export function sanitizeShuttleStations(stations: readonly ShuttleStation[]): Sh
     name: normalizeText(station.name),
     point: station.point ? { lng: Number(station.point.lng), lat: Number(station.point.lat) } : null,
     navigationAddress: normalizeText(station.navigationAddress),
-    arrivalOffsetMinutes: station.arrivalOffsetMinutes === null ? null : Number(station.arrivalOffsetMinutes),
-    arrivalGateIds: [...new Set(station.arrivalGateIds.map((id) => id.trim()).filter(Boolean))],
-  }))
-}
-
-function migrateLegacy(records: readonly LegacyShuttleRoute[]): ShuttleRoute[] {
-  return records.map((route) => ({
-    ...route,
-    realtimeStatusText: route.realtimeStatusText ?? '',
-    stations: route.stations.map((station) => ({
-      ...station,
-      point: station.point ? { ...station.point } : null,
-      arrivalGateIds: [],
-    })),
+    arrivalGateIds: [...new Set(station.arrivalGateIds.map(id => id.trim()).filter(Boolean))],
   }))
 }
 
 function validateBase(input: ShuttleRouteUpdateInput): ShuttleRouteValidationIssue[] {
   const value = sanitizeShuttleRouteBaseInput(input)
   const issues: ShuttleRouteValidationIssue[] = []
-  const hasFirst = TIME_PATTERN.test(value.firstDeparture)
-  const hasLast = TIME_PATTERN.test(value.lastDeparture)
+  const timePattern = /^(?:[01]\d|2[0-3]):[0-5]\d$/
+  const hasFirst = timePattern.test(value.firstDeparture)
+  const hasLast = timePattern.test(value.lastDeparture)
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入线路名称' })
   if (!isDirection(value.direction)) issues.push({ field: 'direction', code: 'invalid', message: '请选择线路方向' })
   if (!hasFirst) issues.push({ field: 'firstDeparture', code: 'required', message: '请选择首班时间' })
@@ -187,7 +268,7 @@ export function validateShuttleRouteCreateInput(
   const issues = validateBase(value)
   if (!value.code) issues.unshift({ field: 'code', code: 'required', message: '请输入线路编号' })
   else if (!/^[A-Z0-9]{2,10}$/.test(value.code)) issues.unshift({ field: 'code', code: 'invalid', message: '线路编号须为 2–10 位字母或数字' })
-  else if (records.some((item) => normalizedIdentity(item.code) === normalizedIdentity(value.code))) {
+  else if (records.some(item => normalizedIdentity(item.code) === normalizedIdentity(value.code))) {
     issues.unshift({ field: 'code', code: 'duplicate', message: '线路编号不能重复' })
   }
   return { valid: issues.length === 0, issues }
@@ -201,134 +282,232 @@ export function validateShuttleRouteUpdateInput(input: ShuttleRouteUpdateInput):
 export function validateShuttleStations(stationsInput: readonly ShuttleStation[]): ValidationResult<ShuttleStationValidationIssue> {
   const stations = sanitizeShuttleStations(stationsInput)
   const issues: ShuttleStationValidationIssue[] = []
+  if (stations.length === 0) issues.push({ field: 'stations', code: 'required', message: '每条线路至少保留 1 个站点' })
   if (stations.length > 20) issues.push({ field: 'stations', code: 'limit', message: '每条线路最多配置 20 个站点' })
   for (const station of stations) {
     if (!station.name) issues.push({ field: 'name', stationId: station.id, code: 'required', message: '请输入站点名称' })
     if (!station.point) issues.push({ field: 'point', stationId: station.id, code: 'required', message: '请输入站点定位经纬度' })
     else if (!isValidGeoPoint(station.point)) issues.push({ field: 'point', stationId: station.id, code: 'invalid', message: '请输入合法的经度,纬度' })
-    if (station.arrivalOffsetMinutes !== null && (!Number.isInteger(station.arrivalOffsetMinutes) || station.arrivalOffsetMinutes < 0)) {
-      issues.push({ field: 'arrivalOffsetMinutes', stationId: station.id, code: 'invalid', message: '到达偏移必须是非负整数' })
-    }
   }
   return { valid: issues.length === 0, issues }
 }
 
-export class LocalShuttleRouteService implements ShuttleRouteService {
-  private readonly injectedStorage?: Storage
-  private readonly createId: () => string
-  private readonly now: () => Date
+export function sortShuttleRoutes(records: readonly ShuttleRoute[]): ShuttleRoute[] {
+  return [...records]
+    .sort((first, second) => first.sortOrder - second.sortOrder || second.updatedAt.localeCompare(first.updatedAt) || first.code.localeCompare(second.code, 'zh-CN'))
+    .map(cloneRoute)
+}
 
-  constructor(options: LocalShuttleRouteServiceOptions = {}) {
-    this.injectedStorage = options.storage
-    this.createId = options.createId ?? createClientId
-    this.now = options.now ?? (() => new Date())
+function mapArrivalGateIds(value: unknown): string[] {
+  if (value === null || value === undefined) return []
+  if (!Array.isArray(value)) throw responseError('服务器返回的到达检票口数据无效')
+  return [...new Set(value.map((id) => {
+    if (id === null || id === undefined || !String(id).trim()) throw responseError('服务器返回的检票口 ID 不完整')
+    return String(id)
+  }))]
+}
+
+export function mapApiShuttleStop(value: ApiShuttleStopVO): ShuttleStation {
+  if (value.id === null || value.id === undefined) throw responseError('服务器返回的站点 ID 不完整')
+  let point: ShuttleStation['point'] = null
+  if (value.lng !== null && value.lng !== undefined && value.lat !== null && value.lat !== undefined) {
+    const mapped = { lng: Number(value.lng), lat: Number(value.lat) }
+    if (!isValidGeoPoint(mapped)) throw responseError('服务器返回的站点定位无效')
+    point = mapped
   }
-
-  private get storage(): Storage {
-    return this.injectedStorage ?? resolveStorage()
-  }
-
-  private read(): ShuttleRoute[] {
-    const raw = this.storage.getItem(SHUTTLE_ROUTE_STORAGE_KEY)
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw) as Partial<StoredShuttleRoutes>
-        if (parsed.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.records) || !parsed.records.every(isRoute)) {
-          throw new Error('Invalid shuttle route data')
-        }
-        return parsed.records.map(cloneRoute)
-      }
-      catch (error) {
-        throw new ShuttleRouteServiceError('本地接驳线路数据无法解析', { cause: error })
-      }
-    }
-
-    const legacyRaw = this.storage.getItem(LEGACY_SHUTTLE_ROUTE_STORAGE_KEY)
-    if (!legacyRaw) return []
-    try {
-      const parsed = JSON.parse(legacyRaw) as { schemaVersion?: unknown, records?: unknown }
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.records) || !parsed.records.every(isLegacyRoute)) {
-        throw new Error('Invalid legacy shuttle route data')
-      }
-      const migrated = migrateLegacy(parsed.records)
-      this.write(migrated)
-      return migrated.map(cloneRoute)
-    }
-    catch (error) {
-      throw new ShuttleRouteServiceError('旧版接驳线路数据无法迁移', { cause: error })
-    }
-  }
-
-  private write(records: readonly ShuttleRoute[]): void {
-    this.storage.setItem(SHUTTLE_ROUTE_STORAGE_KEY, JSON.stringify({
-      schemaVersion: SCHEMA_VERSION,
-      records: records.map(cloneRoute),
-    } satisfies StoredShuttleRoutes))
-  }
-
-  async list(): Promise<ShuttleRoute[]> {
-    return sortShuttleRoutes(this.read())
-  }
-
-  async create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute> {
-    const records = this.read()
-    const validation = validateShuttleRouteCreateInput(input, records)
-    if (!validation.valid) throw new ShuttleRouteServiceError(validation.issues[0]!.message)
-    const timestamp = this.now().toISOString()
-    const record: ShuttleRoute = {
-      ...sanitizeShuttleRouteCreateInput(input),
-      id: this.createId(),
-      stations: [],
-      coordinateSystem: 'GCJ-02',
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    }
-    records.push(record)
-    this.write(records)
-    return cloneRoute(record)
-  }
-
-  async update(id: string, input: ShuttleRouteUpdateInput): Promise<ShuttleRoute> {
-    const records = this.read()
-    const index = records.findIndex((item) => item.id === id)
-    if (index < 0) throw new ShuttleRouteServiceError('接驳线路不存在')
-    const validation = validateShuttleRouteUpdateInput(input)
-    if (!validation.valid) throw new ShuttleRouteServiceError(validation.issues[0]!.message)
-    const previous = records[index]!
-    const record: ShuttleRoute = {
-      ...previous,
-      ...sanitizeShuttleRouteBaseInput(input),
-      code: previous.code,
-      stations: previous.stations.map(cloneStation),
-      updatedAt: this.now().toISOString(),
-    }
-    records[index] = record
-    this.write(records)
-    return cloneRoute(record)
-  }
-
-  async replaceStations(id: string, stationsInput: readonly ShuttleStation[]): Promise<ShuttleRoute> {
-    const records = this.read()
-    const index = records.findIndex((item) => item.id === id)
-    if (index < 0) throw new ShuttleRouteServiceError('接驳线路不存在')
-    const validation = validateShuttleStations(stationsInput)
-    if (!validation.valid) throw new ShuttleRouteServiceError(validation.issues[0]!.message)
-    const previous = records[index]!
-    const record: ShuttleRoute = {
-      ...previous,
-      stations: sanitizeShuttleStations(stationsInput),
-      updatedAt: this.now().toISOString(),
-    }
-    records[index] = record
-    this.write(records)
-    return cloneRoute(record)
-  }
-
-  async remove(id: string): Promise<void> {
-    const records = this.read()
-    if (!records.some((item) => item.id === id)) throw new ShuttleRouteServiceError('接驳线路不存在')
-    this.write(records.filter((item) => item.id !== id))
+  return {
+    id: String(value.id),
+    name: requiredText(value.name, '站点名称'),
+    point,
+    navigationAddress: optionalText(value.nav_address),
+    arrivalGateIds: mapArrivalGateIds(value.arrival_gate_ids),
   }
 }
 
-export const shuttleRouteService: ShuttleRouteService = new LocalShuttleRouteService()
+function mapApiStops(value: unknown): ShuttleStation[] {
+  if (value === null || value === undefined) return []
+  if (!Array.isArray(value)) throw responseError('服务器返回的线路站点数据无效')
+  return [...value]
+    .sort((first, second) => integer((first as ApiShuttleStopVO).seq, '站点顺序') - integer((second as ApiShuttleStopVO).seq, '站点顺序'))
+    .map(item => mapApiShuttleStop(item as ApiShuttleStopVO))
+}
+
+export function mapApiShuttleRoute(value: ApiShuttleLineVO, stops: unknown = value.stops): ShuttleRoute {
+  if (value.id === null || value.id === undefined) throw responseError('服务器返回的线路 ID 不完整')
+  return {
+    id: String(value.id),
+    code: requiredText(value.code, '线路编号'),
+    name: requiredText(value.name, '线路名称'),
+    direction: mapDirection(value.direction),
+    description: optionalText(value.description),
+    firstDeparture: requiredText(value.first_bus, '首班时间'),
+    lastDeparture: requiredText(value.last_bus, '末班时间'),
+    departureIntervalMinutes: positiveInteger(value.interval_minutes, '发车间隔'),
+    durationMinutes: positiveInteger(value.duration_minutes, '全程时长'),
+    operatingStatus: mapOperatingStatus(value.operate_status),
+    sortOrder: nonNegativeInteger(value.sort_order, '线路排序'),
+    enabled: flag(value.status),
+    stations: mapApiStops(stops),
+    coordinateSystem: 'GCJ-02',
+    createdAt: requiredText(value.create_at, '线路创建时间'),
+    updatedAt: requiredText(value.update_at, '线路更新时间'),
+  }
+}
+
+function lineBody(input: ShuttleRouteUpdateInput): ApiShuttleLineWriteRequest {
+  const value = sanitizeShuttleRouteBaseInput(input)
+  return {
+    name: value.name,
+    direction: apiDirection(value.direction),
+    description: value.description,
+    first_bus: value.firstDeparture,
+    last_bus: value.lastDeparture,
+    interval_minutes: value.departureIntervalMinutes,
+    duration_minutes: value.durationMinutes,
+    operate_status: apiOperatingStatus(value.operatingStatus),
+    sort_order: value.sortOrder,
+    status: value.enabled ? 1 : 0,
+  }
+}
+
+function stopBody(station: ShuttleStation, sequence: number, includeStatus: boolean): ApiShuttleStopWriteRequest {
+  if (!station.point) throw new ShuttleRouteServiceError('请输入站点定位经纬度')
+  return {
+    name: station.name,
+    seq: sequence,
+    lng: station.point.lng,
+    lat: station.point.lat,
+    nav_address: station.navigationAddress,
+    arrival_gate_ids: station.arrivalGateIds.map(bodyId),
+    ...(includeStatus ? { status: 1 as const } : {}),
+  }
+}
+
+function sameStringIds(first: readonly string[], second: readonly string[]): boolean {
+  return first.length === second.length && first.every((id, index) => id === second[index])
+}
+
+function stopNeedsUpdate(raw: ApiShuttleStopVO, station: ShuttleStation, sequence: number): boolean {
+  const current = mapApiShuttleStop(raw)
+  return integer(raw.seq, '站点顺序') !== sequence ||
+    current.name !== station.name ||
+    current.point?.lng !== station.point?.lng ||
+    current.point?.lat !== station.point?.lat ||
+    current.navigationAddress !== station.navigationAddress ||
+    !sameStringIds(current.arrivalGateIds, station.arrivalGateIds)
+}
+
+function throwForValidation(issues: readonly ShuttleRouteValidationIssue[] | readonly ShuttleStationValidationIssue[]): never {
+  throw new ShuttleRouteServiceError(issues[0]?.message ?? '接驳线路信息校验失败')
+}
+
+const MAX_PAGE_SIZE = 100
+const DETAIL_BATCH_SIZE = 8
+
+export function createShuttleRouteService(request: ShuttleRouteDataRequester = requestData): ShuttleRouteService {
+  async function rawDetail(id: string): Promise<ApiShuttleLineVO> {
+    return request<ApiShuttleLineVO>({ method: 'GET', url: endpoint(id) })
+  }
+
+  async function listPage(page: number): Promise<ApiShuttleLinePage> {
+    return request<ApiShuttleLinePage>({
+      method: 'GET',
+      url: 'api/v1/admin/shuttle/lines',
+      params: { page, page_size: MAX_PAGE_SIZE },
+    })
+  }
+
+  return {
+    async list() {
+      const first = await listPage(1)
+      const rawRecords = Array.isArray(first.list) ? [...first.list] : []
+      const total = nonNegativeInteger(first.total, '线路总数')
+      const pageSize = positiveInteger(first.page_size, '线路每页条数')
+      const pageCount = Math.ceil(total / pageSize)
+      for (let page = 2; page <= pageCount; page += 1) {
+        const next = await listPage(page)
+        if (Array.isArray(next.list)) rawRecords.push(...next.list)
+      }
+      const unique = [...new Map(rawRecords.map(record => [String(record.id), record])).values()]
+      const records: ShuttleRoute[] = []
+      for (let start = 0; start < unique.length; start += DETAIL_BATCH_SIZE) {
+        const batch = unique.slice(start, start + DETAIL_BATCH_SIZE)
+        records.push(...await Promise.all(batch.map(async (record) => {
+          const detail = await rawDetail(String(record.id))
+          return mapApiShuttleRoute(detail)
+        })))
+      }
+      return sortShuttleRoutes(records)
+    },
+
+    async create(input) {
+      const validation = validateShuttleRouteCreateInput(input)
+      if (!validation.valid) throwForValidation(validation.issues)
+      const value = sanitizeShuttleRouteCreateInput(input)
+      const data: ApiShuttleLineWriteRequest = { ...lineBody(value), code: value.code }
+      const created = await request<ApiShuttleLineVO, ApiShuttleLineWriteRequest>({
+        method: 'POST',
+        url: 'api/v1/admin/shuttle/lines',
+        data,
+      })
+      return mapApiShuttleRoute(created)
+    },
+
+    async update(id, input) {
+      const validation = validateShuttleRouteUpdateInput(input)
+      if (!validation.valid) throwForValidation(validation.issues)
+      const latest = await rawDetail(id)
+      const updated = await request<ApiShuttleLineVO, ApiShuttleLineWriteRequest>({
+        method: 'PATCH',
+        url: endpoint(id),
+        data: lineBody(input),
+      })
+      return mapApiShuttleRoute(updated, updated.stops ?? latest.stops)
+    },
+
+    async replaceStations(id, stationsInput) {
+      const validation = validateShuttleStations(stationsInput)
+      if (!validation.valid) throwForValidation(validation.issues)
+      const stations = sanitizeShuttleStations(stationsInput)
+      const latest = await rawDetail(id)
+      const rawStops = Array.isArray(latest.stops) ? latest.stops : []
+      const existingById = new Map(rawStops.map(stop => [String(stop.id), stop]))
+      const retainedIds = new Set(stations.filter(station => existingById.has(station.id)).map(station => station.id))
+
+      for (let index = 0; index < stations.length; index += 1) {
+        const station = stations[index]!
+        const existing = existingById.get(station.id)
+        if (!existing || !stopNeedsUpdate(existing, station, index + 1)) continue
+        await request<ApiShuttleStopVO, ApiShuttleStopWriteRequest>({
+          method: 'PATCH',
+          url: stopEndpoint(station.id),
+          data: stopBody(station, index + 1, false),
+        })
+      }
+
+      for (let index = 0; index < stations.length; index += 1) {
+        const station = stations[index]!
+        if (existingById.has(station.id)) continue
+        await request<ApiShuttleStopVO, ApiShuttleStopWriteRequest>({
+          method: 'POST',
+          url: endpoint(id, '/stops'),
+          data: stopBody(station, index + 1, true),
+        })
+      }
+
+      for (const stop of rawStops) {
+        const stopId = String(stop.id)
+        if (retainedIds.has(stopId)) continue
+        await request<{ deleted: boolean }>({ method: 'DELETE', url: stopEndpoint(stopId) })
+      }
+
+      return mapApiShuttleRoute(await rawDetail(id))
+    },
+
+    async remove(id) {
+      await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint(id) })
+    },
+  }
+}
+
+export const shuttleRouteService = createShuttleRouteService()

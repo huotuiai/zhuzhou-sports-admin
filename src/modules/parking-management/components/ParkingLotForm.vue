@@ -2,7 +2,6 @@
 import type { CrudDialogMode } from '@/components/common'
 import type { TicketGate } from '@/modules/ticket-gate-management/types'
 import type {
-  ParkingAvailabilityUpdateMethod,
   ParkingFeeType,
   ParkingLotFormValue,
   ParkingLotValidationField,
@@ -30,7 +29,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { parkingLotFormToCreateInput, parkingLotFormToUpdateInput } from '../lib/form-value'
 import { validateParkingLotBaseInput, validateParkingLotCreateInput } from '../services/parking-lot-service'
-import { PARKING_AVAILABILITY_UPDATE_METHODS, PARKING_FEE_TYPES, PARKING_OPEN_STATUSES } from '../types'
+import { PARKING_FEE_TYPES, PARKING_OPEN_STATUSES } from '../types'
 
 const props = withDefaults(defineProps<{
   mode: CrudDialogMode
@@ -63,7 +62,6 @@ const fields: ParkingLotValidationField[] = [
   'point',
   'navigationAddress',
   'totalSpaces',
-  'availabilityUpdateMethod',
   'feeType',
   'feeStandard',
   'openStatus',
@@ -317,15 +315,6 @@ watch(() => props.mode, () => {
         />
       </div>
       <p v-if="issueFor('totalSpaces')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('totalSpaces')?.message }}</p>
-    </div>
-
-    <div class="space-y-2">
-      <Label :for="inputId('availabilityUpdateMethod')">车位更新方式 <span class="text-destructive" aria-hidden="true">*</span></Label>
-      <Select :model-value="value.availabilityUpdateMethod" :disabled="saving" @update:model-value="patch({ availabilityUpdateMethod: $event as ParkingAvailabilityUpdateMethod }); touched.availabilityUpdateMethod = true">
-        <SelectTrigger :id="inputId('availabilityUpdateMethod')" data-field="availabilityUpdateMethod" class="h-11 w-full"><SelectValue /></SelectTrigger>
-        <SelectContent><SelectItem v-for="item in PARKING_AVAILABILITY_UPDATE_METHODS" :key="item.value" :value="item.value">{{ item.label }}</SelectItem></SelectContent>
-      </Select>
-      <p class="text-xs leading-5 text-muted-foreground">系统对接的同步能力将在接口接入后启用，当前仍可手动维护余位。</p>
     </div>
 
     <div class="col-span-2 space-y-2">

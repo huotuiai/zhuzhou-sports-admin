@@ -2,6 +2,7 @@
 import type { ShuttleStation } from '../types'
 import type { TicketGate } from '@/modules/ticket-gate-management/types'
 import { computed, reactive, ref, watch } from 'vue'
+import { toast } from 'vue-sonner'
 import { AlertTriangle, ArrowDown, ArrowUp, Check, LoaderCircle, MapPin, PencilLine, Plus, Trash2, X } from '@lucide/vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,11 +32,10 @@ interface StationEditor {
   name: string
   coordinate: string
   navigationAddress: string
-  arrivalOffsetMinutes: string
   arrivalGateIds: string[]
 }
 
-const emptyEditor = (): StationEditor => ({ name: '', coordinate: '', navigationAddress: '', arrivalOffsetMinutes: '', arrivalGateIds: [] })
+const emptyEditor = (): StationEditor => ({ name: '', coordinate: '', navigationAddress: '', arrivalGateIds: [] })
 const editorMode = ref<EditorMode | null>(null)
 const editingId = ref<string | null>(null)
 const editor = reactive<StationEditor>(emptyEditor())
@@ -52,7 +52,13 @@ function cloneEditor(value: StationEditor): StationEditor {
 }
 
 function cloneStation(station: ShuttleStation): ShuttleStation {
-  return { ...station, point: station.point ? { ...station.point } : null, arrivalGateIds: [...station.arrivalGateIds] }
+  return {
+    id: station.id,
+    name: station.name,
+    point: station.point ? { ...station.point } : null,
+    navigationAddress: station.navigationAddress,
+    arrivalGateIds: [...station.arrivalGateIds],
+  }
 }
 
 function gateLabel(id: string): string {
@@ -81,7 +87,6 @@ function beginEdit(station: ShuttleStation): void {
     name: station.name,
     coordinate: station.point ? serializeGeoPoint(station.point) : '',
     navigationAddress: station.navigationAddress,
-    arrivalOffsetMinutes: station.arrivalOffsetMinutes === null ? '' : String(station.arrivalOffsetMinutes),
     arrivalGateIds: [...station.arrivalGateIds],
   })
 }
@@ -122,19 +127,11 @@ function commitEditor(): boolean {
     editorErrorField.value = 'coordinate'
     return false
   }
-  const offsetSource = editor.arrivalOffsetMinutes.trim()
-  const offset = offsetSource ? Number(offsetSource) : null
-  if (offset !== null && (!Number.isInteger(offset) || offset < 0)) {
-    editorError.value = '到达偏移必须是非负整数'
-    editorErrorField.value = 'arrivalOffsetMinutes'
-    return false
-  }
   const station: ShuttleStation = {
     id: editingId.value ?? createClientId(),
     name,
     point,
     navigationAddress: editor.navigationAddress.trim(),
-    arrivalOffsetMinutes: offset,
     arrivalGateIds: [...editor.arrivalGateIds],
   }
   const next = editorMode.value === 'edit'
@@ -161,6 +158,10 @@ function move(index: number, offset: -1 | 1): void {
 }
 
 function remove(station: ShuttleStation): void {
+  if (props.value.length <= 1) {
+    toast.error('每条线路至少保留 1 个站点')
+    return
+  }
   emit('update:value', props.value.filter((item) => item.id !== station.id).map(cloneStation))
   if (editingId.value === station.id) cancelEditor()
 }
@@ -175,9 +176,12 @@ function validateAndCommit(): boolean {
     if (station) {
       beginEdit(station)
       editorError.value = issue.message
-      editorErrorField.value = issue.field === 'point' ? 'coordinate' : issue.field === 'arrivalOffsetMinutes' ? 'arrivalOffsetMinutes' : 'name'
+      editorErrorField.value = issue.field === 'point' ? 'coordinate' : 'name'
     }
-    else editorError.value = issue.message
+    else {
+      editorError.value = issue.message
+      toast.error(issue.message)
+    }
     return false
   }
   return true
@@ -206,7 +210,6 @@ watch(() => props.routeId, cancelEditor)
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2"><p class="font-medium">{{ station.name }}</p><Badge v-if="station.point" variant="outline" class="text-success">已定位</Badge><Badge v-else variant="secondary">缺少坐标</Badge></div>
             <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ station.point ? serializeGeoPoint(station.point) : '未配置坐标' }}<span v-if="station.navigationAddress" class="font-sans"> · {{ station.navigationAddress }}</span></p>
-            <p v-if="station.arrivalOffsetMinutes !== null" class="mt-1 text-xs text-muted-foreground">从首发站约 {{ station.arrivalOffsetMinutes }} 分钟到达</p>
             <p class="mt-1 truncate text-xs text-muted-foreground" :title="station.arrivalGateIds.map(gateLabel).join('、')">到达检票口：{{ station.arrivalGateIds.length ? station.arrivalGateIds.map(gateLabel).join('、') : '未绑定' }}</p>
           </div>
           <div class="flex shrink-0 items-center justify-end gap-1">
@@ -232,8 +235,7 @@ watch(() => props.routeId, cancelEditor)
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div class="space-y-2 sm:col-span-2"><Label for="station-name">站点名称 <span class="text-destructive">*</span></Label><Input id="station-name" v-model="editor.name" class="h-11" placeholder="例如：体育中心东门站" :disabled="saving" :aria-invalid="editorErrorField === 'name'" /></div>
         <div class="space-y-2 sm:col-span-2"><Label for="station-coordinate">定位（经度,纬度） <span class="text-destructive">*</span></Label><Input id="station-coordinate" v-model="editor.coordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'coordinate'" /><p class="text-xs text-muted-foreground">坐标系为 GCJ-02，用于地图点位、距离计算和导航。</p></div>
-        <div class="space-y-2"><Label for="station-address">导航地址</Label><Input id="station-address" v-model="editor.navigationAddress" class="h-11" placeholder="选填导航位置说明" :disabled="saving" /></div>
-        <div class="space-y-2"><Label for="station-offset">到达偏移（分钟）</Label><Input id="station-offset" v-model="editor.arrivalOffsetMinutes" type="number" min="0" step="1" class="h-11 tabular-nums" placeholder="选填" :disabled="saving" :aria-invalid="editorErrorField === 'arrivalOffsetMinutes'" /></div>
+        <div class="space-y-2 sm:col-span-2"><Label for="station-address">导航地址</Label><Input id="station-address" v-model="editor.navigationAddress" class="h-11" placeholder="选填导航位置说明" :disabled="saving" /></div>
         <div class="space-y-2 sm:col-span-2">
           <Label>到达检票口</Label>
           <p class="text-xs text-muted-foreground">可多选，作为 H5 从接驳站前往检票口的路线依据。</p>

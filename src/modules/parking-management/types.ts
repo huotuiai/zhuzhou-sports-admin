@@ -55,19 +55,30 @@ export interface ParkingLotGateBindingValue {
   walkingMinutes: number | null
 }
 
+export interface ParkingLotDetail {
+  record: ParkingLot
+  nearbyGateBindings: ParkingLotGateBindingValue[]
+}
+
 export interface ParkingLotFormValue extends Omit<ParkingLotCreateInput, 'point'> {
   coordinateInput: string
   nearbyGateBindings: ParkingLotGateBindingValue[]
 }
 
-export interface ParkingLotUpdateOptions {
+export interface ParkingLotCreateOptions {
+  nearbyGateBindings?: readonly ParkingLotGateBindingValue[]
+}
+
+export interface ParkingLotUpdateOptions extends ParkingLotCreateOptions {
   clampAvailableSpaces?: boolean
 }
 
 export interface ParkingLotService {
   list(): Promise<ParkingLot[]>
-  create(input: ParkingLotCreateInput): Promise<ParkingLot>
+  get(id: string): Promise<ParkingLotDetail>
+  create(input: ParkingLotCreateInput, options?: ParkingLotCreateOptions): Promise<ParkingLot>
   update(id: string, input: ParkingLotUpdateInput, options?: ParkingLotUpdateOptions): Promise<ParkingLot>
+  updateEnabled(id: string, enabled: boolean): Promise<ParkingLot>
   updateAvailability(id: string, availableSpaces: number): Promise<ParkingLot>
   remove(id: string): Promise<void>
 }
