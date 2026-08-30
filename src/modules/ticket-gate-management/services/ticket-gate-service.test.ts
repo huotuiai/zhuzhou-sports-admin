@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type { TicketGateWriteInput } from '../types'
 import { describe, expect, it } from 'vitest'
@@ -13,6 +14,7 @@ import type {
   ApiGateFloorVO,
   ApiGateVO,
   TicketGateDataRequester,
+  TicketGateFileRequester,
 } from './ticket-gate-service'
 
 const timestamp = '2026-08-26T08:00:00+08:00'
@@ -104,6 +106,38 @@ describe('ticket gate API mapping and validation', () => {
 })
 
 describe('ticket gate API service', () => {
+  it('downloads the backend CSV with the active filters and export metadata', async () => {
+    const configs: SignedRequestConfig[] = []
+    const blob = new Blob(['csv'], { type: 'text/csv' })
+    const requestFile: TicketGateFileRequester = async (config): Promise<AxiosResponse<Blob>> => {
+      configs.push(config)
+      return {
+        data: blob,
+        headers: {
+          'content-disposition': "attachment; filename*=UTF-8''gate%20list.csv",
+          'x-export-count': '12',
+          'x-export-total': '12',
+        },
+      } as unknown as AxiosResponse<Blob>
+    }
+    const service = createTicketGateService(async () => { throw new Error('unexpected data request') }, requestFile)
+
+    await expect(service.exportCsv({ keyword: ' 东 ', status: 'restricted', floorId: '11' })).resolves.toEqual({
+      content: blob,
+      filename: 'gate list.csv',
+      truncated: false,
+      count: 12,
+      total: 12,
+    })
+    expect(configs).toEqual([{
+      method: 'GET',
+      url: 'api/v1/admin/gates/export',
+      params: { keyword: '东', floor_id: '11', open_status: 2 },
+      responseType: 'blob',
+      headers: { Accept: 'text/csv' },
+    }])
+  })
+
   it('loads a filtered page, all pages, floor options and detail', async () => {
     const { configs, request } = queuedRequester([
       { list: [apiGate({ id: 1 })], total: '1', page: 2, page_size: 20 },

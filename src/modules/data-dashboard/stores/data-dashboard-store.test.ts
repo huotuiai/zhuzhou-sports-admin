@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type {
   DashboardExportFile,
+  DashboardDistributionDetailKind,
   DashboardMetric,
   DashboardOperationsResult,
   DashboardService,
@@ -9,6 +10,7 @@ import type {
   DashboardStatsQuery,
   DashboardTrendPoint,
   DashboardVrSyncResult,
+  DistributionDetailPage,
   MetricDetailPage,
   VrWorkMetric,
 } from '../types'
@@ -93,6 +95,7 @@ function snapshot(query: DashboardStatsQuery = QUERY): DashboardSnapshot {
       title: '停车收费类型分布',
       description: '停车场收费类型汇总',
       kind: 'donut',
+      detailKind: 'parking_fee',
       centerText: '1 项',
       slices: [{ key: 'free', label: '免费', value: 1 }],
     }],
@@ -106,12 +109,14 @@ class StubDashboardService implements DashboardService {
   operationQueries: DashboardStatsQuery[] = []
   trendCalls: Array<{ metricId: string, query: DashboardStatsQuery }> = []
   detailCalls: Array<{ metricId: string, query: DashboardStatsQuery, page: number, pageSize: number }> = []
+  distributionDetailCalls: Array<{ kind: DashboardDistributionDetailKind, slice: string, page: number, pageSize: number }> = []
   exportCalls: Array<{ metricId: string, query: DashboardStatsQuery }> = []
   syncCalls = 0
   nextVrWorks = [vrWork(120)]
   syncResult: DashboardVrSyncResult = { sourceId: '720yun', result: 'success', summary: '同步 1 条', disabled: false }
   exportError: Error | null = null
   syncError: Error | null = null
+  distributionDetailError: Error | null = null
 
   async loadDashboard(query: DashboardStatsQuery): Promise<DashboardSnapshot> {
     return snapshot(query)
@@ -161,6 +166,22 @@ class StubDashboardService implements DashboardService {
   async loadDistributions(): Promise<Pick<DashboardSnapshot, 'distributions' | 'parkingUsage'>> {
     const current = snapshot()
     return { distributions: current.distributions, parkingUsage: current.parkingUsage }
+  }
+
+  async getDistributionDetails(
+    kind: DashboardDistributionDetailKind,
+    slice: string,
+    page: number,
+    pageSize: number,
+  ): Promise<DistributionDetailPage> {
+    this.distributionDetailCalls.push({ kind, slice, page, pageSize })
+    if (this.distributionDetailError) throw this.distributionDetailError
+    return {
+      items: [{ id: `${slice}-${page}`, code: `CODE-${page}`, name: `明细 ${page}`, extra: '附加说明' }],
+      total: 41,
+      page,
+      pageSize,
+    }
   }
 
   async loadVrWorks(): Promise<VrWorkMetric[]> {
@@ -275,6 +296,55 @@ describe('data dashboard store', () => {
     service.exportError = new Error('导出超过 5000 条，请缩小时间范围')
     await expect(store.exportMetricDetails()).resolves.toBeNull()
     expect(store.detailError).toBe('导出超过 5000 条，请缩小时间范围')
+  })
+
+  it('loads distribution drilldowns with stable kind and slice pagination', async () => {
+    const service = new StubDashboardService()
+    const store = createDataDashboardStore(service, 'dashboard-distribution-detail-test')()
+    await store.load(QUERY)
+
+    await store.selectDistribution({ kind: 'parking_fee', slice: 'free', title: '停车收费类型分布', label: '免费' })
+    expect(service.distributionDetailCalls[0]).toEqual({ kind: 'parking_fee', slice: 'free', page: 1, pageSize: 20 })
+    expect(store.distributionDetail.items[0]?.code).toBe('CODE-1')
+
+    await store.setDistributionDetailPage(2)
+    expect(service.distributionDetailCalls.at(-1)).toEqual({ kind: 'parking_fee', slice: 'free', page: 2, pageSize: 20 })
+    expect(store.distributionDetail.page).toBe(2)
+
+    store.closeDistributionDetail()
+    expect(store.selectedDistribution).toBeNull()
+    expect(store.distributionDetail.items).toEqual([])
+  })
+
+  it('keeps the newest distribution drilldown and supports retry after failure', async () => {
+    const service = new StubDashboardService()
+    const store = createDataDashboardStore(service, 'dashboard-distribution-race-test')()
+    await store.load(QUERY)
+    const pending = new Map<string, (value: DistributionDetailPage) => void>()
+    service.getDistributionDetails = (kind, slice, page, pageSize) => new Promise((resolve) => {
+      service.distributionDetailCalls.push({ kind, slice, page, pageSize })
+      pending.set(`${kind}:${slice}`, resolve)
+    })
+
+    const older = store.selectDistribution({ kind: 'parking_fee', slice: 'free', title: '停车收费', label: '免费' })
+    const latest = store.selectDistribution({ kind: 'control', slice: 'draft', title: '管制状态', label: '草稿' })
+    pending.get('control:draft')?.({ items: [{ id: '2', code: 'C2', name: '草稿管制', extra: '' }], total: 1, page: 1, pageSize: 20 })
+    await latest
+    pending.get('parking_fee:free')?.({ items: [{ id: '1', code: 'P1', name: '免费停车场', extra: '' }], total: 1, page: 1, pageSize: 20 })
+    await older
+    expect(store.selectedDistribution?.kind).toBe('control')
+    expect(store.distributionDetail.items[0]?.code).toBe('C2')
+
+    service.getDistributionDetails = async () => { throw new Error('下钻加载失败') }
+    await store.loadDistributionDetail()
+    expect(store.distributionDetailError).toBe('下钻加载失败')
+
+    service.getDistributionDetails = async (_kind, _slice, page, pageSize) => ({
+      items: [{ id: '3', code: 'C3', name: '重试成功', extra: '' }], total: 1, page, pageSize,
+    })
+    expect(await store.loadDistributionDetail()).toBe(true)
+    expect(store.distributionDetailError).toBeNull()
+    expect(store.distributionDetail.items[0]?.code).toBe('C3')
   })
 
   it('syncs all VR works, refreshes the ranking and preserves backend failure summaries', async () => {

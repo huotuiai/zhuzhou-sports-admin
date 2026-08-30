@@ -88,6 +88,7 @@ export interface DashboardExportFile {
 }
 
 export type DashboardDistributionKind = 'donut' | 'progress'
+export type DashboardDistributionDetailKind = 'parking_fee' | 'parking_remain' | 'control' | 'activity'
 
 export interface DashboardDistributionSlice {
   key: string
@@ -101,6 +102,7 @@ export interface DashboardDistribution {
   title: string
   description: string
   kind: DashboardDistributionKind
+  detailKind: Exclude<DashboardDistributionDetailKind, 'parking_remain'>
   centerText: string | null
   slices: DashboardDistributionSlice[]
 }
@@ -110,8 +112,29 @@ export interface ParkingUsageItem {
   name: string
   total: number
   used: number
-  available: number
+  available: number | null
   usageRate: number
+}
+
+export interface DashboardDistributionDetailSelection {
+  kind: DashboardDistributionDetailKind
+  slice: string
+  title: string
+  label: string
+}
+
+export interface DashboardDistributionDetail {
+  id: string
+  code: string
+  name: string
+  extra: string
+}
+
+export interface DistributionDetailPage {
+  items: DashboardDistributionDetail[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 export interface VrWorkMetric {
@@ -158,6 +181,7 @@ export interface DashboardService {
   getMetricDetails(metricId: string, query: DashboardStatsQuery, page: number, pageSize: number): Promise<MetricDetailPage>
   exportMetricDetails(metricId: string, query: DashboardStatsQuery): Promise<DashboardExportFile>
   loadDistributions(): Promise<{ distributions: DashboardDistribution[], parkingUsage: ParkingUsageItem[] }>
+  getDistributionDetails(kind: DashboardDistributionDetailKind, slice: string, page: number, pageSize: number): Promise<DistributionDetailPage>
   loadVrWorks(): Promise<VrWorkMetric[]>
   syncVrWorks(): Promise<DashboardVrSyncResult>
 }

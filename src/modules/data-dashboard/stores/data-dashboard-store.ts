@@ -2,20 +2,31 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
   DashboardExportFile,
+  DashboardDistributionDetailSelection,
   DashboardMetricDimension,
   DashboardMetricGroup,
   DashboardService,
   DashboardSnapshot,
   DashboardStatsQuery,
   DashboardVrSyncResult,
+  DistributionDetailPage,
   MetricDetailPage,
 } from '../types'
 import { dashboardService } from '../services/dashboard-service'
 
 export const DASHBOARD_DETAIL_PAGE_SIZE = 20
+export const DISTRIBUTION_DETAIL_PAGE_SIZE = 20
 
 function emptyDetailPage(): MetricDetailPage {
   return { items: [], total: 0, page: 1, pageSize: DASHBOARD_DETAIL_PAGE_SIZE }
+}
+
+function emptyDistributionDetailPage(): DistributionDetailPage {
+  return { items: [], total: 0, page: 1, pageSize: DISTRIBUTION_DETAIL_PAGE_SIZE }
+}
+
+function distributionSelectionKey(selection: DashboardDistributionDetailSelection | null): string {
+  return selection ? `${selection.kind}:${selection.slice}` : ''
 }
 
 function errorMessage(error: unknown): string {
@@ -29,18 +40,23 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
     const selectedMetricId = ref<string | null>(null)
     const detailDimension = ref<DashboardMetricDimension>('primary')
     const metricDetail = ref<MetricDetailPage>(emptyDetailPage())
+    const selectedDistribution = ref<DashboardDistributionDetailSelection | null>(null)
+    const distributionDetail = ref<DistributionDetailPage>(emptyDistributionDetailPage())
     const isLoading = ref(false)
     const isOperationsLoading = ref(false)
     const isTrendLoading = ref(false)
     const isDetailLoading = ref(false)
+    const isDistributionDetailLoading = ref(false)
     const isVrSyncing = ref(false)
     const error = ref<string | null>(null)
     const trendError = ref<string | null>(null)
     const detailError = ref<string | null>(null)
+    const distributionDetailError = ref<string | null>(null)
     const vrSyncError = ref<string | null>(null)
     let operationsRequest = 0
     let trendRequest = 0
     let detailRequest = 0
+    let distributionDetailRequest = 0
 
     const selectedMetric = computed(() => snapshot.value?.operations.metrics
       .find(metric => metric.id === selectedMetricId.value) ?? null)
@@ -189,6 +205,53 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
       }
     }
 
+    async function selectDistribution(selection: DashboardDistributionDetailSelection): Promise<void> {
+      distributionDetailRequest += 1
+      selectedDistribution.value = { ...selection }
+      distributionDetail.value = emptyDistributionDetailPage()
+      distributionDetailError.value = null
+      await loadDistributionDetail(1)
+    }
+
+    function closeDistributionDetail(): void {
+      distributionDetailRequest += 1
+      selectedDistribution.value = null
+      distributionDetail.value = emptyDistributionDetailPage()
+      distributionDetailError.value = null
+      isDistributionDetailLoading.value = false
+    }
+
+    async function setDistributionDetailPage(page: number): Promise<void> {
+      await loadDistributionDetail(page)
+    }
+
+    async function loadDistributionDetail(page = distributionDetail.value.page): Promise<boolean> {
+      const selection = selectedDistribution.value
+      if (!selection) return false
+      const selectionKey = distributionSelectionKey(selection)
+      const request = ++distributionDetailRequest
+      isDistributionDetailLoading.value = true
+      distributionDetailError.value = null
+      try {
+        const result = await service.getDistributionDetails(
+          selection.kind,
+          selection.slice,
+          page,
+          DISTRIBUTION_DETAIL_PAGE_SIZE,
+        )
+        if (request !== distributionDetailRequest || distributionSelectionKey(selectedDistribution.value) !== selectionKey) return false
+        distributionDetail.value = result
+        return true
+      }
+      catch (cause) {
+        if (request === distributionDetailRequest) distributionDetailError.value = errorMessage(cause)
+        return false
+      }
+      finally {
+        if (request === distributionDetailRequest) isDistributionDetailLoading.value = false
+      }
+    }
+
     async function syncVrWorks(): Promise<DashboardVrSyncResult | null> {
       if (!snapshot.value || isVrSyncing.value) return null
       isVrSyncing.value = true
@@ -216,14 +279,18 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
       metricGroupCounts,
       detailDimension,
       metricDetail,
+      selectedDistribution,
+      distributionDetail,
       isLoading,
       isOperationsLoading,
       isTrendLoading,
       isDetailLoading,
+      isDistributionDetailLoading,
       isVrSyncing,
       error,
       trendError,
       detailError,
+      distributionDetailError,
       vrSyncError,
       load,
       refreshOperations,
@@ -235,6 +302,10 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
       loadMetricTrend,
       loadMetricDetail,
       exportMetricDetails,
+      selectDistribution,
+      closeDistributionDetail,
+      setDistributionDetailPage,
+      loadDistributionDetail,
       syncVrWorks,
     }
   })

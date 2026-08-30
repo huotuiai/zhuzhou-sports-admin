@@ -48,10 +48,10 @@ function overview(overrides: Partial<ApiOverviewVO> = {}): ApiOverviewVO {
 
 function distribution(): ApiDistributionVO {
   return {
-    parking_fee: [{ name: '免费', value: 2 }, { name: '收费', value: '3' }],
-    parking_remain: [{ name: 'P1', remain: '20', capacity: 100, usage: '0.8' }],
-    controls: [{ name: '已发布', value: 4 }, { name: '草稿', value: 1 }],
-    activities: [{ name: '上架', value: 3 }, { name: '下架', value: 2 }],
+    parking_fee: [{ key: 'free', name: '免费', value: 2 }, { key: 'paid', name: '收费', value: '3' }],
+    parking_remain: [{ id: '9007199254740995', name: 'P1', remain: '20', capacity: 100, usage: '0.8' }],
+    controls: [{ key: 'published', name: '已发布', value: 4 }, { key: 'draft', name: '草稿', value: 1 }],
+    activities: [{ key: 'online', name: '上架', value: 3 }, { key: 'offline', name: '下架', value: 2 }],
   }
 }
 
@@ -115,8 +115,16 @@ describe('dashboard API service', () => {
     })
     const result = mapApiDistribution(distribution())
     expect(result.distributions.map(item => item.slices.length)).toEqual([2, 2, 2])
+    expect(result.distributions.map(item => item.detailKind)).toEqual(['parking_fee', 'control', 'activity'])
+    expect(result.distributions[0]?.slices.map(item => item.key)).toEqual(['free', 'paid'])
     expect(result.distributions[0]?.centerText).toBe('5 项')
-    expect(result.parkingUsage[0]).toEqual({ id: 'parking-1', name: 'P1', total: 100, used: 80, available: 20, usageRate: 80 })
+    expect(result.parkingUsage[0]).toEqual({ id: '9007199254740995', name: 'P1', total: 100, used: 80, available: 20, usageRate: 80 })
+
+    const unknownRemain = mapApiDistribution({
+      ...distribution(),
+      parking_remain: [{ id: 9, name: '临时停车场', remain: null, capacity: 80, usage: 0.75 }],
+    }).parkingUsage[0]
+    expect(unknownRemain).toEqual({ id: '9', name: '临时停车场', total: 80, used: 60, available: null, usageRate: 75 })
   })
 
   it('maps remote VR fields and ranks works by PV', () => {
@@ -149,15 +157,25 @@ describe('dashboard API service', () => {
     const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
       configs.push(config as SignedRequestConfig)
       if (config.url === 'api/v1/admin/stats/trend') return [{ day: '2026-08-25', value: 12, uv: 9 }] as T
+      if (config.url === 'api/v1/admin/stats/distribution/details') {
+        return { list: [{ id: '9007199254740997', code: 'P-01', name: '东停车场', extra: '余位 20 / 100' }], total: '1', page: 1, page_size: 20 } as T
+      }
       return { list: [event()], total: '1', page: 1, page_size: 20 } as T
     }
     const service = createDashboardService(requester)
     const activityQuery = query({ preset: 'custom', activityId: '9007199254740995' })
     await expect(service.loadMetricTrend('IND-3', activityQuery)).resolves.toEqual([{ date: '2026-08-25', primary: 12, secondary: 9 }])
     await expect(service.getMetricDetails('IND-3', activityQuery, 1, 20)).resolves.toMatchObject({ total: 1, page: 1, pageSize: 20 })
+    await expect(service.getDistributionDetails('parking_remain', '9007199254740997', 1, 20)).resolves.toEqual({
+      items: [{ id: '9007199254740997', code: 'P-01', name: '东停车场', extra: '余位 20 / 100' }],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    })
     expect(configs).toEqual([
       { method: 'GET', url: 'api/v1/admin/stats/trend', params: { code: 'IND-3', activity_id: '9007199254740995' } },
       { method: 'GET', url: 'api/v1/admin/stats/details', params: { page: 1, page_size: 20, code: 'IND-3', activity_id: '9007199254740995' } },
+      { method: 'GET', url: 'api/v1/admin/stats/distribution/details', params: { page: 1, page_size: 20, kind: 'parking_remain', slice: '9007199254740997' } },
     ])
   })
 

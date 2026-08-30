@@ -300,7 +300,7 @@ function handleAvailabilityOpenChange(open: boolean): void {
 async function saveAvailability(): Promise<void> {
   const target = availabilityTarget.value
   if (!target) return
-  const source = availabilityValue.value.trim()
+  const source = availabilityValue.value.toString()?.trim()
   const value = Number(source)
   if (!source || !Number.isInteger(value) || value < 0 || value > target.totalSpaces) {
     availabilityError.value = `请输入 0–${target.totalSpaces} 的整数`

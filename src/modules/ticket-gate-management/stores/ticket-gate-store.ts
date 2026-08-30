@@ -8,6 +8,7 @@ import type {
   TicketGateValidationResult,
   TicketGateWriteInput,
 } from '../types'
+import type { BackendCsvExportFile } from '@/lib/http'
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
@@ -238,11 +239,12 @@ export function createTicketGateStore(service: TicketGateService, storeId = 'tic
       }
     }
 
-    async function exportCurrent(): Promise<TicketGate[] | null> {
+    async function exportCurrent(): Promise<BackendCsvExportFile | null> {
+      if (isExporting.value) return null
       isExporting.value = true
       error.value = null
       try {
-        return await service.list(normalizeQuery(query))
+        return await service.exportCsv(normalizeQuery(query))
       }
       catch (cause) {
         error.value = message(cause)

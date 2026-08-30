@@ -1,6 +1,7 @@
-import type { ShuttleRoute, ShuttleRouteCreateInput, ShuttleRouteService, ShuttleRouteUpdateInput, ShuttleStation } from '../types'
+import type { ShuttleRoute, ShuttleRouteCreateInput, ShuttleRouteQuery, ShuttleRouteService, ShuttleRouteUpdateInput, ShuttleStation } from '../types'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import type { BackendCsvExportFile } from '@/lib/http'
 import { createShuttleRouteStore } from './shuttle-route-store'
 
 function route(id: string, overrides: Partial<ShuttleRoute> = {}): ShuttleRoute {
@@ -27,7 +28,12 @@ function route(id: string, overrides: Partial<ShuttleRoute> = {}): ShuttleRoute 
 
 class StubShuttleRouteService implements ShuttleRouteService {
   records: ShuttleRoute[] = []
+  exportQueries: ShuttleRouteQuery[] = []
   async list(): Promise<ShuttleRoute[]> { return structuredClone(this.records) }
+  async exportCsv(query: ShuttleRouteQuery): Promise<BackendCsvExportFile> {
+    this.exportQueries.push({ ...query })
+    return { content: new Blob(['csv']), filename: 'shuttle_lines.csv', truncated: false, count: 1, total: 1 }
+  }
   async create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute> {
     const record = route(`route-${this.records.length + 1}`, { ...input, code: input.code })
     this.records.push(record)
@@ -95,5 +101,14 @@ describe('shuttle route store', () => {
     const station: ShuttleStation = { id: 'S1', name: '体育中心', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', arrivalGateIds: ['gate-1'] }
     expect((await store.replaceStations('L1', [station]))?.stations).toHaveLength(1)
     expect(await store.remove('L1')).toBe(true)
+  })
+
+  it('exports the active filters and resets the exporting state', async () => {
+    const store = createShuttleRouteStore(service, 'shuttle-export')()
+    store.setQuery({ keyword: '高铁', direction: 'outbound', operatingStatus: 'partial' })
+
+    await expect(store.exportCurrent()).resolves.toMatchObject({ filename: 'shuttle_lines.csv', count: 1 })
+    expect(service.exportQueries).toEqual([{ keyword: '高铁', direction: 'outbound', operatingStatus: 'partial' }])
+    expect(store.isExporting).toBe(false)
   })
 })

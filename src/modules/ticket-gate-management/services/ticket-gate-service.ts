@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   GeoPoint,
@@ -11,7 +12,7 @@ import type {
   TicketGateValidationResult,
   TicketGateWriteInput,
 } from '../types'
-import { ApiError, requestData } from '@/lib/http'
+import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
 
 export interface ApiGateVO {
   id: number | string
@@ -74,6 +75,10 @@ interface ApiGateStatusRequest {
 
 export interface TicketGateDataRequester {
   <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface TicketGateFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
 export class TicketGateServiceError extends Error {
@@ -291,13 +296,17 @@ export function sortTicketGates(records: readonly TicketGate[]): TicketGate[] {
     .map(cloneGate)
 }
 
-function queryParameters(page: number, pageSize: number, query: TicketGateQuery): Record<string, string | number> {
-  const params: Record<string, string | number> = { page, page_size: pageSize }
+function filterParameters(query: TicketGateQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
   const keyword = normalizeText(query.keyword)
   if (keyword) params.keyword = keyword
   if (query.floorId !== 'all') params.floor_id = query.floorId
   if (query.status !== 'all') params.open_status = apiOpenStatus(query.status)
   return params
+}
+
+function queryParameters(page: number, pageSize: number, query: TicketGateQuery): Record<string, string | number> {
+  return { page, page_size: pageSize, ...filterParameters(query) }
 }
 
 function createBody(input: TicketGateWriteInput): ApiGateCreateRequest {
@@ -336,7 +345,12 @@ function updateBody(input: TicketGateWriteInput): ApiGateUpdateRequest {
 const DEFAULT_QUERY: TicketGateQuery = { keyword: '', status: 'all', floorId: 'all' }
 const MAX_PAGE_SIZE = 100
 
-export function createTicketGateService(request: TicketGateDataRequester = requestData): TicketGateService {
+const defaultFileRequester: TicketGateFileRequester = config => rawHttpClient.request<Blob>(config)
+
+export function createTicketGateService(
+  request: TicketGateDataRequester = requestData,
+  requestFile: TicketGateFileRequester = defaultFileRequester,
+): TicketGateService {
   const service: TicketGateService = {
     async listPage(page, pageSize, query) {
       return mapApiGatePage(await request<ApiGatePage>({
@@ -354,6 +368,17 @@ export function createTicketGateService(request: TicketGateDataRequester = reque
         records.push(...(await service.listPage(page, MAX_PAGE_SIZE, query)).records)
       }
       return sortTicketGates([...new Map(records.map((record) => [record.id, record])).values()])
+    },
+
+    async exportCsv(query) {
+      const response = await requestFile({
+        method: 'GET',
+        url: 'api/v1/admin/gates/export',
+        params: filterParameters(query),
+        responseType: 'blob',
+        headers: { Accept: 'text/csv' },
+      })
+      return mapCsvExportResponse(response, 'gates.csv')
     },
 
     async listFloors() {

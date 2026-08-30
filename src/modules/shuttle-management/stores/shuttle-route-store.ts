@@ -6,6 +6,7 @@ import type {
   ShuttleRouteUpdateInput,
   ShuttleStation,
 } from '../types'
+import type { BackendCsvExportFile } from '@/lib/http'
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import {
@@ -35,6 +36,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
     const pageSize = ref(20)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
     const deletingId = ref<string | null>(null)
     const error = ref<string | null>(null)
 
@@ -84,6 +86,21 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       }
       finally {
         isLoading.value = false
+      }
+    }
+    async function exportCurrent(): Promise<BackendCsvExportFile | null> {
+      if (isExporting.value) return null
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.exportCsv({ ...query })
+      }
+      catch (cause) {
+        error.value = message(cause)
+        return null
+      }
+      finally {
+        isExporting.value = false
       }
     }
     async function create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute | null> {
@@ -175,6 +192,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       pageSize,
       isLoading,
       isSaving,
+      isExporting,
       deletingId,
       error,
       filteredRecords,
@@ -187,6 +205,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       setPage,
       setPageSize,
       load,
+      exportCurrent,
       create,
       update,
       replaceStations,

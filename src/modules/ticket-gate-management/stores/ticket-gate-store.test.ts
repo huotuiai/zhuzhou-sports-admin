@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   TicketGate,
   TicketGatePage,
@@ -50,6 +51,7 @@ function input(overrides: Partial<TicketGateWriteInput> = {}): TicketGateWriteIn
 
 class StubGateService implements TicketGateService {
   records: TicketGate[] = []
+  exportQueries: TicketGateQuery[] = []
   failDelete = false
   private nextId = 20
 
@@ -65,6 +67,18 @@ class StubGateService implements TicketGateService {
 
   async list(query: TicketGateQuery = { keyword: '', status: 'all', floorId: 'all' }): Promise<TicketGate[]> {
     return structuredClone(this.filtered(query))
+  }
+
+  async exportCsv(query: TicketGateQuery): Promise<BackendCsvExportFile> {
+    this.exportQueries.push({ ...query })
+    const records = this.filtered(query)
+    return {
+      content: new Blob(['csv']),
+      filename: 'gates.csv',
+      truncated: false,
+      count: records.length,
+      total: records.length,
+    }
   }
 
   async listPage(page: number, pageSize: number, query: TicketGateQuery): Promise<TicketGatePage> {
@@ -182,6 +196,8 @@ describe('ticket gate store', () => {
     await store.load()
     await store.setQuery({ keyword: '东' })
 
-    expect((await store.exportCurrent())?.map((record) => record.id)).toEqual(['G-1', 'G-2'])
+    await expect(store.exportCurrent()).resolves.toMatchObject({ filename: 'gates.csv', count: 2 })
+    expect(service.exportQueries).toEqual([{ keyword: '东', status: 'all', floorId: 'all' }])
+    expect(store.isExporting).toBe(false)
   })
 })

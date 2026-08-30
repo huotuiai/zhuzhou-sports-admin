@@ -9,7 +9,7 @@ import type {
   ShuttleStation,
 } from '@/modules/shuttle-management/types'
 import type { TicketGate } from '@/modules/ticket-gate-management/types'
-import { AlertTriangle, BusFront, Clock3, Download, List, Map as MapIcon, MapPin, PencilLine, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
+import { AlertTriangle, BusFront, Clock3, Download, List, LoaderCircle, Map as MapIcon, MapPin, PencilLine, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -286,6 +286,31 @@ function resetQuery(): void {
   queryDraft.value = { ...store.query }
 }
 
+function downloadCsv(content: Blob, filename: string): void {
+  const url = URL.createObjectURL(content)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+async function exportCurrent(): Promise<void> {
+  const file = await store.exportCurrent()
+  if (!file) {
+    toast.error(store.error ?? '接驳线路导出失败。')
+    return
+  }
+  downloadCsv(file.content, file.filename)
+  if (file.truncated) {
+    const count = file.count ?? 5000
+    const total = file.total === null ? '未知' : String(file.total)
+    toast.warning(`已导出前 ${count} 条，共 ${total} 条，请缩小筛选范围。`)
+  }
+  else if (file.count !== null) toast.success(`已导出当前筛选结果，共 ${file.count} 条。`)
+  else toast.success('已导出当前筛选结果。')
+}
+
 function confirmLeave(): boolean {
   const unsaved = (routeOpen.value && routeDirty.value) || (stationOpen.value && stationDirty.value)
   return !unsaved || window.confirm('当前有未保存的接驳线路或站点修改，确定放弃吗？')
@@ -330,7 +355,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <div><h1 id="shuttle-route-title" class="text-2xl font-semibold tracking-tight">接驳车管理</h1><p class="mt-1 text-sm text-muted-foreground">接驳线路 / 站点 / 排班</p></div>
         </div>
         <div class="flex items-center gap-2">
-          <Button variant="outline" size="lg" class="h-11 px-4" disabled title="等待导出接口接入"><Download aria-hidden="true" />导出</Button>
+          <Button variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting" @click="exportCurrent"><LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
           <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
             <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表</Button>
             <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图</Button>

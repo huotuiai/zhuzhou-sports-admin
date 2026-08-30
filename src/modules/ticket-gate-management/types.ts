@@ -1,3 +1,5 @@
+import type { BackendCsvExportFile } from '@/lib/http'
+
 export type TicketGateStatus = 'open' | 'closed' | 'restricted'
 export type TicketGateStatusFilter = 'all' | TicketGateStatus
 export type GateRelationDirection = 'entry' | 'exit' | 'bidirectional'
@@ -55,6 +57,7 @@ export interface TicketGateStatusInput {
 export interface TicketGateService {
   list(query?: TicketGateQuery): Promise<TicketGate[]>
   listPage(page: number, pageSize: number, query: TicketGateQuery): Promise<TicketGatePage>
+  exportCsv(query: TicketGateQuery): Promise<BackendCsvExportFile>
   listFloors(): Promise<TicketGateFloorOption[]>
   get(id: string): Promise<TicketGate>
   create(input: TicketGateWriteInput): Promise<TicketGate>

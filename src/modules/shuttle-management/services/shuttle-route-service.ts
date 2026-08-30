@@ -1,9 +1,11 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   ShuttleDirection,
   ShuttleOperatingStatus,
   ShuttleRoute,
   ShuttleRouteCreateInput,
+  ShuttleRouteQuery,
   ShuttleRouteService,
   ShuttleRouteUpdateInput,
   ShuttleRouteValidationIssue,
@@ -12,7 +14,7 @@ import type {
   ValidationResult,
 } from '../types'
 import { isValidGeoPoint } from '@/components/map/geometry'
-import { ApiError, requestData } from '@/lib/http'
+import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
 
 type ApiShuttleDirection = 1 | 2
 type ApiShuttleOperatingStatus = 0 | 1 | 2
@@ -86,12 +88,19 @@ interface ApiShuttleStopWriteRequest {
   lng: number
   lat: number
   nav_address: string
-  arrival_gate_ids: number[]
-  status?: 1
+  arrival_gate_ids: string[]
+}
+
+interface ApiShuttleStopsReplaceRequest {
+  stops: ApiShuttleStopWriteRequest[]
 }
 
 export interface ShuttleRouteDataRequester {
   <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface ShuttleRouteFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
 export class ShuttleRouteServiceError extends Error {
@@ -193,18 +202,6 @@ function cloneRoute(route: ShuttleRoute): ShuttleRoute {
 
 function endpoint(id: string, suffix = ''): string {
   return `api/v1/admin/shuttle/lines/${encodeURIComponent(id)}${suffix}`
-}
-
-function stopEndpoint(id: string): string {
-  return `api/v1/admin/shuttle/stops/${encodeURIComponent(id)}`
-}
-
-function bodyId(value: string): number {
-  const result = Number(value)
-  if (!Number.isSafeInteger(result) || result <= 0) {
-    throw new ApiError('检票口 ID 超出浏览器可安全提交的范围', { kind: 'configuration' })
-  }
-  return result
 }
 
 export function sanitizeShuttleRouteBaseInput(input: ShuttleRouteUpdateInput): ShuttleRouteUpdateInput {
@@ -370,7 +367,7 @@ function lineBody(input: ShuttleRouteUpdateInput): ApiShuttleLineWriteRequest {
   }
 }
 
-function stopBody(station: ShuttleStation, sequence: number, includeStatus: boolean): ApiShuttleStopWriteRequest {
+function stopBody(station: ShuttleStation, sequence: number): ApiShuttleStopWriteRequest {
   if (!station.point) throw new ShuttleRouteServiceError('请输入站点定位经纬度')
   return {
     name: station.name,
@@ -378,23 +375,17 @@ function stopBody(station: ShuttleStation, sequence: number, includeStatus: bool
     lng: station.point.lng,
     lat: station.point.lat,
     nav_address: station.navigationAddress,
-    arrival_gate_ids: station.arrivalGateIds.map(bodyId),
-    ...(includeStatus ? { status: 1 as const } : {}),
+    arrival_gate_ids: [...station.arrivalGateIds],
   }
 }
 
-function sameStringIds(first: readonly string[], second: readonly string[]): boolean {
-  return first.length === second.length && first.every((id, index) => id === second[index])
-}
-
-function stopNeedsUpdate(raw: ApiShuttleStopVO, station: ShuttleStation, sequence: number): boolean {
-  const current = mapApiShuttleStop(raw)
-  return integer(raw.seq, '站点顺序') !== sequence ||
-    current.name !== station.name ||
-    current.point?.lng !== station.point?.lng ||
-    current.point?.lat !== station.point?.lat ||
-    current.navigationAddress !== station.navigationAddress ||
-    !sameStringIds(current.arrivalGateIds, station.arrivalGateIds)
+function exportParameters(query: ShuttleRouteQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
+  const keyword = normalizeText(query.keyword)
+  if (keyword) params.keyword = keyword
+  if (query.direction !== 'all') params.direction = apiDirection(query.direction)
+  if (query.operatingStatus !== 'all') params.operate_status = apiOperatingStatus(query.operatingStatus)
+  return params
 }
 
 function throwForValidation(issues: readonly ShuttleRouteValidationIssue[] | readonly ShuttleStationValidationIssue[]): never {
@@ -404,7 +395,12 @@ function throwForValidation(issues: readonly ShuttleRouteValidationIssue[] | rea
 const MAX_PAGE_SIZE = 100
 const DETAIL_BATCH_SIZE = 8
 
-export function createShuttleRouteService(request: ShuttleRouteDataRequester = requestData): ShuttleRouteService {
+const defaultFileRequester: ShuttleRouteFileRequester = config => rawHttpClient.request<Blob>(config)
+
+export function createShuttleRouteService(
+  request: ShuttleRouteDataRequester = requestData,
+  requestFile: ShuttleRouteFileRequester = defaultFileRequester,
+): ShuttleRouteService {
   async function rawDetail(id: string): Promise<ApiShuttleLineVO> {
     return request<ApiShuttleLineVO>({ method: 'GET', url: endpoint(id) })
   }
@@ -440,6 +436,17 @@ export function createShuttleRouteService(request: ShuttleRouteDataRequester = r
       return sortShuttleRoutes(records)
     },
 
+    async exportCsv(query) {
+      const response = await requestFile({
+        method: 'GET',
+        url: 'api/v1/admin/shuttle/lines/export',
+        params: exportParameters(query),
+        responseType: 'blob',
+        headers: { Accept: 'text/csv' },
+      })
+      return mapCsvExportResponse(response, 'shuttle_lines.csv')
+    },
+
     async create(input) {
       const validation = validateShuttleRouteCreateInput(input)
       if (!validation.valid) throwForValidation(validation.issues)
@@ -469,39 +476,14 @@ export function createShuttleRouteService(request: ShuttleRouteDataRequester = r
       const validation = validateShuttleStations(stationsInput)
       if (!validation.valid) throwForValidation(validation.issues)
       const stations = sanitizeShuttleStations(stationsInput)
-      const latest = await rawDetail(id)
-      const rawStops = Array.isArray(latest.stops) ? latest.stops : []
-      const existingById = new Map(rawStops.map(stop => [String(stop.id), stop]))
-      const retainedIds = new Set(stations.filter(station => existingById.has(station.id)).map(station => station.id))
-
-      for (let index = 0; index < stations.length; index += 1) {
-        const station = stations[index]!
-        const existing = existingById.get(station.id)
-        if (!existing || !stopNeedsUpdate(existing, station, index + 1)) continue
-        await request<ApiShuttleStopVO, ApiShuttleStopWriteRequest>({
-          method: 'PATCH',
-          url: stopEndpoint(station.id),
-          data: stopBody(station, index + 1, false),
-        })
+      const data: ApiShuttleStopsReplaceRequest = {
+        stops: stations.map((station, index) => stopBody(station, index + 1)),
       }
-
-      for (let index = 0; index < stations.length; index += 1) {
-        const station = stations[index]!
-        if (existingById.has(station.id)) continue
-        await request<ApiShuttleStopVO, ApiShuttleStopWriteRequest>({
-          method: 'POST',
-          url: endpoint(id, '/stops'),
-          data: stopBody(station, index + 1, true),
-        })
-      }
-
-      for (const stop of rawStops) {
-        const stopId = String(stop.id)
-        if (retainedIds.has(stopId)) continue
-        await request<{ deleted: boolean }>({ method: 'DELETE', url: stopEndpoint(stopId) })
-      }
-
-      return mapApiShuttleRoute(await rawDetail(id))
+      return mapApiShuttleRoute(await request<ApiShuttleLineVO, ApiShuttleStopsReplaceRequest>({
+        method: 'PUT',
+        url: endpoint(id, '/stops'),
+        data,
+      }))
     },
 
     async remove(id) {

@@ -1,4 +1,5 @@
 import type { GeoPoint } from '@/components/map/types'
+import type { BackendCsvExportFile } from '@/lib/http'
 
 export type ShuttleDirection = 'inbound' | 'outbound'
 export type ShuttleOperatingStatus = 'operating' | 'suspended' | 'partial'
@@ -51,6 +52,7 @@ export type ShuttleRouteUpdateInput = ShuttleRouteBaseInput
 
 export interface ShuttleRouteService {
   list(): Promise<ShuttleRoute[]>
+  exportCsv(query: ShuttleRouteQuery): Promise<BackendCsvExportFile>
   create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute>
   update(id: string, input: ShuttleRouteUpdateInput): Promise<ShuttleRoute>
   replaceStations(id: string, stations: readonly ShuttleStation[]): Promise<ShuttleRoute>

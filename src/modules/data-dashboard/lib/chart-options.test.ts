@@ -13,7 +13,7 @@ const metric: DashboardMetric = {
 }
 
 const distribution: DashboardDistribution = {
-  id: 'test', title: '测试分布', description: '测试', kind: 'donut', centerText: '3 项',
+  id: 'test', title: '测试分布', description: '测试', kind: 'donut', detailKind: 'parking_fee', centerText: '3 项',
   slices: [{ key: 'a', label: '分类 A', value: 1 }, { key: 'b', label: '分类 B', value: 2 }],
 }
 

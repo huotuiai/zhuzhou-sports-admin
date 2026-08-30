@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type { ShuttleRouteCreateInput, ShuttleRouteUpdateInput, ShuttleStation } from '../types'
 import { describe, expect, it } from 'vitest'
@@ -12,6 +13,7 @@ import type {
   ApiShuttleLineVO,
   ApiShuttleStopVO,
   ShuttleRouteDataRequester,
+  ShuttleRouteFileRequester,
 } from './shuttle-route-service'
 
 const timestamp = '2026-08-28T10:00:00+08:00'
@@ -162,6 +164,39 @@ describe('shuttle route API mapping and validation', () => {
 })
 
 describe('shuttle route API service', () => {
+  it('downloads the backend CSV with the active route filters', async () => {
+    const configs: SignedRequestConfig[] = []
+    const blob = new Blob(['csv'], { type: 'text/csv' })
+    const requestFile: ShuttleRouteFileRequester = async (config): Promise<AxiosResponse<Blob>> => {
+      configs.push(config)
+      return {
+        data: blob,
+        headers: {
+          'content-disposition': 'attachment; filename="shuttle.csv"',
+          'x-export-truncated': 'true',
+          'x-export-count': '5000',
+          'x-export-total': '5100',
+        },
+      } as unknown as AxiosResponse<Blob>
+    }
+    const service = createShuttleRouteService(async () => { throw new Error('unexpected data request') }, requestFile)
+
+    await expect(service.exportCsv({ keyword: ' 高铁 ', direction: 'outbound', operatingStatus: 'partial' })).resolves.toEqual({
+      content: blob,
+      filename: 'shuttle.csv',
+      truncated: true,
+      count: 5000,
+      total: 5100,
+    })
+    expect(configs).toEqual([{
+      method: 'GET',
+      url: 'api/v1/admin/shuttle/lines/export',
+      params: { keyword: '高铁', direction: 2, operate_status: 2 },
+      responseType: 'blob',
+      headers: { Accept: 'text/csv' },
+    }])
+  })
+
   it('loads every page and supplements every line with its latest detail', async () => {
     const { configs, request } = queuedRequester([
       { list: [apiLine({ id: 2, code: 'L2', sort_order: 2, stops: undefined })], total: 101, page: 1, page_size: 100 },
@@ -223,16 +258,10 @@ describe('shuttle route API service', () => {
     expect(configs[3]).toMatchObject({ method: 'DELETE', url: 'api/v1/admin/shuttle/lines/21' })
   })
 
-  it('reconciles the current station editor value through stop CRUD and reloads detail', async () => {
-    const oldFirst = apiStop({ id: 11, name: '旧首站', seq: 1, arrival_gate_ids: [10] })
-    const removed = apiStop({ id: 12, name: '待删除站', seq: 2 })
+  it('replaces the complete station editor value through one transactional request', async () => {
     const finalFirst = apiStop({ id: 11, name: '更新首站', seq: 1, arrival_gate_ids: [10, 13] })
     const created = apiStop({ id: 13, name: '新增站', seq: 2 })
     const { configs, request } = queuedRequester([
-      apiLine({ id: 21, stops: [oldFirst, removed] }),
-      finalFirst,
-      created,
-      { deleted: true },
       apiLine({ id: 21, stops: [finalFirst, created] }),
     ])
     const service = createShuttleRouteService(request)
@@ -243,30 +272,27 @@ describe('shuttle route API service', () => {
     ])
 
     expect(saved.stations.map(item => item.id)).toEqual(['11', '13'])
-    expect(configs[0]).toMatchObject({ method: 'GET', url: 'api/v1/admin/shuttle/lines/21' })
-    expect(configs[1]).toMatchObject({
-      method: 'PATCH',
-      url: 'api/v1/admin/shuttle/stops/11',
-      data: { name: '更新首站', seq: 1, arrival_gate_ids: [10, 13] },
-    })
-    expect(configs[1]?.data).not.toHaveProperty('arrival_offset_minutes')
-    expect(configs[1]?.data).not.toHaveProperty('status')
-    expect(configs[2]).toMatchObject({
-      method: 'POST',
+    expect(configs).toHaveLength(1)
+    expect(configs[0]).toMatchObject({
+      method: 'PUT',
       url: 'api/v1/admin/shuttle/lines/21/stops',
-      data: { name: '新增站', seq: 2, status: 1 },
+      data: {
+        stops: [
+          { name: '更新首站', seq: 1, lng: 113.1462, lat: 27.8165, nav_address: '', arrival_gate_ids: ['10', '13'] },
+          { name: '新增站', seq: 2, lng: 113.1462, lat: 27.8165, nav_address: '', arrival_gate_ids: [] },
+        ],
+      },
     })
-    expect(configs[2]?.data).not.toHaveProperty('arrival_offset_minutes')
-    expect(configs[3]).toMatchObject({ method: 'DELETE', url: 'api/v1/admin/shuttle/stops/12' })
-    expect(configs[4]).toMatchObject({ method: 'GET', url: 'api/v1/admin/shuttle/lines/21' })
+    expect(configs[0]?.data).not.toHaveProperty('idempotency_key')
   })
 
-  it('rejects unsafe int64 gate IDs before submitting stop changes', async () => {
-    const { request } = queuedRequester([
-      apiLine({ id: 21, stops: [] }),
+  it('submits int64 gate IDs as strings without precision loss', async () => {
+    const { configs, request } = queuedRequester([
+      apiLine({ id: 21, stops: [apiStop({ arrival_gate_ids: ['9007199254740993'] })] }),
     ])
     await expect(createShuttleRouteService(request).replaceStations('21', [
       station('client-new', { arrivalGateIds: ['9007199254740993'] }),
-    ])).rejects.toThrow('超出浏览器可安全提交的范围')
+    ])).resolves.toMatchObject({ id: '21' })
+    expect(configs[0]?.data).toMatchObject({ stops: [{ arrival_gate_ids: ['9007199254740993'] }] })
   })
 })

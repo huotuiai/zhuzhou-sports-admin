@@ -226,46 +226,29 @@ async function saveStatus(): Promise<void> {
   toast.success('检票口状态已更新，将在 5 分钟内同步至 H5。')
 }
 
-function statusLabel(status: TicketGateStatus): string {
-  return status === 'open' ? '开放' : status === 'closed' ? '关闭' : '管制'
-}
-
-function csvCell(value: unknown): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
-function downloadCsv(records: readonly TicketGate[]): void {
-  const headers = ['检票口编号', '名称', '楼层', '位置描述', '覆盖座位分区', '状态', '状态说明', '排序', '经度', '纬度', '导航地址']
-  const rows = records.map((item) => [
-    item.code,
-    item.name,
-    item.floorName,
-    item.locationDescription,
-    item.zoneNames.join('、'),
-    statusLabel(item.status),
-    item.status === 'open' ? '' : item.statusRemark,
-    item.sortOrder,
-    item.point.lng,
-    item.point.lat,
-    item.navigationAddress,
-  ])
-  const csv = `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+function downloadCsv(content: Blob, filename: string): void {
+  const url = URL.createObjectURL(content)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `检票口管理-${new Date().toISOString().slice(0, 10)}.csv`
+  anchor.download = filename
   anchor.click()
   URL.revokeObjectURL(url)
 }
 
 async function exportCurrent(): Promise<void> {
-  const records = await store.exportCurrent()
-  if (!records) {
+  const file = await store.exportCurrent()
+  if (!file) {
     toast.error(store.error ?? '检票口导出失败。')
     return
   }
-  downloadCsv(records)
-  toast.success(`已导出当前筛选结果，共 ${records.length} 条。`)
+  downloadCsv(file.content, file.filename)
+  if (file.truncated) {
+    const count = file.count ?? 5000
+    const total = file.total === null ? '未知' : String(file.total)
+    toast.warning(`已导出前 ${count} 条，共 ${total} 条，请缩小筛选范围。`)
+  }
+  else if (file.count !== null) toast.success(`已导出当前筛选结果，共 ${file.count} 条。`)
+  else toast.success('已导出当前筛选结果。')
 }
 
 function requestDelete(item: TicketGate): void {

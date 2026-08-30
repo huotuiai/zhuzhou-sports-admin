@@ -24,6 +24,7 @@ import {
 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import DashboardChart from '@/modules/data-dashboard/components/DashboardChart.vue'
+import DistributionDetailSheet from '@/modules/data-dashboard/components/DistributionDetailSheet.vue'
 import DashboardFilterBar from '@/modules/data-dashboard/components/DashboardFilterBar.vue'
 import DashboardMetricCard from '@/modules/data-dashboard/components/DashboardMetricCard.vue'
 import MetricDetailSheet from '@/modules/data-dashboard/components/MetricDetailSheet.vue'
@@ -88,6 +89,45 @@ function distributionOption(distribution: DashboardDistribution): EChartsCoreOpt
 
 function distributionColor(slice: DashboardDistributionSlice): string {
   return distributionSliceColor(slice, themeStore.mode)
+}
+
+function chartItemId(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  const data = (payload as { data?: unknown }).data
+  if (!data || typeof data !== 'object') return null
+  const id = (data as { id?: unknown }).id
+  return typeof id === 'string' || typeof id === 'number' ? String(id) : null
+}
+
+function selectDistributionSlice(distribution: DashboardDistribution, slice: DashboardDistributionSlice): void {
+  void store.selectDistribution({
+    kind: distribution.detailKind,
+    slice: slice.key,
+    title: distribution.title,
+    label: slice.label,
+  })
+}
+
+function selectDistributionChartSlice(distribution: DashboardDistribution, payload: unknown): void {
+  const id = chartItemId(payload)
+  const slice = distribution.slices.find(item => item.key === id)
+  if (slice) selectDistributionSlice(distribution, slice)
+}
+
+function selectParking(id: string): void {
+  const parking = store.snapshot?.parkingUsage.find(item => item.id === id)
+  if (!parking) return
+  void store.selectDistribution({
+    kind: 'parking_remain',
+    slice: parking.id,
+    title: '停车场车位使用情况',
+    label: parking.name,
+  })
+}
+
+function selectParkingChart(payload: unknown): void {
+  const id = chartItemId(payload)
+  if (id) selectParking(id)
 }
 
 const parkingOption = computed(() => buildParkingUsageOption(
@@ -263,17 +303,21 @@ onMounted(async () => {
                 <DashboardChart
                   :option="distributionOption(distribution)"
                   :accessible-label="distribution.title"
+                  @chart-click="selectDistributionChartSlice(distribution, $event)"
                 />
               </div>
               <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3">
-                <span
+                <button
                   v-for="slice in distribution.slices"
                   :key="slice.key"
-                  class="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground"
+                  type="button"
+                  class="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
+                  :aria-label="`查看${distribution.title}${slice.label}明细`"
+                  @click="selectDistributionSlice(distribution, slice)"
                 >
                   <span class="size-2.5 rounded-sm" :style="{ backgroundColor: distributionColor(slice) }" aria-hidden="true" />
                   {{ slice.label }} <strong class="font-semibold tabular-nums text-foreground">{{ slice.value }}</strong>
-                </span>
+                </button>
               </div>
             </Card>
           </div>
@@ -293,17 +337,21 @@ onMounted(async () => {
               <DashboardChart
                 :option="parkingOption"
                 accessible-label="停车场车位使用情况柱状图"
+                @chart-click="selectParkingChart"
               />
             </div>
             <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3" aria-label="停车场车位使用情况摘要">
-              <span
+              <button
                 v-for="parking in store.snapshot.parkingUsage"
                 :key="parking.id"
-                class="inline-flex min-h-9 items-center rounded-lg border border-border/70 bg-background/60 px-3 text-xs"
+                type="button"
+                class="inline-flex min-h-9 cursor-pointer items-center rounded-lg border border-border/70 bg-background/60 px-3 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
+                :aria-label="`查看${parking.name}停车余位明细`"
+                @click="selectParking(parking.id)"
               >
                 <strong>{{ parking.name }}</strong>
-                <span class="ml-2 tabular-nums text-muted-foreground">{{ parking.usageRate }}% · 剩余 {{ parking.available }}</span>
-              </span>
+                <span class="ml-2 tabular-nums text-muted-foreground">{{ parking.usageRate }}% · 剩余 {{ parking.available ?? '未知' }}</span>
+              </button>
             </div>
           </Card>
           <Skeleton v-else class="h-96 rounded-xl" />
@@ -371,6 +419,16 @@ onMounted(async () => {
       @retry="store.loadMetricDetail()"
       @retry-trend="store.loadMetricTrend()"
       @export="exportMetricDetails"
+    />
+    <DistributionDetailSheet
+      :open="Boolean(store.selectedDistribution)"
+      :selection="store.selectedDistribution"
+      :detail="store.distributionDetail"
+      :loading="store.isDistributionDetailLoading"
+      :error="store.distributionDetailError"
+      @update:open="!$event && store.closeDistributionDetail()"
+      @update:page="store.setDistributionDetailPage($event)"
+      @retry="store.loadDistributionDetail()"
     />
   </section>
 </template>

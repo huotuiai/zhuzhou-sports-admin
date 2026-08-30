@@ -5,6 +5,8 @@ import type {
   DashboardDatePreset,
   DashboardDateRange,
   DashboardDistribution,
+  DashboardDistributionDetail,
+  DashboardDistributionDetailKind,
   DashboardDistributionSlice,
   DashboardExportFile,
   DashboardMetric,
@@ -16,6 +18,7 @@ import type {
   DashboardStatsQuery,
   DashboardTrendPoint,
   DashboardVrSyncResult,
+  DistributionDetailPage,
   MetricDetailPage,
   ParkingUsageItem,
   VrWorkMetric,
@@ -85,13 +88,15 @@ export interface ApiAnalyticsEventPage {
 }
 
 export interface ApiDistSlice {
+  key: string
   name: string
   value: number | string
 }
 
 export interface ApiParkingBar {
+  id: number | string
   name: string
-  remain: number | string
+  remain: number | string | null
   capacity: number | string
   usage: number | string
 }
@@ -101,6 +106,20 @@ export interface ApiDistributionVO {
   parking_remain: ApiParkingBar[]
   controls: ApiDistSlice[]
   activities: ApiDistSlice[]
+}
+
+export interface ApiDistributionDetail {
+  id: number | string
+  code: string
+  name: string
+  extra: string
+}
+
+export interface ApiDistributionDetailPage {
+  list: ApiDistributionDetail[]
+  total: number | string
+  page: number | string
+  page_size: number | string
 }
 
 export interface ApiVrWork {
@@ -357,35 +376,63 @@ function sliceTone(distributionId: string, label: string, index: number): Dashbo
 function mapSlices(id: string, values: readonly ApiDistSlice[]): DashboardDistributionSlice[] {
   return values.map((item, index) => {
     const label = requiredText(item.name, '分布名称')
-    return { key: `${id}-${index + 1}`, label, value: nonNegativeInteger(item.value, '分布数量'), tone: sliceTone(id, label, index) }
+    return { key: requiredText(item.key, '分布切片键'), label, value: nonNegativeInteger(item.value, '分布数量'), tone: sliceTone(id, label, index) }
   })
 }
 
-function distribution(id: string, title: string, description: string, values: readonly ApiDistSlice[]): DashboardDistribution {
+function distribution(
+  id: string,
+  detailKind: DashboardDistribution['detailKind'],
+  title: string,
+  description: string,
+  values: readonly ApiDistSlice[],
+): DashboardDistribution {
   const slices = mapSlices(id, values)
-  return { id, title, description, kind: 'donut', centerText: `${slices.reduce((sum, item) => sum + item.value, 0)} 项`, slices }
+  return { id, detailKind, title, description, kind: 'donut', centerText: `${slices.reduce((sum, item) => sum + item.value, 0)} 项`, slices }
 }
 
 export function mapApiDistribution(value: ApiDistributionVO): { distributions: DashboardDistribution[], parkingUsage: ParkingUsageItem[] } {
   const distributions = [
-    distribution('parking-charge', '停车收费类型分布', '当前停车区配置', Array.isArray(value.parking_fee) ? value.parking_fee : []),
-    distribution('control-status', '管制状态分布', '当前交通管制状态', Array.isArray(value.controls) ? value.controls : []),
-    distribution('activity-status', '活动状态分布', '当前活动上下架状态', Array.isArray(value.activities) ? value.activities : []),
+    distribution('parking-charge', 'parking_fee', '停车收费类型分布', '当前停车区配置', Array.isArray(value.parking_fee) ? value.parking_fee : []),
+    distribution('control-status', 'control', '管制状态分布', '当前交通管制状态', Array.isArray(value.controls) ? value.controls : []),
+    distribution('activity-status', 'activity', '活动状态分布', '当前活动上下架状态', Array.isArray(value.activities) ? value.activities : []),
   ]
-  const parkingUsage = (Array.isArray(value.parking_remain) ? value.parking_remain : []).map((item, index) => {
+  const parkingUsage = (Array.isArray(value.parking_remain) ? value.parking_remain : []).map((item) => {
+    if (item.id === null || item.id === undefined) throw responseError('服务器返回的停车场 ID 不完整')
     const total = nonNegativeInteger(item.capacity, '停车场总车位')
-    const available = nonNegativeInteger(item.remain, '停车场余位')
+    const available = nullableNonNegativeInteger(item.remain, '停车场余位')
     const usage = Math.min(1, Math.max(0, numberValue(item.usage, '停车场占用率')))
     return {
-      id: `parking-${index + 1}`,
+      id: String(item.id),
       name: requiredText(item.name, '停车场名称'),
       total,
-      used: Math.max(0, total - available),
+      used: available === null
+        ? Math.min(total, Math.max(0, Math.round(total * usage)))
+        : Math.min(total, Math.max(0, total - available)),
       available,
       usageRate: Math.round(usage * 1000) / 10,
     }
   })
   return { distributions, parkingUsage }
+}
+
+export function mapApiDistributionDetail(value: ApiDistributionDetail): DashboardDistributionDetail {
+  if (value.id === null || value.id === undefined) throw responseError('服务器返回的分布明细 ID 不完整')
+  return {
+    id: String(value.id),
+    code: requiredText(value.code, '分布明细业务编号'),
+    name: requiredText(value.name, '分布明细名称'),
+    extra: typeof value.extra === 'string' ? value.extra : '',
+  }
+}
+
+export function mapApiDistributionDetailPage(value: ApiDistributionDetailPage): DistributionDetailPage {
+  return {
+    items: Array.isArray(value.list) ? value.list.map(mapApiDistributionDetail) : [],
+    total: nonNegativeInteger(value.total, '分布明细总数'),
+    page: Math.max(1, nonNegativeInteger(value.page, '分布明细页码')),
+    pageSize: Math.max(1, nonNegativeInteger(value.page_size, '分布明细每页条数')),
+  }
 }
 
 export function mapApiVrWork(value: ApiVrWork): Omit<VrWorkMetric, 'rank'> {
@@ -508,6 +555,19 @@ export function createDashboardService(
 
     async loadDistributions() {
       return mapApiDistribution(await request<ApiDistributionVO>({ method: 'GET', url: 'api/v1/admin/stats/distribution' }))
+    },
+
+    async getDistributionDetails(kind: DashboardDistributionDetailKind, slice: string, page: number, pageSize: number) {
+      return mapApiDistributionDetailPage(await request<ApiDistributionDetailPage>({
+        method: 'GET',
+        url: 'api/v1/admin/stats/distribution/details',
+        params: {
+          page: Math.max(1, Math.trunc(page) || 1),
+          page_size: Math.min(MAX_DETAIL_PAGE_SIZE, Math.max(1, Math.trunc(pageSize) || 20)),
+          kind,
+          slice,
+        },
+      }))
     },
 
     async loadVrWorks() {

@@ -219,7 +219,7 @@ export function buildParkingUsageOption(
           fontWeight: 600,
           formatter: `使用率 ${item.usageRate}%`,
         },
-        tooltip: { formatter: `${item.name} 停车场<br/>已用 ${item.used} / ${item.total}<br/>剩余 ${item.available}<br/>使用率 ${item.usageRate}%` },
+        tooltip: { formatter: `${item.name} 停车场<br/>已用 ${item.used} / ${item.total}<br/>剩余 ${item.available ?? '未知'}<br/>使用率 ${item.usageRate}%` },
       })),
     }],
   }
