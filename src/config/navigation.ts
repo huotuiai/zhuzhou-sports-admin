@@ -11,6 +11,7 @@ import {
   FileTextIcon,
   LayoutDashboardIcon,
   MessageSquareIcon,
+  ScanEyeIcon,
   ShieldIcon,
   TrafficConeIcon,
   UserRoundIcon,
@@ -35,6 +36,7 @@ export type SidebarPermissionId =
   | 'permission-ticket-gate'
   | 'permission-parking'
   | 'permission-shuttle'
+  | 'permission-vr'
   | 'permission-user'
   | 'permission-role'
   | 'permission-external-data'
@@ -120,6 +122,14 @@ export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
         icon: BusFrontIcon,
         to: { name: 'shuttle-point-management' },
         permissionId: 'permission-shuttle',
+        trailingIcon: managementArrow,
+      },
+      {
+        id: 'vr-links',
+        label: 'VR 地点绑定',
+        icon: ScanEyeIcon,
+        to: { name: 'vr-link-management' },
+        permissionId: 'permission-vr',
         trailingIcon: managementArrow,
       },
     ],

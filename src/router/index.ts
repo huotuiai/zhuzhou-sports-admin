@@ -58,6 +58,12 @@ export const router = createRouter({
           meta: { title: '接驳车管理', sectionTitle: '场地管理' },
         },
         {
+          path: 'vr-links',
+          name: 'vr-link-management',
+          component: () => import('@/views/VrLinkManagementView.vue'),
+          meta: { title: 'VR 地点绑定', sectionTitle: '场地管理' },
+        },
+        {
           path: 'seats',
           name: 'seat-management',
           component: () => import('@/views/SeatManagementView.vue'),
