@@ -3,6 +3,7 @@ import type {
   ParkingLotCreateInput,
   ParkingLotCreateOptions,
   ParkingLotDetail,
+  ParkingLotPage,
   ParkingLotQuery,
   ParkingLotService,
   ParkingLotUpdateInput,
@@ -15,10 +16,11 @@ import {
   parkingLotService,
   sanitizeParkingLotBaseInput,
   sanitizeParkingLotCreateInput,
-  sortParkingLots,
   validateParkingLotBaseInput,
   validateParkingLotCreateInput,
 } from '../services/parking-lot-service'
+
+const PAGE_SIZE = 20
 
 const DEFAULT_QUERY: ParkingLotQuery = {
   keyword: '',
@@ -31,16 +33,23 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
 }
 
-function includes(source: string, keyword: string): boolean {
-  return source.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword)
+function normalizeQuery(value: ParkingLotQuery): ParkingLotQuery {
+  return {
+    keyword: value.keyword.trim().normalize('NFKC'),
+    feeType: value.feeType,
+    openStatus: value.openStatus,
+    availabilityUpdateMethod: value.availabilityUpdateMethod,
+  }
 }
 
 export function createParkingLotStore(service: ParkingLotService, storeId = 'parking-lot') {
   return defineStore(storeId, () => {
     const records = ref<ParkingLot[]>([])
+    const mapRecords = ref<ParkingLot[]>([])
     const query = reactive<ParkingLotQuery>({ ...DEFAULT_QUERY })
     const page = ref(1)
-    const pageSize = ref(20)
+    const pageSize = ref(PAGE_SIZE)
+    const total = ref(0)
     const isLoading = ref(false)
     const isSaving = ref(false)
     const detailLoadingId = ref<string | null>(null)
@@ -48,58 +57,23 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
     const deletingId = ref<string | null>(null)
     const error = ref<string | null>(null)
 
-    const filteredRecords = computed(() => {
-      const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
-      return sortParkingLots(records.value.filter((record) => {
-        if (keyword && ![record.code, record.name].some((value) => includes(value, keyword))) return false
-        if (query.feeType !== 'all' && record.feeType !== query.feeType) return false
-        if (query.openStatus !== 'all' && record.openStatus !== query.openStatus) return false
-        if (query.availabilityUpdateMethod !== 'all' && record.availabilityUpdateMethod !== query.availabilityUpdateMethod) return false
-        return true
-      }))
-    })
-    const total = computed(() => filteredRecords.value.length)
-    const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+    const pageCount = computed(() => Math.max(1, Math.ceil(total.value / Math.max(1, pageSize.value))))
     const currentPage = computed(() => Math.min(Math.max(page.value, 1), pageCount.value))
-    const paginatedRecords = computed(() => {
-      const start = (currentPage.value - 1) * pageSize.value
-      return filteredRecords.value.slice(start, start + pageSize.value)
-    })
+    const filteredRecords = computed(() => records.value)
+    const paginatedRecords = computed(() => records.value)
 
-    function setQuery(patch: Partial<ParkingLotQuery>): void {
-      Object.assign(query, patch)
-      page.value = 1
+    function applyPage(result: ParkingLotPage): void {
+      records.value = result.records
+      total.value = result.total
+      page.value = result.page
+      pageSize.value = result.pageSize
     }
 
-    function resetQuery(): void {
-      Object.assign(query, DEFAULT_QUERY)
-      page.value = 1
-    }
-
-    function setPage(value: number): void {
-      if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
-    }
-
-    function setPageSize(value: number): void {
-      if (value !== 20) return
-      pageSize.value = 20
-      page.value = 1
-    }
-
-    function validateCreate(input: ParkingLotCreateInput): ParkingLotValidationResult {
-      return validateParkingLotCreateInput(input, records.value)
-    }
-
-    function validateUpdate(input: ParkingLotUpdateInput): ParkingLotValidationResult {
-      return validateParkingLotBaseInput(input)
-    }
-
-    async function load(): Promise<boolean> {
+    async function loadPage(nextPage = page.value): Promise<boolean> {
       isLoading.value = true
       error.value = null
       try {
-        records.value = sortParkingLots(await service.list())
-        page.value = Math.min(page.value, pageCount.value)
+        applyPage(await service.listPage(nextPage, pageSize.value, normalizeQuery(query)))
         return true
       }
       catch (cause) {
@@ -111,15 +85,74 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       }
     }
 
+    async function load(): Promise<boolean> {
+      return loadPage(page.value)
+    }
+
+    async function loadMap(): Promise<boolean> {
+      isLoading.value = true
+      error.value = null
+      try {
+        mapRecords.value = await service.list(normalizeQuery(query))
+        return true
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return false
+      }
+      finally {
+        isLoading.value = false
+      }
+    }
+
+    async function setQuery(patch: Partial<ParkingLotQuery>): Promise<boolean> {
+      Object.assign(query, normalizeQuery({ ...query, ...patch }))
+      page.value = 1
+      return loadPage(1)
+    }
+
+    async function resetQuery(): Promise<boolean> {
+      Object.assign(query, DEFAULT_QUERY)
+      page.value = 1
+      return loadPage(1)
+    }
+
+    async function setPage(value: number): Promise<boolean> {
+      if (!Number.isFinite(value)) return false
+      const nextPage = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
+      if (nextPage === page.value) return true
+      return loadPage(nextPage)
+    }
+
+    async function setPageSize(value: number): Promise<boolean> {
+      if (!Number.isInteger(value) || value <= 0) return false
+      pageSize.value = value
+      page.value = 1
+      return loadPage(1)
+    }
+
+    function validateCreate(input: ParkingLotCreateInput): ParkingLotValidationResult {
+      return validateParkingLotCreateInput(input, records.value)
+    }
+
+    function validateUpdate(input: ParkingLotUpdateInput): ParkingLotValidationResult {
+      return validateParkingLotBaseInput(input)
+    }
+
+    function replaceRecord(record: ParkingLot): void {
+      const index = records.value.findIndex(item => item.id === record.id)
+      if (index < 0) return
+      const next = [...records.value]
+      next[index] = record
+      records.value = next
+    }
+
     async function get(id: string): Promise<ParkingLotDetail | null> {
       detailLoadingId.value = id
       error.value = null
       try {
         const detail = await service.get(id)
-        records.value = sortParkingLots([
-          ...records.value.filter(record => record.id !== id),
-          detail.record,
-        ])
+        replaceRecord(detail.record)
         return detail
       }
       catch (cause) {
@@ -128,6 +161,15 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       }
       finally {
         detailLoadingId.value = null
+      }
+    }
+
+    async function refreshAfterMutation(targetPage = page.value): Promise<void> {
+      try {
+        applyPage(await service.listPage(targetPage, pageSize.value, normalizeQuery(query)))
+      }
+      catch (cause) {
+        error.value = `操作已成功，但最新列表刷新失败：${errorMessage(cause)}`
       }
     }
 
@@ -141,7 +183,8 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       error.value = null
       try {
         const record = await service.create(sanitizeParkingLotCreateInput(input), options)
-        records.value = sortParkingLots([...records.value, record])
+        page.value = 1
+        await refreshAfterMutation(1)
         return record
       }
       catch (cause) {
@@ -158,7 +201,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       error.value = null
       try {
         const record = await service.updateEnabled(id, enabled)
-        records.value = sortParkingLots([...records.value.filter(item => item.id !== id), record])
+        await refreshAfterMutation()
         return record
       }
       catch (cause) {
@@ -184,7 +227,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       error.value = null
       try {
         const record = await service.update(id, sanitizeParkingLotBaseInput(input), options)
-        records.value = sortParkingLots([...records.value.filter((item) => item.id !== id), record])
+        await refreshAfterMutation()
         return record
       }
       catch (cause) {
@@ -201,7 +244,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       error.value = null
       try {
         const record = await service.updateAvailability(id, availableSpaces)
-        records.value = sortParkingLots([...records.value.filter((item) => item.id !== id), record])
+        await refreshAfterMutation()
         return record
       }
       catch (cause) {
@@ -218,8 +261,8 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       error.value = null
       try {
         await service.remove(id)
-        records.value = records.value.filter((record) => record.id !== id)
-        page.value = Math.min(page.value, pageCount.value)
+        const targetPage = records.value.length === 1 && page.value > 1 ? page.value - 1 : page.value
+        await refreshAfterMutation(targetPage)
         return true
       }
       catch (cause) {
@@ -237,6 +280,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
 
     return {
       records,
+      mapRecords,
       query,
       page,
       pageSize,
@@ -258,6 +302,8 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       validateCreate,
       validateUpdate,
       load,
+      loadPage,
+      loadMap,
       get,
       create,
       update,

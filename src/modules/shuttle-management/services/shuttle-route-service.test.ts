@@ -197,12 +197,10 @@ describe('shuttle route API service', () => {
     }])
   })
 
-  it('loads every page and supplements every line with its latest detail', async () => {
+  it('loads every matching page from the list payload without extra detail requests', async () => {
     const { configs, request } = queuedRequester([
-      { list: [apiLine({ id: 2, code: 'L2', sort_order: 2, stops: undefined })], total: 101, page: 1, page_size: 100 },
-      { list: [apiLine({ id: 3, code: 'L3', sort_order: 1, stops: undefined })], total: 101, page: 2, page_size: 100 },
-      apiLine({ id: 2, code: 'L2', sort_order: 2, stops: [apiStop({ id: 21 })] }),
-      apiLine({ id: 3, code: 'L3', sort_order: 1, stops: [apiStop({ id: 31 })] }),
+      { list: [apiLine({ id: 2, code: 'L2', sort_order: 2, stops: [apiStop({ id: 21 })] })], total: 101, page: 1, page_size: 100 },
+      { list: [apiLine({ id: 3, code: 'L3', sort_order: 1, stops: [apiStop({ id: 31 })] })], total: 101, page: 2, page_size: 100 },
     ])
     const records = await createShuttleRouteService(request).list()
 
@@ -211,9 +209,25 @@ describe('shuttle route API service', () => {
     expect(configs).toMatchObject([
       { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 1, page_size: 100 } },
       { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 2, page_size: 100 } },
-      { method: 'GET', url: 'api/v1/admin/shuttle/lines/2' },
-      { method: 'GET', url: 'api/v1/admin/shuttle/lines/3' },
     ])
+  })
+
+  it('forwards list filters to the shuttle page query', async () => {
+    const { configs, request } = queuedRequester([
+      { list: [apiLine({ id: 3, code: 'L3' })], total: 1, page: 1, page_size: 20 },
+    ])
+    const page = await createShuttleRouteService(request).listPage(1, 20, {
+      keyword: ' 高铁 ',
+      direction: 'outbound',
+      operatingStatus: 'partial',
+    })
+
+    expect(page.records.map(record => record.code)).toEqual(['L3'])
+    expect(configs).toMatchObject([{
+      method: 'GET',
+      url: 'api/v1/admin/shuttle/lines',
+      params: { page: 1, page_size: 20, keyword: '高铁', direction: 2, operate_status: 2 },
+    }])
   })
 
   it('submits only current route fields and keeps the immutable code out of updates', async () => {

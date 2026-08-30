@@ -310,23 +310,58 @@ describe('content management API service', () => {
     expect(configs[5]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/highlights/23', data: { title: '请从东门入场', ref_type: 'control', ref_id: '9007199254740999', status: 0 } })
   })
 
-  it('loads reference options and wraps the raw server CSV response', async () => {
+  it('loads paginated reference options from the unified ref-options API', async () => {
+    const configs: SignedRequestConfig[] = []
+    const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      const requestedPage = Number((config.params as Record<string, unknown>).page)
+      return {
+        list: [{
+          id: requestedPage === 1 ? '9007199254740995' : '9007199254740996',
+          name: requestedPage === 1 ? '已发布资讯' : '第二页资讯',
+        }],
+        total: 101,
+        page: requestedPage,
+        page_size: 100,
+      } as T
+    }
+    const service = createContentManagementService(requester)
+    await expect(service.listReferenceOptions('news')).resolves.toEqual([
+      { id: '9007199254740995', code: '', title: '已发布资讯', type: 'news', valid: true, description: '可引用' },
+      { id: '9007199254740996', code: '', title: '第二页资讯', type: 'news', valid: true, description: '可引用' },
+    ])
+    expect(configs).toEqual([
+      { method: 'GET', url: 'api/v1/admin/contents/ref-options', params: { page: 1, page_size: 100, ref_type: 'news' } },
+      { method: 'GET', url: 'api/v1/admin/contents/ref-options', params: { page: 2, page_size: 100, ref_type: 'news' } },
+    ])
+  })
+
+  it('maps traffic-control reference options to ref_type control', async () => {
+    const configs: SignedRequestConfig[] = []
+    const service = createContentManagementService(async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      return { list: [{ id: 21, name: '东门交通管制' }], total: 1, page: 1, page_size: 100 } as T
+    })
+    await expect(service.listReferenceOptions('traffic-control')).resolves.toMatchObject([
+      { id: '21', title: '东门交通管制', type: 'traffic-control', valid: true },
+    ])
+    expect(configs).toEqual([
+      { method: 'GET', url: 'api/v1/admin/contents/ref-options', params: { page: 1, page_size: 100, ref_type: 'control' } },
+    ])
+  })
+
+  it('wraps the raw server CSV response', async () => {
     const configs: SignedRequestConfig[] = []
     const blob = new Blob(['csv'], { type: 'text/csv' })
     const service = createContentManagementService(
-      async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
-        configs.push(config as SignedRequestConfig)
-        return [{ id: '9007199254740995', code: 'CT-001', title: '已发布资讯', content_type: 'news', publish_status: 'published' }] as T
-      },
+      async () => { throw new Error('unexpected data request') },
       async config => {
         configs.push(config)
         return { data: blob, headers: { 'content-disposition': "attachment; filename*=UTF-8''content%20all.csv" } } as unknown as AxiosResponse<Blob>
       },
     )
-    await expect(service.listReferenceOptions('news')).resolves.toMatchObject([{ id: '9007199254740995', type: 'news', valid: true }])
     await expect(service.exportContents()).resolves.toEqual({ content: blob, filename: 'content all.csv' })
     expect(configs).toEqual([
-      { method: 'GET', url: 'api/v1/admin/contents/options', params: { content_type: 'news' } },
       { method: 'GET', url: 'api/v1/admin/contents/export', responseType: 'blob', headers: { Accept: 'text/csv' } },
     ])
     expect(contentExportFilename('attachment; filename="../../bad.csv"')).toBe('.._.._bad.csv')

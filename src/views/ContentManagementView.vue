@@ -432,7 +432,8 @@ function jumpTypeLabel(type: BannerRecord['jumpType']): string {
 function targetLabel(targetId: string | null, targetTitle?: string | null): string {
   if (!targetId) return '—'
   const reference = store.selectableReferences.find((item) => item.id === targetId)
-  return reference ? `${reference.code} · ${reference.title}` : targetTitle || '引用目标已失效'
+  if (!reference) return targetTitle || '引用目标已失效'
+  return reference.code.trim() ? `${reference.code} · ${reference.title}` : reference.title
 }
 
 function statusLabel(record: ContentRecord): string {
@@ -483,7 +484,7 @@ async function load(): Promise<void> {
     Object.assign(store.activityQuery, activityQueryDraft.value)
     Object.assign(store.newsQuery, newsQueryDraft.value)
   }
-  if (!await store.load()) {
+  if (!await store.load(activeTab.value)) {
     loadError.value = store.error ?? '内容管理数据加载失败'
     showStoreError(loadError.value)
   }
@@ -565,8 +566,8 @@ onBeforeRouteLeave(() => confirmLeave())
       <div v-if="activeTab === 'banner' || activeTab === 'hint'" class="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/6 px-4 py-3 text-sm">
         <Megaphone class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
         <p class="text-muted-foreground">
-          <template v-if="activeTab === 'banner'">按优先级升序展示，最多配置 {{ MAX_BANNERS }} 条；当前共 {{ store.bannerTotal }} 条。</template>
-          <template v-else>最多配置 {{ MAX_PRIORITY_HINTS }} 条，按优先级升序取当前有效的前 2 条展示；当前共 {{ store.priorityHintTotal }} 条。</template>
+          <template v-if="activeTab === 'banner'">按优先级升序展示，上限 {{ MAX_BANNERS }} 张</template>
+          <template v-else>按优先级升序取前 2 条展示；最多 {{ MAX_PRIORITY_HINTS }} 条</template>
         </p>
       </div>
 

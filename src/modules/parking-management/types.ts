@@ -73,8 +73,16 @@ export interface ParkingLotUpdateOptions extends ParkingLotCreateOptions {
   clampAvailableSpaces?: boolean
 }
 
+export interface ParkingLotPage {
+  records: ParkingLot[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export interface ParkingLotService {
-  list(): Promise<ParkingLot[]>
+  list(query?: ParkingLotQuery): Promise<ParkingLot[]>
+  listPage(page: number, pageSize: number, query?: ParkingLotQuery): Promise<ParkingLotPage>
   get(id: string): Promise<ParkingLotDetail>
   create(input: ParkingLotCreateInput, options?: ParkingLotCreateOptions): Promise<ParkingLot>
   update(id: string, input: ParkingLotUpdateInput, options?: ParkingLotUpdateOptions): Promise<ParkingLot>

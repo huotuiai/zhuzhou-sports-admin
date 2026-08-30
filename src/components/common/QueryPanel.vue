@@ -47,21 +47,23 @@ function handleReset() {
         <slot name="actions-before" />
 
         <Button
-          type="reset"
+          type="button"
           variant="outline"
           size="lg"
           class="h-11 min-w-24"
           :disabled="disabled || loading"
+          @click="handleReset"
         >
           <RotateCcw aria-hidden="true" />
           {{ resetLabel }}
         </Button>
 
         <Button
-          type="submit"
+          type="button"
           size="lg"
           class="h-11 min-w-24"
           :disabled="disabled || loading"
+          @click="handleSubmit"
         >
           <LoaderCircle v-if="loading" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
           <Search v-else aria-hidden="true" />

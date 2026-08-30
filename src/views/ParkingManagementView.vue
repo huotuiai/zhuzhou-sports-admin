@@ -21,7 +21,7 @@ import {
   Trash2,
 } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
@@ -88,7 +88,7 @@ const columns: readonly DataTableColumn<ParkingLot>[] = [
 const store = useParkingLotStore()
 const themeStore = useThemeStore()
 const viewMode = ref<ViewMode>('list')
-const queryDraft = ref<ParkingLotQuery>({ ...store.query })
+const queryDraft = reactive<ParkingLotQuery>({ ...store.query })
 const sheetOpen = ref(false)
 const sheetMode = ref<CrudDialogMode>('create')
 const editingId = ref<string | null>(null)
@@ -337,13 +337,34 @@ async function toggleParkingLot(record: ParkingLot): Promise<void> {
   toast.success(`停车场已${saved.enabled ? '启用' : '停用'}。`)
 }
 
-function applyQuery(): void {
-  store.setQuery({ ...queryDraft.value })
+async function refreshMapIfNeeded(): Promise<void> {
+  if (viewMode.value !== 'map') return
+  if (!await store.loadMap()) toast.error(store.error ?? '停车场地图数据加载失败。')
 }
 
-function resetQuery(): void {
-  store.resetQuery()
-  queryDraft.value = { ...store.query }
+async function applyQuery(): Promise<void> {
+  if (!await store.setQuery({ ...queryDraft })) {
+    toast.error(store.error ?? '停车场查询失败。')
+    return
+  }
+  await refreshMapIfNeeded()
+}
+
+async function resetQuery(): Promise<void> {
+  if (!await store.resetQuery()) {
+    toast.error(store.error ?? '停车场列表重置失败。')
+    return
+  }
+  Object.assign(queryDraft, store.query)
+  await refreshMapIfNeeded()
+}
+
+async function changePage(value: number): Promise<void> {
+  if (!await store.setPage(value)) toast.error(store.error ?? '停车场列表加载失败。')
+}
+
+async function changePageSize(value: number): Promise<void> {
+  if (!await store.setPageSize(value)) toast.error(store.error ?? '停车场列表加载失败。')
 }
 
 function confirmLeave(): boolean {
@@ -395,6 +416,11 @@ function formatDateTime(value: string): string {
   }).format(date)
 }
 
+watch(viewMode, async (mode) => {
+  if (mode !== 'map') return
+  if (!await store.loadMap()) toast.error(store.error ?? '停车场地图数据加载失败。')
+})
+
 onMounted(initializePage)
 onBeforeRouteLeave(confirmLeave)
 useEventListener(window, 'beforeunload', beforeUnload)
@@ -430,10 +456,10 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </div>
       </header>
 
-      <QueryPanel @query="applyQuery" @reset="resetQuery">
+      <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
         <div class="space-y-2">
           <Label for="parking-query-keyword">编号 / 名称</Label>
-          <Input id="parking-query-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="请输入关键字" autocomplete="off" />
+          <Input id="parking-query-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="请输入关键字" autocomplete="off" @keydown.enter.prevent="applyQuery" />
         </div>
         <div class="space-y-2">
           <Label for="parking-query-fee">收费类型</Label>
@@ -534,12 +560,12 @@ useEventListener(window, 'beforeunload', beforeUnload)
           :page-sizes="[20]"
           :total="store.total"
           :disabled="store.isLoading"
-          @update:page="store.setPage"
-          @update:page-size="store.setPageSize"
+          @update:page="changePage"
+          @update:page-size="changePageSize"
         />
       </template>
 
-      <ParkingLotMapView v-else :records="store.filteredRecords" :theme="themeStore.mode" />
+      <ParkingLotMapView v-else :records="store.mapRecords" :theme="themeStore.mode" />
     </div>
 
     <CrudSheet

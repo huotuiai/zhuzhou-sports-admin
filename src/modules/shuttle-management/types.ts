@@ -50,8 +50,16 @@ export interface ShuttleRouteCreateInput extends ShuttleRouteBaseInput {
 
 export type ShuttleRouteUpdateInput = ShuttleRouteBaseInput
 
+export interface ShuttleRoutePage {
+  records: ShuttleRoute[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export interface ShuttleRouteService {
-  list(): Promise<ShuttleRoute[]>
+  list(query?: ShuttleRouteQuery): Promise<ShuttleRoute[]>
+  listPage(page: number, pageSize: number, query?: ShuttleRouteQuery): Promise<ShuttleRoutePage>
   exportCsv(query: ShuttleRouteQuery): Promise<BackendCsvExportFile>
   create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute>
   update(id: string, input: ShuttleRouteUpdateInput): Promise<ShuttleRoute>

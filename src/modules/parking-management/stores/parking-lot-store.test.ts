@@ -3,6 +3,8 @@ import type {
   ParkingLotCreateInput,
   ParkingLotCreateOptions,
   ParkingLotDetail,
+  ParkingLotPage,
+  ParkingLotQuery,
   ParkingLotService,
   ParkingLotUpdateInput,
   ParkingLotUpdateOptions,
@@ -47,9 +49,27 @@ class StubParkingLotService implements ParkingLotService {
   failSave = false
   failDelete = false
 
-  async list(): Promise<ParkingLot[]> {
+  private filtered(query: ParkingLotQuery): ParkingLot[] {
+    const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
+    return this.records.filter((record) => {
+      if (keyword && ![record.code, record.name].some(value => value.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword))) return false
+      if (query.feeType !== 'all' && record.feeType !== query.feeType) return false
+      if (query.openStatus !== 'all' && record.openStatus !== query.openStatus) return false
+      if (query.availabilityUpdateMethod !== 'all' && record.availabilityUpdateMethod !== query.availabilityUpdateMethod) return false
+      return true
+    })
+  }
+
+  async list(query: ParkingLotQuery = { keyword: '', feeType: 'all', openStatus: 'all', availabilityUpdateMethod: 'all' }): Promise<ParkingLot[]> {
     if (this.failList) throw new Error('加载失败')
-    return structuredClone(this.records)
+    return structuredClone(this.filtered(query))
+  }
+
+  async listPage(page: number, pageSize: number, query: ParkingLotQuery): Promise<ParkingLotPage> {
+    if (this.failList) throw new Error('加载失败')
+    const records = this.filtered(query)
+    const start = (page - 1) * pageSize
+    return { records: structuredClone(records.slice(start, start + pageSize)), total: records.length, page, pageSize }
   }
 
   async get(id: string): Promise<ParkingLotDetail> {
@@ -164,22 +184,24 @@ describe('parking lot store', () => {
     ]
     const store = createParkingLotStore(service, 'parking-filter')()
     await store.load()
-    store.setQuery({ keyword: '东区', feeType: 'paid', openStatus: 'open', availabilityUpdateMethod: 'integrated' })
-    expect(store.filteredRecords.map((record) => record.id)).toEqual(['A-001'])
-    store.resetQuery()
-    expect(store.filteredRecords).toHaveLength(3)
+    expect(await store.setQuery({ keyword: '东区', feeType: 'paid', openStatus: 'open', availabilityUpdateMethod: 'integrated' })).toBe(true)
+    expect(store.records.map(record => record.id)).toEqual(['A-001'])
+    expect(store.total).toBe(1)
+    expect(await store.resetQuery()).toBe(true)
+    expect(store.records).toHaveLength(3)
     expect(store.pageSize).toBe(20)
   })
 
-  it('paginates at 20 records and sorts by sort order', async () => {
+  it('paginates on the server and loads the full matching set for the map', async () => {
     service.records = Array.from({ length: 21 }, (_, index) => lot(`P-${index + 1}`, { sortOrder: 21 - index }))
     const store = createParkingLotStore(service, 'parking-pagination')()
     await store.load()
     expect(store.paginatedRecords).toHaveLength(20)
-    expect(store.filteredRecords).toHaveLength(21)
-    expect(store.paginatedRecords[0]?.sortOrder).toBe(1)
-    store.setPage(2)
+    expect(store.total).toBe(21)
+    expect(await store.setPage(2)).toBe(true)
     expect(store.paginatedRecords).toHaveLength(1)
+    expect(await store.loadMap()).toBe(true)
+    expect(store.mapRecords).toHaveLength(21)
   })
 
   it('validates unique codes for create and base fields for update', async () => {

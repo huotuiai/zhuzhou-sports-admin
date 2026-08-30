@@ -75,8 +75,6 @@ export function createContentManagementStore(
     const hintQuery = reactive<PriorityHintQuery>({ ...DEFAULT_HINT_QUERY })
     const pages = reactive<Record<ContentManagementTab, number>>({ activity: 1, news: 1, banner: 1, hint: 1 })
     const now = ref(Date.now())
-    const bannerTotal = ref(0)
-    const priorityHintTotal = ref(0)
     const isLoading = ref(false)
     const isSaving = ref(false)
     const isExporting = ref(false)
@@ -129,6 +127,8 @@ export function createContentManagementStore(
     const paginatedNews = computed(() => paginated(newsRecords.value, 'news'))
     const paginatedBanners = computed(() => paginated(bannerRecords.value, 'banner'))
     const paginatedPriorityHints = computed(() => paginated(priorityHintRecords.value, 'hint'))
+    const bannerTotal = computed(() => snapshot.value.banners.length)
+    const priorityHintTotal = computed(() => snapshot.value.priorityHints.length)
     const selectableReferences = computed(() => REFERENCE_TYPES.flatMap(type => referencesByType[type]))
 
     function targetIsValid(targetId: string | null): boolean {
@@ -157,23 +157,11 @@ export function createContentManagementStore(
     }
 
     async function fetchBanners(): Promise<BannerRecord[]> {
-      const query = { keyword: bannerQuery.title, jumpType: bannerQuery.jumpType } as const
-      const [records, summary] = await Promise.all([
-        service.listBanners(query),
-        service.listBannerPage(1, 1, { keyword: '', jumpType: 'all' }),
-      ])
-      bannerTotal.value = summary.total
-      return records
+      return service.listBanners({ keyword: bannerQuery.title, jumpType: bannerQuery.jumpType })
     }
 
     async function fetchHints(): Promise<PriorityHintRecord[]> {
-      const query = { keyword: hintQuery.title, referenceType: hintQuery.referenceType } as const
-      const [records, summary] = await Promise.all([
-        service.listPriorityHints(query),
-        service.listPriorityHintPage(1, 1, { keyword: '', referenceType: 'all' }),
-      ])
-      priorityHintTotal.value = summary.total
-      return records
+      return service.listPriorityHints({ keyword: hintQuery.title, referenceType: hintQuery.referenceType })
     }
 
     async function fetchReferences(): Promise<void> {
@@ -181,14 +169,33 @@ export function createContentManagementStore(
       groups.forEach((records, index) => { referencesByType[REFERENCE_TYPES[index]!] = records })
     }
 
-    async function load(): Promise<boolean> {
+    async function applyTab(tab: ContentManagementTab): Promise<void> {
+      if (tab === 'activity') {
+        const records = await fetchActivities()
+        snapshot.value.contents = [...records, ...snapshot.value.contents.filter(item => item.type !== 'activity')]
+      }
+      if (tab === 'news') {
+        const records = await fetchNews()
+        snapshot.value.contents = [...snapshot.value.contents.filter(item => item.type === 'activity'), ...records]
+      }
+      if (tab === 'banner') snapshot.value.banners = await fetchBanners()
+      if (tab === 'hint') snapshot.value.priorityHints = await fetchHints()
+      pages[tab] = Math.min(pages[tab], Math.max(1, Math.ceil(recordsForTab(tab).length / CONTENT_MANAGEMENT_PAGE_SIZE)))
+    }
+
+    async function load(tab?: ContentManagementTab): Promise<boolean> {
       isLoading.value = true
       error.value = null
       try {
-        const [activities, news, banners, hints] = await Promise.all([
-          fetchActivities(), fetchNews(), fetchBanners(), fetchHints(), fetchReferences(),
-        ])
-        snapshot.value = { contents: [...activities, ...news], banners, priorityHints: hints }
+        if (tab) {
+          await Promise.all([applyTab(tab), fetchReferences()])
+        }
+        else {
+          const [activities, news, banners, hints] = await Promise.all([
+            fetchActivities(), fetchNews(), fetchBanners(), fetchHints(), fetchReferences(),
+          ])
+          snapshot.value = { contents: [...activities, ...news], banners, priorityHints: hints }
+        }
         now.value = Date.now()
         return true
       }
@@ -199,29 +206,31 @@ export function createContentManagementStore(
       finally { isLoading.value = false }
     }
 
+    let inflightTab: ContentManagementTab | null = null
+    let inflightLoad: Promise<boolean> | null = null
+
     async function loadTab(tab: ContentManagementTab): Promise<boolean> {
-      isLoading.value = true
-      error.value = null
-      try {
-        if (tab === 'activity') {
-          const records = await fetchActivities()
-          snapshot.value.contents = [...records, ...snapshot.value.contents.filter(item => item.type !== 'activity')]
+      if (inflightLoad && inflightTab === tab) return inflightLoad
+      inflightTab = tab
+      inflightLoad = (async () => {
+        isLoading.value = true
+        error.value = null
+        try {
+          await applyTab(tab)
+          now.value = Date.now()
+          return true
         }
-        if (tab === 'news') {
-          const records = await fetchNews()
-          snapshot.value.contents = [...snapshot.value.contents.filter(item => item.type === 'activity'), ...records]
+        catch (cause) {
+          error.value = errorMessage(cause)
+          return false
         }
-        if (tab === 'banner') snapshot.value.banners = await fetchBanners()
-        if (tab === 'hint') snapshot.value.priorityHints = await fetchHints()
-        pages[tab] = Math.min(pages[tab], Math.max(1, Math.ceil(recordsForTab(tab).length / CONTENT_MANAGEMENT_PAGE_SIZE)))
-        now.value = Date.now()
-        return true
-      }
-      catch (cause) {
-        error.value = errorMessage(cause)
-        return false
-      }
-      finally { isLoading.value = false }
+        finally {
+          isLoading.value = false
+          inflightTab = null
+          inflightLoad = null
+        }
+      })()
+      return inflightLoad
     }
 
     function recordsForTab(tab: ContentManagementTab): readonly unknown[] {

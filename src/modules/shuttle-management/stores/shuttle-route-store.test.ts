@@ -1,4 +1,4 @@
-import type { ShuttleRoute, ShuttleRouteCreateInput, ShuttleRouteQuery, ShuttleRouteService, ShuttleRouteUpdateInput, ShuttleStation } from '../types'
+import type { ShuttleRoute, ShuttleRouteCreateInput, ShuttleRoutePage, ShuttleRouteQuery, ShuttleRouteService, ShuttleRouteUpdateInput, ShuttleStation } from '../types'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { BackendCsvExportFile } from '@/lib/http'
@@ -29,7 +29,27 @@ function route(id: string, overrides: Partial<ShuttleRoute> = {}): ShuttleRoute 
 class StubShuttleRouteService implements ShuttleRouteService {
   records: ShuttleRoute[] = []
   exportQueries: ShuttleRouteQuery[] = []
-  async list(): Promise<ShuttleRoute[]> { return structuredClone(this.records) }
+
+  private filtered(query: ShuttleRouteQuery): ShuttleRoute[] {
+    const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
+    return this.records.filter((item) => {
+      if (keyword && ![item.code, item.name].some(value => value.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword))) return false
+      if (query.direction !== 'all' && item.direction !== query.direction) return false
+      if (query.operatingStatus !== 'all' && item.operatingStatus !== query.operatingStatus) return false
+      return true
+    })
+  }
+
+  async list(query: ShuttleRouteQuery = { keyword: '', direction: 'all', operatingStatus: 'all' }): Promise<ShuttleRoute[]> {
+    return structuredClone(this.filtered(query))
+  }
+
+  async listPage(page: number, pageSize: number, query: ShuttleRouteQuery): Promise<ShuttleRoutePage> {
+    const records = this.filtered(query)
+    const start = (page - 1) * pageSize
+    return { records: structuredClone(records.slice(start, start + pageSize)), total: records.length, page, pageSize }
+  }
+
   async exportCsv(query: ShuttleRouteQuery): Promise<BackendCsvExportFile> {
     this.exportQueries.push({ ...query })
     return { content: new Blob(['csv']), filename: 'shuttle_lines.csv', truncated: false, count: 1, total: 1 }
@@ -70,21 +90,22 @@ describe('shuttle route store', () => {
     ]
     const store = createShuttleRouteStore(service, 'shuttle-filter')()
     await store.load()
-    store.setQuery({ keyword: 'l3', direction: 'inbound', operatingStatus: 'partial' })
-    expect(store.filteredRecords.map((item) => item.id)).toEqual(['L3'])
-    store.resetQuery()
+    expect(await store.setQuery({ keyword: 'l3', direction: 'inbound', operatingStatus: 'partial' })).toBe(true)
+    expect(store.records.map(item => item.id)).toEqual(['L3'])
+    expect(await store.resetQuery()).toBe(true)
     expect(store.total).toBe(3)
   })
 
-  it('sorts by sort order, defaults to 20 rows and exposes all filtered records for maps', async () => {
+  it('paginates on the server and exposes all matching records for maps', async () => {
     service.records = Array.from({ length: 23 }, (_, index) => route(`L${index + 1}`, { sortOrder: 22 - index }))
     const store = createShuttleRouteStore(service, 'shuttle-page')()
     await store.load()
-    expect(store.filteredRecords[0]?.sortOrder).toBe(0)
-    expect(store.filteredRecords).toHaveLength(23)
     expect(store.paginatedRecords).toHaveLength(20)
-    store.setPage(2)
+    expect(store.total).toBe(23)
+    expect(await store.setPage(2)).toBe(true)
     expect(store.paginatedRecords).toHaveLength(3)
+    expect(await store.loadMap()).toBe(true)
+    expect(store.mapRecords).toHaveLength(23)
   })
 
   it('creates, updates, replaces stations and removes routes', async () => {
@@ -105,7 +126,7 @@ describe('shuttle route store', () => {
 
   it('exports the active filters and resets the exporting state', async () => {
     const store = createShuttleRouteStore(service, 'shuttle-export')()
-    store.setQuery({ keyword: '高铁', direction: 'outbound', operatingStatus: 'partial' })
+    await store.setQuery({ keyword: '高铁', direction: 'outbound', operatingStatus: 'partial' })
 
     await expect(store.exportCurrent()).resolves.toMatchObject({ filename: 'shuttle_lines.csv', count: 1 })
     expect(service.exportQueries).toEqual([{ keyword: '高铁', direction: 'outbound', operatingStatus: 'partial' }])

@@ -27,6 +27,10 @@ const query = ref('')
 const activeIndex = ref(0)
 const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const listboxId = `reference-list-${instanceId}`
+function referenceLabel(option: SelectableReference): string {
+  return option.code.trim() ? `${option.code} · ${option.title}` : option.title
+}
+
 const selected = computed(() => props.options.find((option) => option.id === props.modelValue) ?? null)
 const filteredOptions = computed(() => {
   const keyword = query.value.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
@@ -35,7 +39,7 @@ const filteredOptions = computed(() => {
 })
 
 watch([selected, open], ([value, isOpen]) => {
-  if (!isOpen) query.value = value ? `${value.code} ${value.title}` : ''
+  if (!isOpen) query.value = value ? referenceLabel(value) : ''
 }, { immediate: true })
 
 watch(filteredOptions, () => { activeIndex.value = 0 })
@@ -49,7 +53,7 @@ function show(): void {
 function choose(option: SelectableReference): void {
   if (!option.valid) return
   emit('update:modelValue', option.id)
-  query.value = `${option.code} ${option.title}`
+  query.value = referenceLabel(option)
   open.value = false
 }
 
@@ -127,7 +131,7 @@ useEventListener(document, 'pointerdown', (event) => {
         @click="choose(option)"
       >
         <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-medium">{{ option.code }} · {{ option.title }}</span>
+          <span class="block truncate text-sm font-medium">{{ referenceLabel(option) }}</span>
           <span class="mt-0.5 block text-xs" :class="option.valid ? 'text-muted-foreground' : 'text-destructive'">{{ option.description }}</span>
         </span>
         <Check v-if="option.id === modelValue" class="size-4 shrink-0 text-primary" aria-hidden="true" />

@@ -109,12 +109,9 @@ export interface ApiHighlightVO {
   ref_title: string
 }
 
-export interface ApiContentOption {
+export interface ApiRefOption {
   id: number | string
-  code: string
-  title: string
-  content_type?: string | null
-  publish_status?: string | null
+  name: string
 }
 
 interface ApiPage<T> {
@@ -743,19 +740,20 @@ export function contentExportFilename(contentDisposition: string | null): string
   return safeFilename((plain?.[1] ?? plain?.[2] ?? 'contents.csv').trim())
 }
 
-function mapReferenceOption(value: ApiContentOption, requestedType: ReferenceType): SelectableReference {
+function mapReferenceOption(value: ApiRefOption, requestedType: ReferenceType): SelectableReference {
   if (value.id === undefined || value.id === null) throw responseError('服务器返回的引用选项 ID 不完整')
-  const type = requestedType === 'traffic-control'
-    ? 'traffic-control'
-    : value.content_type ? mapReferenceType(value.content_type) : requestedType
   return {
     id: String(value.id),
-    code: requiredText(value.code, '引用选项编号'),
-    title: requiredText(value.title, '引用选项标题'),
-    type,
+    code: '',
+    title: requiredText(value.name, '引用选项名称'),
+    type: requestedType,
     valid: true,
     description: '可引用',
   }
+}
+
+function mapApiRefOptionPage(value: ApiPage<ApiRefOption>, requestedType: ReferenceType) {
+  return mapPage(value, item => mapReferenceOption(item, requestedType))
 }
 
 const defaultFileRequester: ContentManagementFileRequester = config => rawHttpClient.request<Blob>(config)
@@ -943,10 +941,17 @@ export function createContentManagementService(
     },
 
     async listReferenceOptions(type) {
-      const url = type === 'traffic-control' ? 'api/v1/admin/contents/control-options' : 'api/v1/admin/contents/options'
-      const params = type === 'traffic-control' ? undefined : { content_type: type }
-      const result = await request<ApiContentOption[]>({ method: 'GET', url, params })
-      return Array.isArray(result) ? result.map(item => mapReferenceOption(item, type)) : []
+      const params = { page: 1, page_size: MAX_PAGE_SIZE, ref_type: apiReferenceType(type) }
+      const first = mapApiRefOptionPage(await request<ApiPage<ApiRefOption>>({
+        method: 'GET', url: 'api/v1/admin/contents/ref-options', params,
+      }), type)
+      const records = [...first.records]
+      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
+        records.push(...mapApiRefOptionPage(await request<ApiPage<ApiRefOption>>({
+          method: 'GET', url: 'api/v1/admin/contents/ref-options', params: { ...params, page },
+        }), type).records)
+      }
+      return [...new Map(records.map(record => [record.id, record])).values()]
     },
 
     async exportContents(): Promise<ContentExportFile> {

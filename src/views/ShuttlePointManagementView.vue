@@ -11,7 +11,7 @@ import type {
 import type { TicketGate } from '@/modules/ticket-gate-management/types'
 import { AlertTriangle, BusFront, Clock3, Download, List, LoaderCircle, Map as MapIcon, MapPin, PencilLine, Plus, RotateCcw, Trash2, X } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
@@ -48,7 +48,7 @@ const columns: readonly DataTableColumn<ShuttleRoute>[] = [
 const store = useShuttleRouteStore()
 const themeStore = useThemeStore()
 const viewMode = ref<ViewMode>('list')
-const queryDraft = ref<ShuttleRouteQuery>({ ...store.query })
+const queryDraft = reactive<ShuttleRouteQuery>({ ...store.query })
 const routeOpen = ref(false)
 const routeMode = ref<CrudDialogMode>('create')
 const editingId = ref<string | null>(null)
@@ -277,13 +277,34 @@ async function remove(): Promise<void> {
   else toast.error(store.error ?? '删除失败，请稍后重试。')
 }
 
-function applyQuery(): void {
-  store.setQuery({ ...queryDraft.value })
+async function refreshMapIfNeeded(): Promise<void> {
+  if (viewMode.value !== 'map') return
+  if (!await store.loadMap()) toast.error(store.error ?? '接驳线路地图数据加载失败。')
 }
 
-function resetQuery(): void {
-  store.resetQuery()
-  queryDraft.value = { ...store.query }
+async function applyQuery(): Promise<void> {
+  if (!await store.setQuery({ ...queryDraft })) {
+    toast.error(store.error ?? '接驳线路查询失败。')
+    return
+  }
+  await refreshMapIfNeeded()
+}
+
+async function resetQuery(): Promise<void> {
+  if (!await store.resetQuery()) {
+    toast.error(store.error ?? '接驳线路列表重置失败。')
+    return
+  }
+  Object.assign(queryDraft, store.query)
+  await refreshMapIfNeeded()
+}
+
+async function changePage(value: number): Promise<void> {
+  if (!await store.setPage(value)) toast.error(store.error ?? '接驳线路列表加载失败。')
+}
+
+async function changePageSize(value: number): Promise<void> {
+  if (!await store.setPageSize(value)) toast.error(store.error ?? '接驳线路列表加载失败。')
 }
 
 function downloadCsv(content: Blob, filename: string): void {
@@ -341,6 +362,11 @@ async function load(): Promise<void> {
   }
 }
 
+watch(viewMode, async (mode) => {
+  if (mode !== 'map') return
+  if (!await store.loadMap()) toast.error(store.error ?? '接驳线路地图数据加载失败。')
+})
+
 onMounted(load)
 onBeforeRouteLeave(() => confirmLeave())
 useEventListener(window, 'beforeunload', beforeUnload)
@@ -365,7 +391,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       </header>
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
-        <div class="space-y-2"><Label for="shuttle-keyword">关键字</Label><Input id="shuttle-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="线路编号或名称" autocomplete="off" /></div>
+        <div class="space-y-2"><Label for="shuttle-keyword">关键字</Label><Input id="shuttle-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="线路编号或名称" autocomplete="off" @keydown.enter.prevent="applyQuery" /></div>
         <div class="space-y-2"><Label for="shuttle-direction">线路方向</Label><Select v-model="queryDraft.direction"><SelectTrigger id="shuttle-direction" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部方向</SelectItem><SelectItem value="inbound">进场</SelectItem><SelectItem value="outbound">出场</SelectItem></SelectContent></Select></div>
         <div class="space-y-2"><Label for="shuttle-operating-status">运营状态</Label><Select v-model="queryDraft.operatingStatus"><SelectTrigger id="shuttle-operating-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部运营状态</SelectItem><SelectItem value="operating">运营中</SelectItem><SelectItem value="suspended">停运</SelectItem><SelectItem value="partial">部分运营</SelectItem></SelectContent></Select></div>
       </QueryPanel>
@@ -385,10 +411,10 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" @click="openStations(row)"><MapPin aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="Boolean(store.deletingId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button></div></template>
         </DataTable>
-        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20]" @update:page="store.setPage" @update:page-size="store.setPageSize" />
+        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20]" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
 
-      <ShuttleRouteMapView v-else :records="store.filteredRecords" :theme="themeStore.mode" />
+      <ShuttleRouteMapView v-else :records="store.mapRecords" :theme="themeStore.mode" />
     </div>
 
     <CrudSheet :open="routeOpen" :mode="routeMode" size="wide" :title="routeMode === 'create' ? '新增接驳线路' : `编辑接驳线路 · ${routeValue.code}`" description="维护线路方向、班次、运营状态和排序；站点保存后单独配置。" :saving="store.isSaving" :dirty="routeDirty" @submit="saveRoute" @request-close="requestRouteClose">

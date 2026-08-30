@@ -247,6 +247,22 @@ describe('content management store', () => {
     expect(store.newsRecords.map(item => item.id)).toEqual(['3'])
   })
 
+  it('loads only the requested tab plus reference options', async () => {
+    service.contents = [content('1', { type: 'activity' }), content('2', { type: 'news' })]
+    service.banners = [banner('1')]
+    service.hints = [hint('1')]
+    const store = createContentManagementStore(service, 'content-single-tab')()
+
+    expect(await store.load('banner')).toBe(true)
+    expect(store.bannerRecords.map(item => item.id)).toEqual(['1'])
+    expect(store.activityRecords).toEqual([])
+    expect(store.priorityHintRecords).toEqual([])
+    expect(service.bannerQueries).toHaveLength(1)
+    expect(service.contentQueries).toEqual([])
+    expect(service.hintQueries).toEqual([])
+    expect(service.referenceReads).toEqual(['activity', 'news', 'notice', 'traffic-control'])
+  })
+
   it('keeps prototype twenty-row paging after automatically loaded API results', async () => {
     service.contents = Array.from({ length: 21 }, (_, index) => content(String(index + 1), {
       type: 'news', priority: index === 20 ? 0 : index + 1,

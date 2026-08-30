@@ -151,6 +151,25 @@ describe('parking lot API service', () => {
     ])
   })
 
+  it('forwards list filters to the parking page query', async () => {
+    const { configs, request } = queuedRequester([
+      { list: [apiParking({ id: 2, code: 'P-002' })], total: 1, page: 1, page_size: 20 },
+    ])
+    const page = await createParkingLotService(request).listPage(1, 20, {
+      keyword: ' 东区 ',
+      feeType: 'free',
+      openStatus: 'closed',
+      availabilityUpdateMethod: 'integrated',
+    })
+
+    expect(page.records.map(record => record.code)).toEqual(['P-002'])
+    expect(configs).toMatchObject([{
+      method: 'GET',
+      url: 'api/v1/admin/parkings',
+      params: { page: 1, page_size: 20, keyword: '东区', is_free: 1, open_status: 0, update_mode: 'sync' },
+    }])
+  })
+
   it('submits current create/edit fields and preserves backend-only update and control states', async () => {
     const { configs, request } = queuedRequester([
       apiParking({ id: 21 }),

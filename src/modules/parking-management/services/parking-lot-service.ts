@@ -8,6 +8,8 @@ import type {
   ParkingLotCreateOptions,
   ParkingLotDetail,
   ParkingLotGateBindingValue,
+  ParkingLotPage,
+  ParkingLotQuery,
   ParkingLotService,
   ParkingLotUpdateOptions,
   ParkingLotValidationField,
@@ -393,31 +395,58 @@ function writeBody(input: ParkingLotBaseInput, originalOpenStatus: ApiParkingOpe
   }
 }
 
+const DEFAULT_QUERY: ParkingLotQuery = {
+  keyword: '',
+  feeType: 'all',
+  openStatus: 'all',
+  availabilityUpdateMethod: 'all',
+}
 const MAX_PAGE_SIZE = 100
+
+function filterParameters(query: ParkingLotQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
+  const keyword = normalizeText(query.keyword)
+  if (keyword) params.keyword = keyword
+  if (query.feeType === 'free') params.is_free = 1
+  if (query.feeType === 'paid') params.is_free = 0
+  if (query.openStatus === 'open') params.open_status = 1
+  if (query.openStatus === 'closed') params.open_status = 0
+  if (query.availabilityUpdateMethod !== 'all') params.update_mode = apiUpdateMethod(query.availabilityUpdateMethod)
+  return params
+}
+
+function queryParameters(page: number, pageSize: number, query: ParkingLotQuery): Record<string, string | number> {
+  return { page, page_size: pageSize, ...filterParameters(query) }
+}
+
+function mapApiParkingPage(value: ApiParkingPage): ParkingLotPage {
+  return {
+    records: Array.isArray(value.list) ? value.list.map(mapApiParkingLot) : [],
+    total: nonNegativeInteger(value.total, '停车场总数'),
+    page: Math.max(1, integer(value.page, '页码')),
+    pageSize: Math.max(1, integer(value.page_size, '每页条数')),
+  }
+}
 
 export function createParkingLotService(request: ParkingLotDataRequester = requestData): ParkingLotService {
   async function rawDetail(id: string): Promise<ApiParkingVO> {
     return request<ApiParkingVO>({ method: 'GET', url: endpoint(id) })
   }
 
-  async function listPage(page: number): Promise<ApiParkingPage> {
-    return request<ApiParkingPage>({
-      method: 'GET',
-      url: 'api/v1/admin/parkings',
-      params: { page, page_size: MAX_PAGE_SIZE },
-    })
-  }
+  const service: ParkingLotService = {
+    async listPage(page, pageSize, query = DEFAULT_QUERY) {
+      return mapApiParkingPage(await request<ApiParkingPage>({
+        method: 'GET',
+        url: 'api/v1/admin/parkings',
+        params: queryParameters(page, pageSize, query),
+      }))
+    },
 
-  return {
-    async list() {
-      const first = await listPage(1)
-      const records = Array.isArray(first.list) ? first.list.map(mapApiParkingLot) : []
-      const total = nonNegativeInteger(first.total, '停车场总数')
-      const pageSize = positiveInteger(first.page_size, '停车场每页条数')
-      const pageCount = Math.ceil(total / pageSize)
-      for (let page = 2; page <= pageCount; page += 1) {
-        const next = await listPage(page)
-        if (Array.isArray(next.list)) records.push(...next.list.map(mapApiParkingLot))
+    async list(query = DEFAULT_QUERY) {
+      const first = await service.listPage(1, MAX_PAGE_SIZE, query)
+      const records = [...first.records]
+      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
+        records.push(...(await service.listPage(page, MAX_PAGE_SIZE, query)).records)
       }
       return sortParkingLots([...new Map(records.map((record) => [record.id, record])).values()])
     },
@@ -494,6 +523,8 @@ export function createParkingLotService(request: ParkingLotDataRequester = reque
       await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint(id) })
     },
   }
+
+  return service
 }
 
 export const parkingLotService = createParkingLotService()

@@ -5,6 +5,7 @@ import type {
   ShuttleOperatingStatus,
   ShuttleRoute,
   ShuttleRouteCreateInput,
+  ShuttleRoutePage,
   ShuttleRouteQuery,
   ShuttleRouteService,
   ShuttleRouteUpdateInput,
@@ -392,8 +393,25 @@ function throwForValidation(issues: readonly ShuttleRouteValidationIssue[] | rea
   throw new ShuttleRouteServiceError(issues[0]?.message ?? '接驳线路信息校验失败')
 }
 
+const DEFAULT_QUERY: ShuttleRouteQuery = {
+  keyword: '',
+  direction: 'all',
+  operatingStatus: 'all',
+}
 const MAX_PAGE_SIZE = 100
-const DETAIL_BATCH_SIZE = 8
+
+function queryParameters(page: number, pageSize: number, query: ShuttleRouteQuery): Record<string, string | number> {
+  return { page, page_size: pageSize, ...exportParameters(query) }
+}
+
+function mapApiShuttlePage(value: ApiShuttleLinePage): ShuttleRoutePage {
+  return {
+    records: Array.isArray(value.list) ? value.list.map(item => mapApiShuttleRoute(item)) : [],
+    total: nonNegativeInteger(value.total, '线路总数'),
+    page: Math.max(1, integer(value.page, '页码')),
+    pageSize: Math.max(1, integer(value.page_size, '每页条数')),
+  }
+}
 
 const defaultFileRequester: ShuttleRouteFileRequester = config => rawHttpClient.request<Blob>(config)
 
@@ -405,35 +423,22 @@ export function createShuttleRouteService(
     return request<ApiShuttleLineVO>({ method: 'GET', url: endpoint(id) })
   }
 
-  async function listPage(page: number): Promise<ApiShuttleLinePage> {
-    return request<ApiShuttleLinePage>({
-      method: 'GET',
-      url: 'api/v1/admin/shuttle/lines',
-      params: { page, page_size: MAX_PAGE_SIZE },
-    })
-  }
+  const service: ShuttleRouteService = {
+    async listPage(page, pageSize, query = DEFAULT_QUERY) {
+      return mapApiShuttlePage(await request<ApiShuttleLinePage>({
+        method: 'GET',
+        url: 'api/v1/admin/shuttle/lines',
+        params: queryParameters(page, pageSize, query),
+      }))
+    },
 
-  return {
-    async list() {
-      const first = await listPage(1)
-      const rawRecords = Array.isArray(first.list) ? [...first.list] : []
-      const total = nonNegativeInteger(first.total, '线路总数')
-      const pageSize = positiveInteger(first.page_size, '线路每页条数')
-      const pageCount = Math.ceil(total / pageSize)
-      for (let page = 2; page <= pageCount; page += 1) {
-        const next = await listPage(page)
-        if (Array.isArray(next.list)) rawRecords.push(...next.list)
+    async list(query = DEFAULT_QUERY) {
+      const first = await service.listPage(1, MAX_PAGE_SIZE, query)
+      const records = [...first.records]
+      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
+        records.push(...(await service.listPage(page, MAX_PAGE_SIZE, query)).records)
       }
-      const unique = [...new Map(rawRecords.map(record => [String(record.id), record])).values()]
-      const records: ShuttleRoute[] = []
-      for (let start = 0; start < unique.length; start += DETAIL_BATCH_SIZE) {
-        const batch = unique.slice(start, start + DETAIL_BATCH_SIZE)
-        records.push(...await Promise.all(batch.map(async (record) => {
-          const detail = await rawDetail(String(record.id))
-          return mapApiShuttleRoute(detail)
-        })))
-      }
-      return sortShuttleRoutes(records)
+      return sortShuttleRoutes([...new Map(records.map(record => [record.id, record])).values()])
     },
 
     async exportCsv(query) {
@@ -490,6 +495,8 @@ export function createShuttleRouteService(
       await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint(id) })
     },
   }
+
+  return service
 }
 
 export const shuttleRouteService = createShuttleRouteService()
