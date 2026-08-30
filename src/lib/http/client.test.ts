@@ -3,6 +3,7 @@ import type { AuthSession } from '@/types/auth'
 import { AxiosHeaders } from 'axios'
 import { describe, expect, it } from 'vitest'
 import { createApiClient, requestData } from './client'
+import { createSignatureHeaders } from './signature'
 import { ApiError } from './types'
 
 function session(accessToken: string, expiresInMs = 60 * 60 * 1000): AuthSession {
@@ -54,6 +55,34 @@ describe('API client', () => {
     expect(headers.get('X-Timestamp')).toBe('1733880000')
     expect(headers.get('X-Nonce')).toBe('abc12345')
     expect(headers.get('X-Sign')).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('signs multipart uploads with explicit form parameters and excludes the file body', async () => {
+    let captured: InternalAxiosRequestConfig | null = null
+    const adapter: AxiosAdapter = async (config) => {
+      captured = config
+      return success(config)
+    }
+    const client = createApiClient({
+      baseURL: 'https://example.test/root/',
+      adapter,
+      getSignSecret: () => 'test-secret',
+      getSession: () => session('token-1'),
+      now: () => 1_733_880_000_000,
+      createNonce: () => 'abc12345',
+    })
+    const data = new FormData()
+    data.append('file', new File(['image'], 'cover.jpg', { type: 'image/jpeg' }))
+    data.append('scene', 'cover')
+
+    await requestData({ method: 'POST', url: 'api/v1/admin/uploads', data, signParams: { scene: 'cover' } }, client)
+
+    const expected = await createSignatureHeaders('test-secret', { scene: 'cover' }, {
+      timestamp: '1733880000',
+      nonce: 'abc12345',
+    })
+    expect(captured!.headers.get('X-Sign')).toBe(expected['X-Sign'])
+    expect(captured!.data).toBe(data)
   })
 
   it('surfaces missing configuration and signing business errors clearly', async () => {

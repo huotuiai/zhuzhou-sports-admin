@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useId } from 'vue'
-import { AlertTriangle, CalendarClock, MapPin, Navigation, Pin, SlidersHorizontal } from '@lucide/vue'
+import { computed, nextTick, reactive, ref, useId } from 'vue'
+import { AlertTriangle, CalendarClock, CalendarRange, MapPin, Navigation, Pin, Power, SlidersHorizontal } from '@lucide/vue'
 import type { ContentValidationField, ContentWriteInput, ValidationIssue } from '../types'
 import FileMetadataPicker from './FileMetadataPicker.vue'
 import RichTextEditor from './RichTextEditor.vue'
@@ -24,6 +24,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:value': [value: ContentWriteInput]
+  'update:uploading': [value: boolean]
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -31,9 +32,15 @@ const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const isActivity = computed(() => props.value.type === 'activity')
 const isNews = computed(() => props.value.type === 'news')
 const isNotice = computed(() => props.value.type === 'notice')
+const uploadState = reactive({ cover: false, attachments: false, editor: false })
 
 function patch(patchValue: Partial<ContentWriteInput>): void {
   emit('update:value', { ...props.value, ...patchValue })
+}
+
+function updateUploading(field: keyof typeof uploadState, value: boolean): void {
+  uploadState[field] = value
+  emit('update:uploading', Object.values(uploadState).some(Boolean))
 }
 
 function fieldId(field: ContentValidationField): string {
@@ -96,30 +103,34 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
       </Label>
       <FileMetadataPicker
         :model-value="value.cover ? [value.cover] : []"
-        accept="image/*"
+        scene="cover"
         :max-file-size="2 * 1024 * 1024"
-        hint="支持常用图片格式，≤2MB，建议 750×420"
-        disabled
+        hint="支持 JPG、PNG、WebP、GIF，≤2MB，建议 750×420"
+        :disabled="saving"
         :invalid="Boolean(errorFor('cover'))"
+        @update:model-value="patch({ cover: $event[0] ?? null })"
+        @update:uploading="updateUploading('cover', $event)"
       />
       <p v-if="errorFor('cover')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('cover') }}</p>
     </div>
 
     <div class="col-span-2 space-y-2" data-content-field="bodyHtml" tabindex="-1">
       <Label>正文</Label>
-      <RichTextEditor :model-value="value.bodyHtml" :disabled="saving" @update:model-value="patch({ bodyHtml: $event })" />
+      <RichTextEditor :model-value="value.bodyHtml" :disabled="saving" @update:model-value="patch({ bodyHtml: $event })" @update:uploading="updateUploading('editor', $event)" />
     </div>
 
     <div v-if="isNotice" class="col-span-2 space-y-2" data-content-field="attachments" tabindex="-1">
       <Label>公告附件 <span class="ml-1 text-xs font-normal text-muted-foreground">选填，可多选</span></Label>
       <FileMetadataPicker
         :model-value="value.attachments"
-        accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        :max-file-size="10 * 1024 * 1024"
+        scene="attachment"
+        :max-file-size="5 * 1024 * 1024"
         :max-files="10"
         multiple
-        hint="支持图片、PDF、DOC、DOCX，单文件 ≤10MB"
-        disabled
+        hint="后端上传服务当前支持 JPG、PNG、WebP、GIF，单张 ≤5MB"
+        :disabled="saving"
+        @update:model-value="patch({ attachments: [...$event] })"
+        @update:uploading="updateUploading('attachments', $event)"
       />
     </div>
 
@@ -216,7 +227,7 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
         />
       </div>
       <p v-if="errorFor('priority')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('priority') }}</p>
-      <p v-else class="text-xs text-muted-foreground">数值越小越靠前，范围 0–9999</p>
+      <p v-else class="text-xs text-muted-foreground">数值越大越靠前，范围 0–9999</p>
     </div>
 
     <div class="space-y-2">
@@ -236,7 +247,43 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
       <p class="text-xs text-muted-foreground">填写后保存草稿并调用发布接口；留空保存为草稿，可在列表手动发布。</p>
     </div>
 
-    <div class="col-span-2 flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-3 py-2.5">
+    <div class="space-y-2">
+      <Label :for="fieldId('validStartAt')">H5 展示开始</Label>
+      <div class="relative">
+        <CalendarRange class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <Input
+          :id="fieldId('validStartAt')"
+          data-content-field="validStartAt"
+          type="datetime-local"
+          :model-value="value.validStartAt ?? ''"
+          class="h-11 pl-9"
+          :disabled="saving"
+          :aria-invalid="Boolean(errorFor('validStartAt'))"
+          @update:model-value="patch({ validStartAt: String($event) || null })"
+        />
+      </div>
+      <p v-if="errorFor('validStartAt')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('validStartAt') }}</p>
+    </div>
+
+    <div class="space-y-2">
+      <Label :for="fieldId('validEndAt')">H5 展示结束</Label>
+      <div class="relative">
+        <CalendarRange class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <Input
+          :id="fieldId('validEndAt')"
+          data-content-field="validEndAt"
+          type="datetime-local"
+          :model-value="value.validEndAt ?? ''"
+          class="h-11 pl-9"
+          :disabled="saving"
+          :aria-invalid="Boolean(errorFor('validEndAt'))"
+          @update:model-value="patch({ validEndAt: String($event) || null })"
+        />
+      </div>
+      <p v-if="errorFor('validEndAt')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('validEndAt') }}</p>
+    </div>
+
+    <div class="flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-3 py-2.5">
       <div class="flex items-start gap-3">
         <Pin class="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
         <div>
@@ -245,6 +292,17 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
         </div>
       </div>
       <Switch :id="fieldId('pinned')" data-content-field="pinned" :model-value="value.pinned" :disabled="saving" @update:model-value="patch({ pinned: $event })" />
+    </div>
+
+    <div class="flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-3 py-2.5">
+      <div class="flex items-start gap-3">
+        <Power class="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
+        <div>
+          <Label :for="fieldId('enabled')" class="cursor-pointer">启用内容</Label>
+          <p class="mt-1 text-xs leading-5 text-muted-foreground">停用后已发布内容不在 H5 展示。</p>
+        </div>
+      </div>
+      <Switch :id="fieldId('enabled')" data-content-field="enabled" :model-value="value.enabled" :disabled="saving" @update:model-value="patch({ enabled: $event })" />
     </div>
   </div>
 </template>

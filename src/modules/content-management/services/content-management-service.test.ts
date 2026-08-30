@@ -110,7 +110,8 @@ function asset(overrides: Partial<RemoteFileAsset> = {}): RemoteFileAsset {
 function contentInput(overrides: Partial<ContentWriteInput> = {}): ContentWriteInput {
   return {
     type: 'news', title: '新的场馆资讯', bodyHtml: '<p>正文</p>', cover: null, attachments: [],
-    publishAt: null, pinned: false, priority: 50, activityStartAt: null, activityEndAt: null,
+    publishAt: null, pinned: false, priority: 50, enabled: true, validStartAt: null, validEndAt: null,
+    activityStartAt: null, activityEndAt: null,
     activityLocation: '', navigationLocation: '', ...overrides,
   }
 }
@@ -168,7 +169,7 @@ describe('content management API service', () => {
     const first = mapApiContent(apiContent({ id: 1, code: 'CT-001', priority: 20, is_pinned: 0 }))
     const second = mapApiContent(apiContent({ id: 2, code: 'CT-002', priority: 5, is_pinned: 0 }))
     const pinned = mapApiContent(apiContent({ id: 3, code: 'CT-003', priority: 99, is_pinned: 1 }))
-    expect(sortContents([first, second, pinned]).map(item => item.id)).toEqual(['3', '2', '1'])
+    expect(sortContents([first, second, pinned]).map(item => item.id)).toEqual(['3', '1', '2'])
   })
 
   it('derives activity/effective state and formats supported local times', () => {
@@ -257,12 +258,35 @@ describe('content management API service', () => {
     const service = createContentManagementService(requester)
     await service.createContent(contentInput({
       type: 'activity', cover: asset(), activityStartAt: '2026-08-28T10:00', activityEndAt: '2026-08-28T12:00',
-      activityLocation: '体育场', navigationLocation: '113.1462, 27.8165',
+      activityLocation: '体育场', navigationLocation: '113.1462, 27.8165', enabled: false,
+      validStartAt: '2026-08-28T08:00', validEndAt: '2026-08-28T23:00',
     }))
     await service.setContentEnabled('21', false)
-    expect(configs[0]?.data).toMatchObject({ nav_address: null, nav_lng: 113.1462, nav_lat: 27.8165 })
+    expect(configs[0]?.data).toMatchObject({
+      cover_url: 'https://cdn.example.com/remote.jpg', nav_address: null, nav_lng: 113.1462, nav_lat: 27.8165,
+      status: 0, valid_start_at: '2026-08-28 08:00:00', valid_end_at: '2026-08-28 23:00:00',
+    })
     expect(configs[1]).toEqual({ method: 'GET', url: 'api/v1/admin/contents/21' })
     expect(configs[2]).toEqual({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '体育中心开放通知', content_type: 'activity', status: 0 } })
+  })
+
+  it('keeps an existing publish schedule when editing without changing its time', async () => {
+    const configs: SignedRequestConfig[] = []
+    const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
+      configs.push(config as SignedRequestConfig)
+      return apiContent({
+        id: 21,
+        code: 'CT-021',
+        publish_status: 'published',
+        publish_at: '2026-08-28T10:00:00+08:00',
+      }) as T
+    }
+    const service = createContentManagementService(requester)
+
+    await service.updateContent('21', contentInput({ publishAt: '2026-08-28T10:00' }))
+
+    expect(configs).toHaveLength(1)
+    expect(configs[0]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/contents/21' })
   })
 
   it('uses Banner/highlight enum mappings, date boundaries and latest-detail status updates', async () => {

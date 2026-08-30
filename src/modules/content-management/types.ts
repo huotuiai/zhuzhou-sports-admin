@@ -62,6 +62,9 @@ export interface ContentWriteInput {
   publishAt: string | null
   pinned: boolean
   priority: number
+  enabled: boolean
+  validStartAt: string | null
+  validEndAt: string | null
   activityStartAt: string | null
   activityEndAt: string | null
   activityLocation: string

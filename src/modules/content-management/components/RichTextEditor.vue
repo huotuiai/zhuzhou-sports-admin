@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
+import { mergeAttributes, Node } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
-import { Bold, Heading2, ImageIcon, Italic, Link2, List, ListOrdered, Underline } from '@lucide/vue'
+import { Bold, Heading2, ImageIcon, Italic, Link2, List, ListOrdered, LoaderCircle, Underline } from '@lucide/vue'
+import { fileUploadService, validateUploadImage } from '../services/file-upload-service'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -17,11 +19,36 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  'update:uploading': [value: boolean]
 }>()
 
 const linkPanelOpen = ref(false)
 const linkUrl = ref('https://')
 const selectionVersion = ref(0)
+const imageInputRef = ref<HTMLInputElement | null>(null)
+const imageUploading = ref(false)
+const imageUploadError = ref('')
+
+const UploadedImage = Node.create({
+  name: 'image',
+  group: 'block',
+  inline: false,
+  atom: true,
+  draggable: true,
+  addAttributes() {
+    return {
+      src: { default: null },
+      alt: { default: null },
+      title: { default: null },
+    }
+  },
+  parseHTML() {
+    return [{ tag: 'img[src]' }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['img', mergeAttributes({ class: 'content-image' }, HTMLAttributes)]
+  },
+})
 
 const editor = useEditor({
   content: props.modelValue,
@@ -34,6 +61,7 @@ const editor = useEditor({
         HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
       },
     }),
+    UploadedImage,
   ],
   editorProps: {
     attributes: {
@@ -76,6 +104,36 @@ function openLinkPanel(): void {
   linkPanelOpen.value = !linkPanelOpen.value
 }
 
+function openImagePicker(): void {
+  if (!props.disabled && !imageUploading.value) imageInputRef.value?.click()
+}
+
+async function handleImageInput(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || props.disabled || imageUploading.value) return
+
+  imageUploadError.value = ''
+  imageUploading.value = true
+  emit('update:uploading', true)
+  try {
+    validateUploadImage(file)
+    const image = await fileUploadService.uploadImage(file, 'editor')
+    editor.value?.chain().focus().insertContent({
+      type: 'image',
+      attrs: { src: image.url, alt: image.name, title: image.name },
+    }).run()
+  }
+  catch (error) {
+    imageUploadError.value = error instanceof Error ? error.message : '图片上传失败，请稍后重试'
+  }
+  finally {
+    imageUploading.value = false
+    emit('update:uploading', false)
+  }
+}
+
 onBeforeUnmount(() => editor.value?.destroy())
 </script>
 
@@ -84,6 +142,7 @@ onBeforeUnmount(() => editor.value?.destroy())
     class="overflow-hidden rounded-xl border bg-background transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/20"
     :class="invalid ? 'border-destructive' : ''"
   >
+    <input ref="imageInputRef" class="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif" tabindex="-1" :disabled="disabled || imageUploading" @change="handleImageInput">
     <div class="flex flex-wrap items-center gap-1 border-b bg-muted/45 p-2" role="toolbar" aria-label="正文格式工具栏">
       <Button type="button" size="icon-sm" :variant="isActive('bold') ? 'secondary' : 'ghost'" :disabled="disabled" aria-label="加粗" @click="editor?.chain().focus().toggleBold().run()">
         <Bold aria-hidden="true" />
@@ -108,10 +167,11 @@ onBeforeUnmount(() => editor.value?.destroy())
       <Button type="button" size="icon-sm" :variant="isActive('link') ? 'secondary' : 'ghost'" :disabled="disabled" aria-label="插入或编辑链接" :aria-expanded="linkPanelOpen" @click="openLinkPanel">
         <Link2 aria-hidden="true" />
       </Button>
-      <Button type="button" size="icon-sm" variant="ghost" disabled aria-label="插入图片需要接入上传服务" title="需接入上传服务后启用">
-        <ImageIcon aria-hidden="true" />
+      <Button type="button" size="icon-sm" variant="ghost" :disabled="disabled || imageUploading" aria-label="上传并插入图片" title="上传并插入图片" @click="openImagePicker">
+        <LoaderCircle v-if="imageUploading" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        <ImageIcon v-else aria-hidden="true" />
       </Button>
-      <span class="ml-auto text-[11px] text-muted-foreground">图片插入需上传服务</span>
+      <span class="ml-auto text-[11px]" :class="imageUploadError ? 'text-destructive' : 'text-muted-foreground'">{{ imageUploadError || (imageUploading ? '图片上传中…' : '可上传 JPG、PNG、WebP、GIF') }}</span>
     </div>
 
     <div v-if="linkPanelOpen" class="flex items-center gap-2 border-b bg-muted/20 p-2">
@@ -163,5 +223,13 @@ onBeforeUnmount(() => editor.value?.destroy())
   color: var(--primary);
   text-decoration: underline;
   text-underline-offset: 0.18em;
+}
+
+:deep(.ProseMirror img.content-image) {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.75rem auto;
+  border-radius: 0.75rem;
 }
 </style>

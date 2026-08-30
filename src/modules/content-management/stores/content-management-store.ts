@@ -5,6 +5,7 @@ import type {
   BannerQuery,
   BannerRecord,
   BannerWriteInput,
+  ContentExportFile,
   ContentManagementService,
   ContentManagementSnapshot,
   ContentManagementTab,
@@ -78,6 +79,7 @@ export function createContentManagementStore(
     const priorityHintTotal = ref(0)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
     const detailLoadingId = ref<string | null>(null)
     const error = ref<string | null>(null)
 
@@ -304,6 +306,7 @@ export function createContentManagementStore(
     const createContent = (input: ContentWriteInput) => mutate(() => service.createContent(input), [input.type === 'activity' ? 'activity' : 'news'], true)
     const updateContent = (id: string, input: ContentWriteInput) => mutate(() => service.updateContent(id, input), [input.type === 'activity' ? 'activity' : 'news'], true)
     const publishContent = (id: string, type: ContentRecord['type']) => mutate(() => service.publishContent(id), [type === 'activity' ? 'activity' : 'news'], true)
+    const unpublishContent = (id: string, type: ContentRecord['type']) => mutate(() => service.unpublishContent(id), [type === 'activity' ? 'activity' : 'news'], true)
     const setContentPinned = (id: string, pinned: boolean, type: ContentRecord['type']) => mutate(() => service.setContentPinned(id, pinned), [type === 'activity' ? 'activity' : 'news'])
     const setContentEnabled = (id: string, enabled: boolean, type: ContentRecord['type']) => mutate(() => service.setContentEnabled(id, enabled), [type === 'activity' ? 'activity' : 'news'], true)
     const removeContent = (id: string, type: ContentRecord['type']) => mutate(() => service.removeContent(id), [type === 'activity' ? 'activity' : 'news'], true)
@@ -315,6 +318,17 @@ export function createContentManagementStore(
     const updatePriorityHint = (id: string, input: PriorityHintWriteInput) => mutate(() => service.updatePriorityHint(id, input), ['hint'])
     const setPriorityHintEnabled = (id: string, enabled: boolean) => mutate(() => service.setPriorityHintEnabled(id, enabled), ['hint'])
     const removePriorityHint = (id: string) => mutate(() => service.removePriorityHint(id), ['hint'])
+
+    async function exportContents(): Promise<ContentExportFile | null> {
+      isExporting.value = true
+      error.value = null
+      try { return await service.exportContents() }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally { isExporting.value = false }
+    }
 
     async function refreshTemporalState(): Promise<void> {
       now.value = Date.now()
@@ -337,6 +351,7 @@ export function createContentManagementStore(
       priorityHintTotal,
       isLoading,
       isSaving,
+      isExporting,
       detailLoadingId,
       error,
       activityRecords,
@@ -367,6 +382,7 @@ export function createContentManagementStore(
       createContent,
       updateContent,
       publishContent,
+      unpublishContent,
       setContentPinned,
       setContentEnabled,
       removeContent,
@@ -378,6 +394,7 @@ export function createContentManagementStore(
       updatePriorityHint,
       setPriorityHintEnabled,
       removePriorityHint,
+      exportContents,
       resetError,
     }
   })

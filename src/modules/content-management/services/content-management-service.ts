@@ -136,7 +136,7 @@ interface ApiContentWriteRequest {
   title: string
   content_type: ContentType
   body: string
-  cover_url?: string
+  cover_url: string | null
   activity_start_at?: string
   activity_end_at?: string
   location?: string
@@ -145,6 +145,9 @@ interface ApiContentWriteRequest {
   nav_lat?: number | null
   is_pinned: 0 | 1
   priority: number
+  valid_start_at: string | null
+  valid_end_at: string | null
+  status: 0 | 1
   attachments: ApiAttachmentRequest[]
 }
 
@@ -432,7 +435,7 @@ function cloneHint(record: PriorityHintRecord): PriorityHintRecord {
 export function sortContents(records: readonly ContentRecord[]): ContentRecord[] {
   return [...records]
     .sort((first, second) => Number(second.pinned) - Number(first.pinned)
-      || first.priority - second.priority
+      || second.priority - first.priority
       || (second.publishAt ?? second.updatedAt).localeCompare(first.publishAt ?? first.updatedAt))
     .map(cloneContent)
 }
@@ -542,7 +545,7 @@ export function validateContentInput(input: ContentWriteInput): ValidationIssue<
     ...validatePriority('priority', value.priority),
   ]
   if (value.type === 'activity') {
-    if (!value.cover?.url) issues.push({ field: 'cover', code: 'required', message: '活动封面为必填项；当前需等待后端上传接口' })
+    if (!value.cover?.url) issues.push({ field: 'cover', code: 'required', message: '请上传活动封面' })
     if (!value.activityStartAt) issues.push({ field: 'activityStartAt', code: 'required', message: '请选择活动开始时间' })
     if (!value.activityEndAt) issues.push({ field: 'activityEndAt', code: 'required', message: '请选择活动结束时间' })
     const start = dateValue(value.activityStartAt)
@@ -553,8 +556,13 @@ export function validateContentInput(input: ContentWriteInput): ValidationIssue<
       issues.push({ field: 'navigationLocation', code: 'invalid', message: '经纬度格式应为“经度, 纬度”，且数值需在有效范围内' })
     }
   }
+  const validStart = dateValue(value.validStartAt)
+  const validEnd = dateValue(value.validEndAt)
+  if (validStart !== null && validEnd !== null && validStart >= validEnd) {
+    issues.push({ field: 'validEndAt', code: 'invalid', message: 'H5 展示结束时间必须晚于开始时间' })
+  }
   if (value.cover?.url.startsWith('blob:') || value.attachments.some(item => item.url.startsWith('blob:'))) {
-    issues.push({ field: 'cover', code: 'invalid', message: '不能提交浏览器临时文件地址，请等待后端上传接口' })
+    issues.push({ field: 'cover', code: 'invalid', message: '不能提交浏览器临时文件地址，请重新上传' })
   }
   return issues
 }
@@ -565,7 +573,7 @@ export function validateBannerInput(input: BannerWriteInput): ValidationIssue<Ba
     ...validatePriority('priority', input.priority),
     ...validateValidity(input.validFrom, input.validTo),
   ]
-  if (!input.image?.url) issues.push({ field: 'image', code: 'required', message: 'Banner 图片为必填项；当前需等待后端上传接口' })
+  if (!input.image?.url) issues.push({ field: 'image', code: 'required', message: '请上传 Banner 图片' })
   else if (input.image.url.startsWith('blob:')) issues.push({ field: 'image', code: 'invalid', message: '不能提交浏览器临时图片地址' })
   if (input.jumpType !== 'none' && !input.targetId) issues.push({ field: 'targetId', code: 'not_found', message: '请选择有效的跳转目标' })
   return issues
@@ -608,11 +616,14 @@ function contentBody(input: ContentWriteInput): ApiContentWriteRequest {
     title: value.title,
     content_type: value.type,
     body: value.bodyHtml,
+    cover_url: value.cover?.url ?? null,
     is_pinned: value.pinned ? 1 : 0,
     priority: value.priority,
+    valid_start_at: value.validStartAt ? formatContentRequestDateTime(value.validStartAt) : null,
+    valid_end_at: value.validEndAt ? formatContentRequestDateTime(value.validEndAt) : null,
+    status: value.enabled ? 1 : 0,
     attachments: attachmentBody(value.attachments),
   }
-  if (value.cover?.url) data.cover_url = value.cover.url
   if (value.type === 'activity') {
     if (value.activityStartAt) data.activity_start_at = formatContentRequestDateTime(value.activityStartAt)
     if (value.activityEndAt) data.activity_end_at = formatContentRequestDateTime(value.activityEndAt)
@@ -647,7 +658,7 @@ function requestId(value: string, field: string): number | string {
 }
 
 function bannerBody(input: BannerWriteInput): ApiBannerWriteRequest {
-  if (!input.image?.url) throw new ContentManagementServiceError('Banner 图片为必填项；当前需等待后端上传接口')
+  if (!input.image?.url) throw new ContentManagementServiceError('请上传 Banner 图片')
   return {
     title: normalizeText(input.title),
     image_url: input.image.url,
@@ -694,6 +705,14 @@ function hintQuery(page: number, pageSize: number, query: PriorityHintServerQuer
   if (keyword) params.keyword = keyword
   if (query.referenceType !== 'all') params.ref_type = apiReferenceType(query.referenceType)
   return params
+}
+
+function sameDateTime(first: string | null, second: string | null): boolean {
+  if (!first || !second) return first === second
+  const firstTime = Date.parse(first)
+  const secondTime = Date.parse(second)
+  if (Number.isFinite(firstTime) && Number.isFinite(secondTime)) return firstTime === secondTime
+  return formatContentRequestDateTime(first) === formatContentRequestDateTime(second)
 }
 
 function headerValue(response: AxiosResponse, name: string): string | null {
@@ -780,7 +799,7 @@ export function createContentManagementService(
       const updated = mapApiContent(await request<ApiContentVO, ApiContentWriteRequest>({
         method: 'PATCH', url: endpoint('api/v1/admin/contents', id), data: contentBody(input),
       }))
-      if (input.publishAt) return service.publishContent(id, input.publishAt)
+      if (input.publishAt) return sameDateTime(input.publishAt, updated.publishAt) ? updated : service.publishContent(id, input.publishAt)
       return updated.publishStatus === 'published' || updated.publishAt ? service.unpublishContent(id) : updated
     },
 

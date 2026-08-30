@@ -25,6 +25,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:value': [value: BannerWriteInput]
+  'update:uploading': [value: boolean]
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)
@@ -85,11 +86,13 @@ defineExpose<BannerFormHandle>({ validateAndFocus })
       <Label>Banner 图片 <span class="text-destructive" aria-hidden="true">*</span></Label>
       <FileMetadataPicker
         :model-value="value.image ? [value.image] : []"
-        accept="image/*"
+        scene="banner"
         :max-file-size="2 * 1024 * 1024"
-        hint="支持常用图片格式，≤2MB，建议 750×420"
-        disabled
+        hint="支持 JPG、PNG、WebP、GIF，≤2MB，建议 750×420"
+        :disabled="saving"
         :invalid="Boolean(errorFor('image'))"
+        @update:model-value="patch({ image: $event[0] ?? null })"
+        @update:uploading="emit('update:uploading', $event)"
       />
       <p v-if="errorFor('image')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('image') }}</p>
     </div>

@@ -53,7 +53,8 @@ function hint(id: string, overrides: Partial<PriorityHintRecord> = {}): Priority
 function input(overrides: Partial<ContentWriteInput> = {}): ContentWriteInput {
   return {
     type: 'news', title: '新增资讯', bodyHtml: '<p>正文</p>', cover: null, attachments: [], publishAt: null,
-    pinned: false, priority: 50, activityStartAt: null, activityEndAt: null, activityLocation: '', navigationLocation: '', ...overrides,
+    pinned: false, priority: 50, enabled: true, validStartAt: null, validEndAt: null,
+    activityStartAt: null, activityEndAt: null, activityLocation: '', navigationLocation: '', ...overrides,
   }
 }
 
@@ -253,7 +254,7 @@ describe('content management store', () => {
     const store = createContentManagementStore(service, 'content-pages')()
     await store.load()
     expect(store.paginatedNews).toHaveLength(CONTENT_MANAGEMENT_PAGE_SIZE)
-    expect(store.newsRecords[0]?.id).toBe('21')
+    expect(store.newsRecords[0]?.id).toBe('20')
     store.setPage('news', 2)
     expect(store.paginatedNews).toHaveLength(1)
   })
@@ -280,6 +281,8 @@ describe('content management store', () => {
     expect(store.bannerRecords[0]?.displayEnabled).toBe(false)
     expect(await store.setPriorityHintEnabled('1', false)).toBe(true)
     expect(store.priorityHintRecords[0]?.displayEnabled).toBe(false)
+    await expect(store.exportContents()).resolves.toMatchObject({ filename: 'contents.csv' })
+    expect(store.isExporting).toBe(false)
   })
 
   it('does no local reference pre-check and preserves the backend delete reason after refresh', async () => {

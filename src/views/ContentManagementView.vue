@@ -182,8 +182,10 @@ const discardConfirmOpen = ref(false)
 const deleteTarget = ref<DeleteTarget | null>(null)
 const loadError = ref('')
 const pageReady = ref(false)
+const formUploading = ref(false)
 
 const sheetOpen = computed(() => sheetKind.value !== null)
+const sheetSaving = computed(() => store.isSaving || formUploading.value)
 const sheetDirty = computed(() => {
   if (!sheetKind.value) return false
   return JSON.stringify(currentFormValue()) !== initialFormJson.value
@@ -197,10 +199,6 @@ function localDateTime(value: string | null): string | null {
   return local.toISOString().slice(0, 16)
 }
 
-function nowLocalDateTime(): string {
-  return localDateTime(new Date().toISOString()) ?? ''
-}
-
 function emptyContentForm(type: ContentWriteInput['type']): ContentWriteInput {
   return {
     type,
@@ -208,9 +206,12 @@ function emptyContentForm(type: ContentWriteInput['type']): ContentWriteInput {
     bodyHtml: '<p></p>',
     cover: null,
     attachments: [],
-    publishAt: nowLocalDateTime(),
+    publishAt: null,
     pinned: false,
     priority: DEFAULT_PRIORITY,
+    enabled: true,
+    validStartAt: null,
+    validEndAt: null,
     activityStartAt: null,
     activityEndAt: null,
     activityLocation: '',
@@ -236,6 +237,9 @@ function contentToForm(record: ContentRecord): ContentWriteInput {
     publishAt: localDateTime(record.publishAt),
     pinned: record.pinned,
     priority: record.priority,
+    enabled: record.enabled,
+    validStartAt: localDateTime(record.validStartAt),
+    validEndAt: localDateTime(record.validEndAt),
     activityStartAt: localDateTime(record.activityStartAt),
     activityEndAt: localDateTime(record.activityEndAt),
     activityLocation: record.activityLocation,
@@ -261,6 +265,7 @@ function currentFormValue(): ContentWriteInput | BannerWriteInput | PriorityHint
 }
 
 function openSheet(kind: SheetKind, mode: CrudDialogMode, id: string | null, value: ContentWriteInput | BannerWriteInput | PriorityHintWriteInput): void {
+  formUploading.value = false
   sheetKind.value = kind
   sheetMode.value = mode
   editingId.value = id
@@ -299,6 +304,7 @@ async function openHintEdit(record: PriorityHintRecord): Promise<void> {
 }
 
 function closeSheet(): void {
+  formUploading.value = false
   sheetKind.value = null
   editingId.value = null
   initialFormJson.value = ''
@@ -311,6 +317,7 @@ function requestSheetClose(request: CrudDialogCloseRequest): void {
 }
 
 async function saveSheet(): Promise<void> {
+  if (sheetSaving.value) return
   if (sheetKind.value === 'content') {
     contentIssues.value = validateContentInput(contentForm.value)
     await nextTick()
@@ -437,29 +444,20 @@ function metrics(pv: number, uv: number): string {
   return `${pv.toLocaleString('zh-CN')} / ${uv.toLocaleString('zh-CN')}`
 }
 
-function csvCell(value: unknown): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
-function downloadCsv(filename: string, headers: readonly string[], rows: readonly (readonly unknown[])[]): void {
-  const csv = `\uFEFF${[headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+function downloadFile(filename: string, content: Blob): void {
+  const url = URL.createObjectURL(content)
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
   anchor.click()
-  URL.revokeObjectURL(url)
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-function exportCurrent(): void {
-  const date = new Date().toISOString().slice(0, 10)
-  if (activeTab.value === 'activity' || activeTab.value === 'news') {
-    const records = activeTab.value === 'activity' ? store.activityRecords : store.newsRecords
-    downloadCsv(`内容管理-${tabLabels[activeTab.value]}-${date}.csv`,
-      ['内容编号', '标题', '类型', '发布状态', '状态', '置顶', '优先级', '发布时间', '点击PV', '点击UV', '浏览PV', '浏览UV'],
-      records.map((record) => [record.code, record.title, contentTypeLabel(record.type), record.publishStatus === 'published' ? '已发布' : '草稿', statusLabel(record), record.pinned ? '是' : '否', record.priority, formatDateTime(record.publishAt), record.metrics.clickPv, record.metrics.clickUv, record.metrics.viewPv, record.metrics.viewUv]))
-  }
-  toast.success('已导出当前筛选结果。')
+async function exportCurrent(): Promise<void> {
+  const file = await store.exportContents()
+  if (!file) return showStoreError('内容导出失败')
+  downloadFile(file.filename, file.content)
+  toast.success('内容 CSV 已导出。')
 }
 
 function confirmLeave(): boolean {
@@ -532,8 +530,9 @@ onBeforeRouteLeave(() => confirmLeave())
             <Plus aria-hidden="true" />
             {{ activeTab === 'activity' ? '新增活动' : activeTab === 'news' ? '新增内容' : activeTab === 'banner' ? '新增 Banner' : '新增高优提示' }}
           </Button>
-          <Button v-if="activeTab === 'activity' || activeTab === 'news'" variant="outline" size="lg" class="h-11" @click="exportCurrent">
-            <Download aria-hidden="true" />导出
+          <Button v-if="activeTab === 'activity' || activeTab === 'news'" variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportCurrent">
+            <LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            <Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}
           </Button>
         </div>
       </header>
@@ -615,6 +614,7 @@ onBeforeRouteLeave(() => confirmLeave())
               <Button variant="ghost" size="lg" class="h-10 px-3" @click="openContentEdit(row)"><PencilLine aria-hidden="true" />编辑</Button>
               <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-10 w-10" :aria-label="`${row.title}更多操作`"><CircleEllipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuLabel>{{ row.code }}</DropdownMenuLabel><DropdownMenuSeparator />
                 <DropdownMenuItem v-if="row.publishStatus === 'draft'" @select="runAction(store.publishContent(row.id, row.type), '内容已发布。')">发布</DropdownMenuItem>
+                <DropdownMenuItem v-else @select="runAction(store.unpublishContent(row.id, row.type), '内容已撤回为草稿。')">撤回为草稿</DropdownMenuItem>
                 <DropdownMenuItem @select="runAction(store.setContentPinned(row.id, !row.pinned, row.type), row.pinned ? '已取消置顶。' : '内容已置顶。')">{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem>
                 <DropdownMenuItem v-if="row.publishStatus === 'published'" @select="runAction(store.setContentEnabled(row.id, !row.enabled, row.type), row.enabled ? '内容已停用。' : '内容已启用。')">{{ row.enabled ? '停用' : '启用' }}</DropdownMenuItem>
                 <DropdownMenuSeparator /><DropdownMenuItem variant="destructive" @select="requestContentDelete(row)"><Trash2 aria-hidden="true" />删除</DropdownMenuItem>
@@ -657,9 +657,9 @@ onBeforeRouteLeave(() => confirmLeave())
       </template>
     </div>
 
-    <CrudSheet :open="sheetOpen" :mode="sheetMode" :title="sheetKind === 'content' ? `${sheetMode === 'create' ? '新增' : '编辑'}${contentForm.type === 'activity' ? '活动' : '内容'}` : sheetKind === 'banner' ? `${sheetMode === 'create' ? '新增' : '编辑'} Banner` : `${sheetMode === 'create' ? '新增' : '编辑'}高优提示`" :description="sheetKind === 'content' ? '维护内容信息；发布时间由保存后的发布接口处理。' : sheetKind === 'banner' ? '配置首页轮播图及其跳转目标。' : '配置首页高优提示及引用目标。'" :saving="store.isSaving" :dirty="sheetDirty" size="wide" @submit="saveSheet" @request-close="requestSheetClose">
-      <ContentForm v-if="sheetKind === 'content'" ref="contentFormRef" :value="contentForm" :issues="contentIssues" :saving="store.isSaving" @update:value="contentForm = $event" />
-      <BannerForm v-else-if="sheetKind === 'banner'" ref="bannerFormRef" :value="bannerForm" :references="store.selectableReferences" :issues="bannerIssues" :saving="store.isSaving" @update:value="bannerForm = $event" />
+    <CrudSheet :open="sheetOpen" :mode="sheetMode" :title="sheetKind === 'content' ? `${sheetMode === 'create' ? '新增' : '编辑'}${contentForm.type === 'activity' ? '活动' : '内容'}` : sheetKind === 'banner' ? `${sheetMode === 'create' ? '新增' : '编辑'} Banner` : `${sheetMode === 'create' ? '新增' : '编辑'}高优提示`" :description="sheetKind === 'content' ? '维护内容信息；发布时间由保存后的发布接口处理。' : sheetKind === 'banner' ? '配置首页轮播图及其跳转目标。' : '配置首页高优提示及引用目标。'" :saving="sheetSaving" :dirty="sheetDirty" size="wide" @submit="saveSheet" @request-close="requestSheetClose">
+      <ContentForm v-if="sheetKind === 'content'" ref="contentFormRef" :value="contentForm" :issues="contentIssues" :saving="sheetSaving" @update:value="contentForm = $event" @update:uploading="formUploading = $event" />
+      <BannerForm v-else-if="sheetKind === 'banner'" ref="bannerFormRef" :value="bannerForm" :references="store.selectableReferences" :issues="bannerIssues" :saving="sheetSaving" @update:value="bannerForm = $event" @update:uploading="formUploading = $event" />
       <PriorityHintForm v-else ref="hintFormRef" :value="hintForm" :references="store.selectableReferences" :issues="hintIssues" :saving="store.isSaving" @update:value="hintForm = $event" />
     </CrudSheet>
 
