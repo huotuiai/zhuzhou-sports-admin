@@ -151,9 +151,8 @@ export function createContentManagementStore(
     }
 
     async function fetchNews(): Promise<ContentRecord[]> {
-      const types = newsQuery.type === 'all' ? (['news', 'notice'] as const) : [newsQuery.type]
-      const groups = await Promise.all(types.map(type => service.listContents(contentServerQuery(type, newsQuery))))
-      return sortContents([...new Map(groups.flat().map(record => [record.id, record])).values()])
+      const types = newsQuery.type === 'all' ? (['news', 'notice'] as const) : newsQuery.type
+      return service.listContents(contentServerQuery(types, newsQuery))
     }
 
     async function fetchBanners(): Promise<BannerRecord[]> {

@@ -681,7 +681,8 @@ function hintBody(input: PriorityHintWriteInput): ApiHighlightWriteRequest {
 }
 
 function contentQuery(page: number, pageSize: number, query: ContentServerQuery): Record<string, string | number> {
-  const params: Record<string, string | number> = { page, page_size: pageSize, content_type: query.contentType }
+  const contentType = typeof query.contentType === 'string' ? query.contentType : query.contentType.join(',')
+  const params: Record<string, string | number> = { page, page_size: pageSize, content_type: contentType }
   const keyword = normalizeText(query.keyword)
   if (keyword) params.keyword = keyword
   if (query.publishStatus !== 'all') params.publish_status = query.publishStatus

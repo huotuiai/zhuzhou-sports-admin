@@ -71,7 +71,8 @@ class StubContentManagementService implements ContentManagementService {
 
   async listContents(query: ContentServerQuery): Promise<ContentRecord[]> {
     this.contentQueries.push({ ...query })
-    return structuredClone(this.contents.filter(item => item.type === query.contentType))
+    const types = Array.isArray(query.contentType) ? query.contentType : [query.contentType]
+    return structuredClone(this.contents.filter(item => types.includes(item.type)))
   }
 
   async listContentPage(page: number, pageSize: number, query: ContentServerQuery): Promise<ContentPage> {
@@ -240,6 +241,9 @@ describe('content management store', () => {
     expect(store.activityRecords.map(item => item.id)).toEqual(['1'])
     expect(store.newsRecords.map(item => item.id)).toEqual(['2', '3'])
     expect(store.selectableReferences.some(item => item.id === '99')).toBe(true)
+    expect(service.contentQueries.filter(query => Array.isArray(query.contentType))).toEqual([
+      { keyword: '', contentType: ['news', 'notice'], publishStatus: 'all' },
+    ])
     expect(service.referenceReads).toEqual(['activity', 'news', 'notice', 'traffic-control'])
 
     await store.setNewsQuery({ type: 'notice', publishStatus: 'draft', pinned: 'all', enabled: 'disabled', title: '接驳' })

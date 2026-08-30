@@ -189,11 +189,11 @@ describe('content management API service', () => {
       return { list: [apiContent({ id: requestedPage, code: `CT-00${requestedPage}` })], total: 101, page: requestedPage, page_size: 100 } as T
     }
     const service = createContentManagementService(requester)
-    const records = await service.listContents({ keyword: ' 通知 ', contentType: 'news', publishStatus: 'draft' })
+    const records = await service.listContents({ keyword: ' 通知 ', contentType: ['news', 'notice'], publishStatus: 'draft' })
     expect(records.map(item => item.id)).toEqual(['1', '2'])
     expect(configs).toEqual([
-      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 1, page_size: 100, content_type: 'news', keyword: '通知', publish_status: 'draft' } },
-      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 2, page_size: 100, content_type: 'news', keyword: '通知', publish_status: 'draft' } },
+      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 1, page_size: 100, content_type: 'news,notice', keyword: '通知', publish_status: 'draft' } },
+      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 2, page_size: 100, content_type: 'news,notice', keyword: '通知', publish_status: 'draft' } },
     ])
   })
 

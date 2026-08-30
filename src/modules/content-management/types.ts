@@ -168,7 +168,7 @@ export interface ContentExportFile {
 
 export interface ContentServerQuery {
   keyword: string
-  contentType: ContentType
+  contentType: ContentType | readonly ContentType[]
   publishStatus: PublishStatus | 'all'
 }
 
