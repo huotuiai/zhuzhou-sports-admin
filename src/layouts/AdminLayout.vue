@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { TodoItem } from '@/modules/todo/types'
-import { computed, onMounted } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   BellRingIcon,
@@ -50,9 +50,11 @@ async function handleLogout() {
   await router.replace({ name: 'login' })
 }
 
-onMounted(() => {
-  void todoStore.initialize()
-})
+watch(
+  () => route.name,
+  () => void todoStore.refresh(),
+  { immediate: true },
+)
 </script>
 
 <template>

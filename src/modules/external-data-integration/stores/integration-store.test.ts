@@ -122,6 +122,28 @@ describe('external data integration store', () => {
     expect(store.query).toEqual(DEFAULT_INTEGRATION_SOURCE_QUERY)
   })
 
+  it('refreshes the current query and page after the store has initialized', async () => {
+    const service = new StubIntegrationService()
+    service.sourceData = Array.from({ length: 25 }, (_, index) => source({
+      id: String(index + 1),
+      code: `SRC-${String(index + 1).padStart(2, '0')}`,
+      name: `停车源 ${index + 1}`,
+    }))
+    const store = createIntegrationStore(service, 'integration-refresh-test')()
+    await store.initialize()
+    await store.querySources({ keyword: '', sourceType: 'parking' })
+    await store.changePage(2)
+    service.sourceData[20] = { ...service.sourceData[20]!, name: '服务端最新名称' }
+
+    await expect(store.refresh()).resolves.toBe(true)
+    expect(store.sources[0]).toMatchObject({ id: '21', name: '服务端最新名称' })
+    expect(service.listCalls.at(-1)).toEqual({
+      query: { keyword: '', sourceType: 'parking' },
+      page: 2,
+      pageSize: 20,
+    })
+  })
+
   it('loads details, creates, edits and refreshes the current list', async () => {
     const service = new StubIntegrationService()
     const store = createIntegrationStore(service, 'integration-crud-test')()

@@ -95,19 +95,24 @@ export function createRoleManagementStore(
       pageSize.value = result.pageSize
     }
 
-    async function initialize(force = false): Promise<boolean> {
-      if (initialized.value && !force) return true
+    async function refresh(): Promise<boolean> {
       if (initializePromise) return initializePromise
       isLoading.value = true
       error.value = null
+      referencesLoaded.value = false
       initializePromise = Promise.all([
         service.listRoles({ ...query }, page.value, pageSize.value),
         service.listMenus(),
-      ]).then(([rolePage, menuList]) => {
-        roles.value = rolePage.roles
-        total.value = rolePage.total
-        page.value = rolePage.page
-        pageSize.value = rolePage.pageSize
+      ]).then(async ([rolePage, menuList]) => {
+        let currentRolePage = rolePage
+        const validPage = Math.max(1, Math.ceil(rolePage.total / rolePage.pageSize))
+        if (rolePage.page > validPage) {
+          currentRolePage = await service.listRoles({ ...query }, validPage, rolePage.pageSize)
+        }
+        roles.value = currentRolePage.roles
+        total.value = currentRolePage.total
+        page.value = currentRolePage.page
+        pageSize.value = currentRolePage.pageSize
         permissions.value = menuList
         initialized.value = true
         return true
@@ -119,6 +124,11 @@ export function createRoleManagementStore(
         initializePromise = null
       })
       return initializePromise
+    }
+
+    async function initialize(force = false): Promise<boolean> {
+      if (initialized.value && !force) return true
+      return refresh()
     }
 
     async function queryRoles(nextQuery?: RoleQuery): Promise<boolean> {
@@ -341,6 +351,7 @@ export function createRoleManagementStore(
       deletingId,
       error,
       initialize,
+      refresh,
       queryRoles,
       changePage,
       getRole,

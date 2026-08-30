@@ -62,6 +62,7 @@ import {
   DEFAULT_NEWS_QUERY,
   useContentManagementStore,
 } from '@/modules/content-management/stores/content-management-store'
+import { useTodoStore } from '@/modules/todo/stores/todo-store'
 import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -156,6 +157,7 @@ const hintColumns: readonly DataTableColumn<PriorityHintRecord>[] = [
 const route = useRoute()
 const router = useRouter()
 const store = useContentManagementStore()
+const todoStore = useTodoStore()
 const activeTab = computed<ContentManagementTab>(() => {
   const value = String(route.query.tab ?? 'activity') as ContentManagementTab
   return validTabs.includes(value) ? value : 'activity'
@@ -327,6 +329,7 @@ async function saveSheet(): Promise<void> {
       : editingId.value ? await store.updateContent(editingId.value, contentForm.value) : false
     if (!success) return showStoreError('内容保存失败')
     closeSheet()
+    await todoStore.refresh()
     toast.success(sheetMode.value === 'create' ? '内容已新增。' : '内容已更新。')
     return
   }
@@ -360,9 +363,10 @@ function showStoreError(fallback: string): void {
   store.resetError()
 }
 
-async function runAction(operation: Promise<boolean>, successMessage: string): Promise<void> {
-  if (await operation) toast.success(successMessage)
-  else showStoreError('操作失败')
+async function runAction(operation: Promise<boolean>, successMessage: string, refreshTodos = false): Promise<void> {
+  if (!await operation) return showStoreError('操作失败')
+  if (refreshTodos) await todoStore.refresh()
+  toast.success(successMessage)
 }
 
 function requestContentDelete(record: ContentRecord): void {
@@ -379,6 +383,7 @@ async function confirmDelete(): Promise<void> {
       : await store.removePriorityHint(target.record.id)
   if (!success) return showStoreError('删除失败')
   deleteTarget.value = null
+  if (target.kind === 'content') await todoStore.refresh()
   toast.success('记录已删除。')
 }
 
@@ -613,10 +618,10 @@ onBeforeRouteLeave(() => confirmLeave())
             <div class="flex justify-end gap-1">
               <Button variant="ghost" size="lg" class="h-10 px-3" @click="openContentEdit(row)"><PencilLine aria-hidden="true" />编辑</Button>
               <DropdownMenu><DropdownMenuTrigger as-child><Button variant="ghost" size="icon-lg" class="h-10 w-10" :aria-label="`${row.title}更多操作`"><CircleEllipsis aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end" class="w-44"><DropdownMenuLabel>{{ row.code }}</DropdownMenuLabel><DropdownMenuSeparator />
-                <DropdownMenuItem v-if="row.publishStatus === 'draft'" @select="runAction(store.publishContent(row.id, row.type), '内容已发布。')">发布</DropdownMenuItem>
-                <DropdownMenuItem v-else @select="runAction(store.unpublishContent(row.id, row.type), '内容已撤回为草稿。')">撤回为草稿</DropdownMenuItem>
-                <DropdownMenuItem @select="runAction(store.setContentPinned(row.id, !row.pinned, row.type), row.pinned ? '已取消置顶。' : '内容已置顶。')">{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem>
-                <DropdownMenuItem v-if="row.publishStatus === 'published'" @select="runAction(store.setContentEnabled(row.id, !row.enabled, row.type), row.enabled ? '内容已停用。' : '内容已启用。')">{{ row.enabled ? '停用' : '启用' }}</DropdownMenuItem>
+                <DropdownMenuItem v-if="row.publishStatus === 'draft'" @select="runAction(store.publishContent(row.id, row.type), '内容已发布。', true)">发布</DropdownMenuItem>
+                <DropdownMenuItem v-else @select="runAction(store.unpublishContent(row.id, row.type), '内容已撤回为草稿。', true)">撤回为草稿</DropdownMenuItem>
+                <DropdownMenuItem @select="runAction(store.setContentPinned(row.id, !row.pinned, row.type), row.pinned ? '已取消置顶。' : '内容已置顶。', true)">{{ row.pinned ? '取消置顶' : '置顶' }}</DropdownMenuItem>
+                <DropdownMenuItem v-if="row.publishStatus === 'published'" @select="runAction(store.setContentEnabled(row.id, !row.enabled, row.type), row.enabled ? '内容已停用。' : '内容已启用。', true)">{{ row.enabled ? '停用' : '启用' }}</DropdownMenuItem>
                 <DropdownMenuSeparator /><DropdownMenuItem variant="destructive" @select="requestContentDelete(row)"><Trash2 aria-hidden="true" />删除</DropdownMenuItem>
               </DropdownMenuContent></DropdownMenu>
             </div>

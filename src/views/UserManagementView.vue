@@ -44,7 +44,7 @@ const columns: readonly DataTableColumn<SystemUser>[] = [
 
 const store = useUserManagementStore()
 const authStore = useAuthStore()
-const query = ref<UserQuery>({ keyword: '', departmentId: '', roleId: '', status: 'all' })
+const query = ref<UserQuery>({ ...store.query })
 const createOpen = ref(false)
 const createValue = ref<UserCreateInput>({ ...EMPTY_CREATE })
 const createInitial = ref<UserCreateInput>({ ...EMPTY_CREATE })
@@ -212,7 +212,10 @@ function exportUsers(): void {
   toast.success('已导出当前页用户。')
 }
 
-onMounted(async () => { if (!await store.initialize()) showError('用户数据加载失败') })
+onMounted(async () => {
+  if (!await store.refresh()) showError('用户数据加载失败')
+  query.value = { ...store.query }
+})
 </script>
 
 <template>

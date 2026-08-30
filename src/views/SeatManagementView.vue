@@ -268,9 +268,9 @@ function beforeUnload(event: BeforeUnloadEvent): void {
   }
 }
 
-async function load(force = false): Promise<void> {
+async function load(): Promise<void> {
   loadError.value = ''
-  if (!await store.initialize(force)) {
+  if (!await store.refresh()) {
     loadError.value = store.error ?? '座位规划数据加载失败'
     toast.error(loadError.value)
     return
@@ -326,7 +326,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       </QueryPanel>
 
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert">
-        <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load(true)"><RotateCcw aria-hidden="true" />重新加载</Button>
+        <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button>
       </div>
 
       <DataTable :columns="columns" :rows="store.paginatedZones" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '无匹配结果' : '暂无座位分区，请新增分区'" caption="座位分区信息表">

@@ -127,15 +127,17 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
     }
 
     async function loadBundle(): Promise<void> {
-      const [nextFloors, nextGates] = await Promise.all([service.listFloors(), service.listGateOptions()])
+      const [nextFloors, nextGates, nextZones] = await Promise.all([
+        service.listFloors(),
+        service.listGateOptions(),
+        fetchAllZones(),
+      ])
       applyFloors(nextFloors)
-      const nextZones = await fetchAllZones()
       applyZones(nextZones)
       applyTicketGates(nextGates)
     }
 
-    async function initialize(force = false): Promise<boolean> {
-      if (initialized.value && !force) return true
+    async function refresh(): Promise<boolean> {
       if (initializePromise) return initializePromise
       isLoading.value = true
       error.value = null
@@ -153,6 +155,11 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
           initializePromise = null
         })
       return initializePromise
+    }
+
+    async function initialize(force = false): Promise<boolean> {
+      if (initialized.value && !force) return true
+      return refresh()
     }
 
     async function queryZones(nextQuery: SeatPlanningQuery): Promise<boolean> {
@@ -408,6 +415,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       currentPage,
       paginatedZones,
       initialize,
+      refresh,
       queryZones,
       resetQuery,
       setPage,

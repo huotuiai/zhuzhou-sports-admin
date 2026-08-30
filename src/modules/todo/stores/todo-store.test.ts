@@ -41,4 +41,22 @@ describe('todo store and navigation', () => {
     expect(store.visibleItems).toEqual([])
     expect(store.error).toBe('待办接口失败')
   })
+
+  it('refreshes changed counts and deduplicates concurrent route-triggered requests', async () => {
+    let count = 1
+    let calls = 0
+    const useStore = createTodoStore({
+      listTodos: async () => {
+        calls += 1
+        return [{ key: 'content_draft', label: '内容草稿', count, path: '/content?status=draft' }]
+      },
+    }, 'todo-refresh-test')
+    const store = useStore()
+    await store.initialize()
+    count = 4
+
+    await Promise.all([store.refresh(), store.refresh()])
+    expect(store.totalCount).toBe(4)
+    expect(calls).toBe(2)
+  })
 })

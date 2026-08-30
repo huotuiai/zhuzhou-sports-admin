@@ -180,6 +180,28 @@ describe('user management store', () => {
     expect(service.userListCalls.filter(call => call.pageSize === 100).map(call => call.page)).toEqual([1, 2, 3])
   })
 
+  it('refreshes the current page and cross-module references after initialization', async () => {
+    service.users = Array.from({ length: 25 }, (_, index) => user(index + 1))
+    const store = createUserManagementStore(service, 'user-refresh')()
+    await store.initialize()
+    await store.changePage(2)
+    await store.loadDepartmentLeaderCandidates()
+
+    service.users[20] = user(21, { name: '服务端最新用户' })
+    service.users.push(user(26))
+    service.departments.push(department(2, { name: '新增部门' }))
+    service.roles.push(role(2))
+
+    await expect(store.refresh()).resolves.toBe(true)
+    expect(store.users[0]).toMatchObject({ id: '21', name: '服务端最新用户' })
+    expect(store.departments.map(item => item.id)).toEqual(['1', '2'])
+    expect(store.roles.map(item => item.id)).toEqual(['1', '2'])
+    expect(store.page).toBe(2)
+    expect(service.userListCalls.at(-1)).toMatchObject({ page: 2, pageSize: 20 })
+    await expect(store.loadDepartmentLeaderCandidates()).resolves.toBe(true)
+    expect(store.departmentLeaderCandidates).toHaveLength(26)
+  })
+
   it('delegates single-value filters and pagination to the service', async () => {
     service.users = [
       user(1, { name: '场馆负责人', departmentIds: ['10'], roleIds: ['20'] }),

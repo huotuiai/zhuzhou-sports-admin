@@ -80,16 +80,27 @@ export function createOperationLogStore(
       }
     }
 
-    async function initialize(force = false): Promise<boolean> {
-      if (initialized.value && !force) return true
+    async function loadValidPage(nextQuery: OperationLogQuery, nextPage: number): Promise<boolean> {
+      const loaded = await loadPage(nextQuery, nextPage)
+      if (!loaded) return false
+      const validPage = Math.min(page.value, pageCount.value)
+      return validPage === page.value ? true : loadPage(nextQuery, validPage)
+    }
+
+    async function refresh(): Promise<boolean> {
       if (initializePromise) return initializePromise
-      initializePromise = loadPage({ ...query }, page.value).then((loaded) => {
+      initializePromise = loadValidPage({ ...query }, page.value).then((loaded) => {
         if (loaded) initialized.value = true
         return loaded
       }).finally(() => {
         initializePromise = null
       })
       return initializePromise
+    }
+
+    async function initialize(force = false): Promise<boolean> {
+      if (initialized.value && !force) return true
+      return refresh()
     }
 
     async function queryLogs(nextQuery: OperationLogQuery): Promise<boolean> {
@@ -147,6 +158,7 @@ export function createOperationLogStore(
       error,
       queryError,
       initialize,
+      refresh,
       queryLogs,
       resetQuery,
       changePage,

@@ -72,7 +72,7 @@ const columns: readonly DataTableColumn<SystemRole>[] = [
 ]
 
 const store = useRoleManagementStore()
-const queryDraft = ref('')
+const queryDraft = ref(store.query.keyword)
 
 const createOpen = ref(false)
 const createForm = ref<RoleCreateInput>({ ...EMPTY_CREATE, permissionIds: [] })
@@ -298,7 +298,8 @@ function exportRoles(): void {
 }
 
 onMounted(async () => {
-  if (!await store.initialize()) showStoreError('角色数据加载失败')
+  if (!await store.refresh()) showStoreError('角色数据加载失败')
+  queryDraft.value = store.query.keyword
 })
 </script>
 

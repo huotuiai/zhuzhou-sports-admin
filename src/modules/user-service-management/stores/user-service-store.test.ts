@@ -74,6 +74,36 @@ describe('user service store', () => {
     expect(store.processedCount).toBe(5)
   })
 
+  it('refreshes the current page for the same query and resets to page one for a new route query', async () => {
+    let revision = 1
+    let contacts = [contact({ id: '1', name: '旧热线' })]
+    const listFeedbacks = vi.fn(async (query: FeedbackQuery, requestedPage: number, pageSize: number) => {
+      if (pageSize === 1 && query.status === 'pending') return page([], revision === 1 ? 3 : 5, 1, 1)
+      if (pageSize === 1) return page([], revision === 1 ? 8 : 12, 1, 1)
+      return page([feedback({ id: `${revision}-${requestedPage}` })], 41, requestedPage, pageSize)
+    })
+    const store = createUserServiceStore(createService({
+      listFeedbacks,
+      listContacts: async () => contacts,
+    }), 'user-service-refresh-test')()
+    await store.initialize()
+    await store.changePage(2)
+
+    revision = 2
+    contacts = [contact({ id: '2', name: '新热线' })]
+    await expect(store.refresh({ ...DEFAULT_FEEDBACK_QUERY })).resolves.toBe(true)
+    expect(store.feedbacks[0]?.id).toBe('2-2')
+    expect(store.page).toBe(2)
+    expect(store.contacts).toEqual([contact({ id: '2', name: '新热线' })])
+    expect(store.overallTotal).toBe(12)
+    expect(store.pendingCount).toBe(5)
+
+    await expect(store.refresh({ ...DEFAULT_FEEDBACK_QUERY, status: 'pending' })).resolves.toBe(true)
+    expect(store.feedbacks[0]?.id).toBe('2-1')
+    expect(store.page).toBe(1)
+    expect(store.query.status).toBe('pending')
+  })
+
   it('uses server pagination and retains the applied page and query when a request fails', async () => {
     let fail = false
     const listFeedbacks = vi.fn(async (_query: FeedbackQuery, requestedPage: number, pageSize: number) => {

@@ -84,20 +84,25 @@ export function createUserManagementStore(service: UserManagementService, storeI
       pageSize.value = result.pageSize
     }
 
-    async function initialize(force = false): Promise<boolean> {
-      if (initialized.value && !force) return true
+    async function refresh(): Promise<boolean> {
       if (initializePromise) return initializePromise
       isLoading.value = true
       error.value = null
+      leaderCandidatesLoaded.value = false
       initializePromise = Promise.all([
         service.listUsers({ ...query }, page.value, pageSize.value),
         service.listDepartments(),
         fetchAllRoles(),
-      ]).then(([userPage, departmentList, roleList]) => {
-        users.value = userPage.users
-        total.value = userPage.total
-        page.value = userPage.page
-        pageSize.value = userPage.pageSize
+      ]).then(async ([userPage, departmentList, roleList]) => {
+        let currentUserPage = userPage
+        const validPage = Math.max(1, Math.ceil(userPage.total / userPage.pageSize))
+        if (userPage.page > validPage) {
+          currentUserPage = await service.listUsers({ ...query }, validPage, userPage.pageSize)
+        }
+        users.value = currentUserPage.users
+        total.value = currentUserPage.total
+        page.value = currentUserPage.page
+        pageSize.value = currentUserPage.pageSize
         departments.value = departmentList
         roles.value = roleList
         initialized.value = true
@@ -110,6 +115,11 @@ export function createUserManagementStore(service: UserManagementService, storeI
         initializePromise = null
       })
       return initializePromise
+    }
+
+    async function initialize(force = false): Promise<boolean> {
+      if (initialized.value && !force) return true
+      return refresh()
     }
 
     async function queryUsers(nextQuery?: UserQuery): Promise<boolean> {
@@ -321,6 +331,7 @@ export function createUserManagementStore(service: UserManagementService, storeI
       deletingId,
       error,
       initialize,
+      refresh,
       queryUsers,
       changePage,
       getUser,

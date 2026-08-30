@@ -74,6 +74,23 @@ describe('operation log store', () => {
     expect(service.listCalls.at(-1)).toMatchObject({ page: 3, pageSize: 20 })
   })
 
+  it('refreshes the current filtered page instead of reusing initialized data', async () => {
+    service.logs = Array.from({ length: 45 }, (_, index) => log(index + 1))
+    const store = createOperationLogStore(service, 'audit-refresh')()
+    await store.initialize()
+    await store.queryLogs({ ...DEFAULT_OPERATION_LOG_QUERY, module: 'user' })
+    await store.changePage(2)
+    service.logs[20] = log(21, { operatorName: '最新操作人' })
+
+    await expect(store.refresh()).resolves.toBe(true)
+    expect(store.logs[0]).toMatchObject({ id: '21', operatorName: '最新操作人' })
+    expect(service.listCalls.at(-1)).toMatchObject({
+      query: { ...DEFAULT_OPERATION_LOG_QUERY, module: 'user' },
+      page: 2,
+      pageSize: 20,
+    })
+  })
+
   it('normalizes and delegates every filter, then resets through the API', async () => {
     service.logs = [
       log(1, { operatorName: '管理员', module: 'control', action: 'publish', result: 'failure' }),

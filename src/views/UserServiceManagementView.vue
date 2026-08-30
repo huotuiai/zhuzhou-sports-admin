@@ -30,7 +30,7 @@ import {
   X,
 } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
@@ -333,6 +333,11 @@ function routeFeedbackQuery(): FeedbackQuery {
   }
 }
 
+function hasRouteFeedbackQuery(): boolean {
+  return ['type', 'feedback_type', 'status', 'handle_status', 'from', 'to']
+    .some(key => route.query[key] !== undefined)
+}
+
 async function syncRouteQuery(nextQuery: FeedbackQuery): Promise<void> {
   const queryParams = { ...route.query }
   delete queryParams.feedback_type
@@ -352,20 +357,41 @@ function selectTab(tab: ServiceTab): void {
   void router.replace({ query: { ...route.query, tab } })
 }
 
-async function load(force = false): Promise<void> {
+async function load(nextQuery: FeedbackQuery = queryDraft.value): Promise<void> {
   loadError.value = ''
-  if (!await store.initialize({ ...queryDraft.value }, force)) {
+  if (!await store.refresh({ ...nextQuery })) {
     loadError.value = store.error ?? '用户服务数据加载失败'
     toast.error(loadError.value)
   }
+  queryDraft.value = { ...store.query }
 }
 
+let initialRouteLoaded = false
 watch(
-  () => [route.query.tab, route.query.status, route.query.handle_status] as const,
+  () => [
+    route.query.tab,
+    route.query.type,
+    route.query.feedback_type,
+    route.query.status,
+    route.query.handle_status,
+    route.query.from,
+    route.query.to,
+  ] as const,
   async () => {
     activeTab.value = route.query.tab === 'contact' ? 'contact' : 'feedback'
-    const nextQuery = routeFeedbackQuery()
+    const routeHasQuery = hasRouteFeedbackQuery()
+    const nextQuery = !initialRouteLoaded && !routeHasQuery
+      ? { ...store.query }
+      : routeFeedbackQuery()
     queryDraft.value = nextQuery
+    if (!initialRouteLoaded) {
+      initialRouteLoaded = true
+      await load(nextQuery)
+      if (!routeHasQuery && JSON.stringify(store.query) !== JSON.stringify(DEFAULT_FEEDBACK_QUERY)) {
+        await syncRouteQuery(store.query)
+      }
+      return
+    }
     if (store.initialized && JSON.stringify(nextQuery) !== JSON.stringify(store.query)) {
       if (!await store.queryFeedbacks(nextQuery)) toast.error(store.error ?? store.queryError ?? '反馈筛选失败')
     }
@@ -373,9 +399,6 @@ watch(
   { immediate: true },
 )
 
-onMounted(() => {
-  void load()
-})
 onBeforeRouteLeave(() => confirmLeave())
 useEventListener(window, 'beforeunload', beforeUnload)
 </script>
@@ -437,7 +460,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert">
         <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" />
         <p class="flex-1 text-sm text-destructive">{{ loadError }}</p>
-        <Button variant="outline" class="h-11" @click="load(true)"><RotateCcw aria-hidden="true" />重新加载</Button>
+        <Button variant="outline" class="h-11" @click="load()"><RotateCcw aria-hidden="true" />重新加载</Button>
       </div>
 
       <template v-if="activeTab === 'feedback'">

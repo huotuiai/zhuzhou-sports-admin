@@ -43,6 +43,7 @@ import {
   INTEGRATION_LOG_PAGE_SIZE,
   useIntegrationStore,
 } from '@/modules/external-data-integration/stores/integration-store'
+import { useTodoStore } from '@/modules/todo/stores/todo-store'
 import {
   INTEGRATION_SOURCE_TYPE_LABELS,
   integrationSourceTypeLabel,
@@ -62,7 +63,8 @@ const columns: readonly DataTableColumn<IntegrationSource>[] = [
 ]
 
 const store = useIntegrationStore()
-const queryDraft = ref<IntegrationSourceQuery>({ ...DEFAULT_INTEGRATION_SOURCE_QUERY })
+const todoStore = useTodoStore()
+const queryDraft = ref<IntegrationSourceQuery>({ ...store.query })
 const unavailableSyncStatus = ref('all')
 const formOpen = ref(false)
 const formMode = ref<CrudDialogMode>('create')
@@ -132,8 +134,9 @@ function syncStatusClass(source: IntegrationSource): string {
   return 'border-border bg-muted/60 text-muted-foreground'
 }
 
-async function load(force = false): Promise<void> {
-  if (!await store.initialize(force)) toast.error(store.error ?? '对接源加载失败。')
+async function load(): Promise<void> {
+  if (!await store.refresh()) toast.error(store.error ?? '对接源加载失败。')
+  queryDraft.value = { ...store.query }
 }
 
 async function applyQuery(): Promise<void> {
@@ -212,6 +215,7 @@ async function saveForm(): Promise<void> {
     return
   }
   closeForm()
+  await todoStore.refresh()
   toast.success(created ? '对接源已新增。' : '对接源已更新。')
 }
 
@@ -221,6 +225,7 @@ async function toggleSource(source: IntegrationSource): Promise<void> {
     toast.error(store.mutationError ?? '启停状态更新失败。')
     return
   }
+  await todoStore.refresh()
   toast.success(`${updated.code} 已${updated.enabled ? '启用' : '停用'}。`)
 }
 
@@ -230,6 +235,7 @@ async function syncSource(source: IntegrationSource): Promise<void> {
     toast.error(store.mutationError ?? '同步失败，可重试或查看同步日志。')
     return
   }
+  await todoStore.refresh()
   if (result.result === 'fail') {
     toast.error(result.disabled ? `${result.summary}；对接源已自动停用。` : result.summary)
     return
@@ -316,7 +322,7 @@ onMounted(() => {
       <div v-if="store.error && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4" role="alert">
         <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" />
         <p class="min-w-0 flex-1 text-sm text-destructive">{{ store.error }}</p>
-        <Button variant="outline" :disabled="store.isLoading" @click="load(true)"><RefreshCw aria-hidden="true" />重新加载</Button>
+        <Button variant="outline" :disabled="store.isLoading" @click="load"><RefreshCw aria-hidden="true" />重新加载</Button>
       </div>
 
       <DataTable

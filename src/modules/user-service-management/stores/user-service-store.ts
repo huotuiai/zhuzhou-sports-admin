@@ -67,6 +67,13 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       pageSize.value = result.pageSize
     }
 
+    function sameFeedbackQuery(first: FeedbackQuery, second: FeedbackQuery): boolean {
+      return first.type === second.type
+        && first.status === second.status
+        && first.startDate === second.startDate
+        && first.endDate === second.endDate
+    }
+
     async function loadFeedbackPage(nextQuery: FeedbackQuery, nextPage: number): Promise<boolean> {
       isFeedbackLoading.value = true
       error.value = null
@@ -81,6 +88,13 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       finally {
         isFeedbackLoading.value = false
       }
+    }
+
+    async function loadValidFeedbackPage(nextQuery: FeedbackQuery, nextPage: number): Promise<boolean> {
+      const loaded = await loadFeedbackPage(nextQuery, nextPage)
+      if (!loaded) return false
+      const validPage = Math.min(page.value, pageCount.value)
+      return validPage === page.value ? true : loadFeedbackPage(nextQuery, validPage)
     }
 
     async function refreshOverview(): Promise<boolean> {
@@ -114,18 +128,18 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       }
     }
 
-    async function initialize(initialQuery: FeedbackQuery = { ...query }, force = false): Promise<boolean> {
-      if (initialized.value && !force) return true
+    async function refresh(nextQuery: FeedbackQuery = { ...query }): Promise<boolean> {
       if (initializePromise) return initializePromise
-      const validation = validateFeedbackQuery(initialQuery)
+      const validation = validateFeedbackQuery(nextQuery)
       queryError.value = validation
       if (validation) return false
+      const targetPage = sameFeedbackQuery(nextQuery, query) ? page.value : 1
       initializePromise = Promise.all([
-        loadFeedbackPage(initialQuery, 1),
+        loadValidFeedbackPage(nextQuery, targetPage),
         loadContacts(),
         refreshOverview(),
       ]).then(([feedbackLoaded, contactsLoaded, overviewLoaded]) => {
-        if (feedbackLoaded) Object.assign(query, initialQuery)
+        if (feedbackLoaded) Object.assign(query, nextQuery)
         if (!overviewLoaded && !error.value) error.value = '反馈统计加载失败，请稍后重试'
         initialized.value = feedbackLoaded && contactsLoaded && overviewLoaded
         return initialized.value
@@ -133,6 +147,11 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
         initializePromise = null
       })
       return initializePromise
+    }
+
+    async function initialize(initialQuery: FeedbackQuery = { ...query }, force = false): Promise<boolean> {
+      if (initialized.value && !force) return true
+      return refresh(initialQuery)
     }
 
     async function queryFeedbacks(nextQuery: FeedbackQuery): Promise<boolean> {
@@ -315,6 +334,7 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       error,
       queryError,
       initialize,
+      refresh,
       queryFeedbacks,
       resetQuery,
       changePage,

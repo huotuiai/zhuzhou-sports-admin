@@ -45,7 +45,7 @@ const columns: readonly DataTableColumn<OperationLog>[] = [
 ]
 
 const store = useOperationLogStore()
-const queryDraft = ref<OperationLogQuery>({ ...DEFAULT_OPERATION_LOG_QUERY })
+const queryDraft = ref<OperationLogQuery>({ ...store.query })
 const detailTarget = ref<OperationLog | null>(null)
 const hasActiveQuery = computed(() => Object.entries(DEFAULT_OPERATION_LOG_QUERY)
   .some(([key, value]) => store.query[key as keyof OperationLogQuery] !== value))
@@ -112,8 +112,9 @@ async function exportCurrent(): Promise<void> {
   toast.success('操作日志导出已开始。')
 }
 
-async function load(force = false): Promise<void> {
-  if (!await store.initialize(force)) toast.error(store.error ?? '操作日志加载失败')
+async function load(): Promise<void> {
+  if (!await store.refresh()) toast.error(store.error ?? '操作日志加载失败')
+  queryDraft.value = { ...store.query }
 }
 
 async function changePage(page: number): Promise<void> {
@@ -211,7 +212,7 @@ onMounted(() => {
       <div v-if="store.error && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert">
         <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" />
         <p class="flex-1 text-sm text-destructive">{{ store.error }}</p>
-        <Button variant="outline" size="lg" class="h-11" @click="load(true)"><RefreshCw aria-hidden="true" />重新加载</Button>
+        <Button variant="outline" size="lg" class="h-11" @click="load"><RefreshCw aria-hidden="true" />重新加载</Button>
       </div>
 
       <DataTable

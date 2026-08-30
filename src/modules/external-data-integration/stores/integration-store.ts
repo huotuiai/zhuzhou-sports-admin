@@ -101,9 +101,16 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       }
     }
 
+    async function refresh(): Promise<boolean> {
+      const loaded = await loadSources(page.value, pageSize.value)
+      if (!loaded) return false
+      const validPage = Math.max(1, Math.ceil(total.value / pageSize.value))
+      return page.value <= validPage ? true : loadSources(validPage, pageSize.value)
+    }
+
     async function initialize(force = false): Promise<boolean> {
       if (isInitialized.value && !force) return true
-      return loadSources(1, pageSize.value)
+      return force ? refresh() : loadSources(1, pageSize.value)
     }
 
     async function querySources(nextQuery: IntegrationSourceQuery): Promise<boolean> {
@@ -317,6 +324,7 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       mutationError,
       logsError,
       initialize,
+      refresh,
       loadSources,
       querySources,
       resetQuery,

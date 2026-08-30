@@ -56,6 +56,7 @@ class FakeService implements SeatPlanningService {
   readonly updateZoneInputs: Array<{ id: string, input: SeatZoneWriteInput }> = []
   readonly detailCalls: string[] = []
   failNextZoneList = false
+  gateOptions = gates.map(item => ({ ...item }))
   private nextZoneId = 1000
   private nextFloorId = 10
   private floors: SeatFloor[] = [
@@ -155,7 +156,7 @@ class FakeService implements SeatPlanningService {
   }
 
   async listGateOptions(): Promise<SeatGateOption[]> {
-    return gates.map(item => ({ ...item }))
+    return this.gateOptions.map(item => ({ ...item }))
   }
 }
 
@@ -197,6 +198,32 @@ describe('seat planning store', () => {
     store.setPageSize(50)
     expect(store.pageSize).toBe(50)
     expect(store.currentPage).toBe(1)
+  })
+
+  it('refreshes changed gate options on re-entry while preserving filters and the current page', async () => {
+    const service = new FakeService()
+    const useStore = createSeatPlanningStore(service, `seat-refresh-${Math.random()}`)
+    const store = useStore()
+    await store.initialize()
+    await store.queryZones(query({ keyword: '看台', gateIds: ['gate-1'] }))
+    store.setPage(2)
+
+    service.gateOptions = [
+      { ...service.gateOptions[0]!, openStatus: 'closed', matchOpen: false },
+      ...service.gateOptions.slice(1),
+      { id: 'gate-3', code: 'G-03', name: '北检票口', openStatus: 'open', enabled: true, matchOpen: true },
+    ]
+    service.failNextZoneList = true
+    expect(await store.refresh()).toBe(false)
+    expect(store.ticketGates).toEqual(gates)
+
+    expect(await store.refresh()).toBe(true)
+    expect(store.ticketGates.map(item => item.id)).toEqual(['gate-1', 'gate-2', 'gate-3'])
+    expect(store.gateById.get('gate-1')).toMatchObject({ openStatus: 'closed', matchOpen: false })
+    expect(store.query).toEqual(query({ keyword: '看台', gateIds: ['gate-1'] }))
+    expect(store.page).toBe(2)
+    expect(service.listZoneCalls).toHaveLength(7)
+    expect(service.listZoneCalls.slice(-3)).toEqual([[1, 100], [1, 100], [2, 100]])
   })
 
   it('uses detail and CRUD APIs while preserving immutable codes and authoritative floor counts', async () => {

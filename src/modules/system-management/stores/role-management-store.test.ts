@@ -177,6 +177,23 @@ describe('role management store', () => {
     expect(service.listCalls.at(-1)).toMatchObject({ query: { keyword: '角色 25' }, page: 1, pageSize: 20 })
   })
 
+  it('refreshes the current page and invalidates cached role references', async () => {
+    service.roles = Array.from({ length: 25 }, (_, index) => role(index + 1))
+    const store = createRoleManagementStore(service, usersService, 'role-refresh')()
+    await store.initialize()
+    await store.changePage(2)
+    await store.loadRoleReferences()
+    expect(store.referencesLoaded).toBe(true)
+
+    service.roles[20] = role(21, { name: '服务端最新角色', userCount: 8 })
+    await expect(store.refresh()).resolves.toBe(true)
+
+    expect(store.roles[0]).toMatchObject({ id: '21', name: '服务端最新角色', userCount: 8 })
+    expect(store.page).toBe(2)
+    expect(store.referencesLoaded).toBe(false)
+    expect(service.listCalls.at(-1)).toMatchObject({ query: { keyword: '' }, page: 2, pageSize: 20 })
+  })
+
   it('loads every reference page and refreshes the current page after CRUD', async () => {
     service.roles = Array.from({ length: 205 }, (_, index) => role(index + 1))
     const store = createRoleManagementStore(service, usersService, 'role-references')()
