@@ -128,6 +128,10 @@ async function changePage(page: number): Promise<void> {
   if (!await store.changePage(page)) showStoreError('角色列表加载失败')
 }
 
+async function changePageSize(pageSize: number): Promise<void> {
+  if (!await store.changePageSize(pageSize)) showStoreError('角色列表加载失败')
+}
+
 function userCount(role: SystemRole): number {
   return role.userCount ?? 0
 }
@@ -381,10 +385,11 @@ onMounted(async () => {
       <PaginationBar
         :page="store.page"
         :page-size="store.pageSize"
-        :page-sizes="[20]"
+        :page-sizes="[20, 50, 100]"
         :total="store.total"
         :disabled="store.isLoading"
         @update:page="changePage"
+        @update:page-size="changePageSize"
       />
     </div>
 

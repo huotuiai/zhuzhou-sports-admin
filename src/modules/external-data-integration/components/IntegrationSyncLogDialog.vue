@@ -26,6 +26,7 @@ const emit = defineEmits<{
   'update:query': [query: IntegrationSyncLogQuery]
   query: []
   page: [page: number]
+  'page-size': [pageSize: number]
   retry: []
 }>()
 
@@ -114,7 +115,7 @@ function patchResult(value: unknown): void {
           <template #cell-durationMs="{ row }"><span class="whitespace-nowrap tabular-nums text-muted-foreground">{{ formatDuration(row.durationMs) }}</span></template>
         </DataTable>
 
-        <PaginationBar v-if="total > 0" :page="page" :page-size="pageSize" :page-sizes="[20]" :total="total" :disabled="loading" @update:page="emit('page', $event)" />
+        <PaginationBar v-if="total > 0" :page="page" :page-size="pageSize" :page-sizes="[20, 50, 100]" :total="total" :disabled="loading" @update:page="emit('page', $event)" @update:page-size="emit('page-size', $event)" />
       </div>
     </DialogContent>
   </Dialog>

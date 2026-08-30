@@ -21,6 +21,7 @@ defineProps<{
 const emit = defineEmits<{
   'update:open': [open: boolean]
   'update:page': [page: number]
+  'update:pageSize': [pageSize: number]
   retry: []
 }>()
 
@@ -91,10 +92,11 @@ const columns: readonly DataTableColumn<DashboardDistributionDetail>[] = [
             class="mt-3"
             :page="detail.page"
             :page-size="detail.pageSize"
-            :page-sizes="[20]"
+            :page-sizes="[20, 50, 100]"
             :total="detail.total"
             :disabled="loading"
             @update:page="emit('update:page', $event)"
+            @update:page-size="emit('update:pageSize', $event)"
           />
         </template>
       </div>

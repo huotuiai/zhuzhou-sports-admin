@@ -26,7 +26,6 @@ import { useAuthStore } from '@/stores/auth'
 interface FormHandle { validateAndFocus(): boolean }
 type DiscardAction = 'create-close' | 'edit-close' | 'switch-basic' | 'switch-password'
 
-const PAGE_SIZE = 20
 const ALL_FILTER_VALUE = '__all__'
 const EMPTY_CREATE: UserCreateInput = { username: '', name: '', phone: '', departmentIds: [], roleIds: [], password: '', confirmPassword: '' }
 const EMPTY_PASSWORD: UserPasswordResetInput = { password: '', confirmPassword: '' }
@@ -96,6 +95,7 @@ async function resetQuery(): Promise<void> {
   await applyQuery()
 }
 async function changePage(value: number): Promise<void> { if (!await store.changePage(value)) showError('用户分页加载失败') }
+async function changePageSize(value: number): Promise<void> { if (!await store.changePageSize(value)) showError('用户分页加载失败') }
 function isCurrentUser(user: SystemUser): boolean { return user.id === authStore.user?.id }
 function canManageUser(user: SystemUser): boolean { return Boolean(authStore.user?.isSuper) || !user.builtIn }
 function isStatusProtected(user: SystemUser): boolean { return user.builtIn || isCurrentUser(user) }
@@ -263,7 +263,7 @@ onMounted(async () => {
           </div>
         </template>
       </DataTable>
-      <PaginationBar :page="store.page" :page-size="PAGE_SIZE" :page-sizes="[PAGE_SIZE]" :total="store.total" :disabled="store.isLoading" @update:page="changePage" />
+      <PaginationBar :page="store.page" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.total" :disabled="store.isLoading" @update:page="changePage" @update:page-size="changePageSize" />
     </div>
 
     <CrudDialog :open="createOpen" mode="create" title="新增用户" description="创建账号并配置所属部门与绑定角色。" size="wide" :saving="store.isSaving" :dirty="createDirty" @submit="saveCreate" @request-close="requestCreateClose">

@@ -121,6 +121,10 @@ async function changePage(page: number): Promise<void> {
   if (!await store.changePage(page)) toast.error(store.error ?? '操作日志分页加载失败')
 }
 
+async function changePageSize(pageSize: number): Promise<void> {
+  if (!await store.changePageSize(pageSize)) toast.error(store.error ?? '操作日志分页加载失败')
+}
+
 onMounted(() => {
   void load()
 })
@@ -272,10 +276,11 @@ onMounted(() => {
       <PaginationBar
         :page="store.page"
         :page-size="store.pageSize"
-        :page-sizes="[20]"
+        :page-sizes="[20, 50, 100]"
         :total="store.total"
         :disabled="store.isLoading"
         @update:page="changePage"
+        @update:page-size="changePageSize"
       />
     </div>
 

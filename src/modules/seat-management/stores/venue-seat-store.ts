@@ -23,7 +23,6 @@ import {
 } from '../services/venue-seat-service'
 
 const PAGE_SIZE = 20
-const SERVER_PAGE_SIZE = 100
 
 export const DEFAULT_SEAT_PLANNING_QUERY: Readonly<SeatPlanningQuery> = {
   keyword: '',
@@ -101,11 +100,12 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
     })
 
     async function fetchAllZones(): Promise<SeatZone[]> {
-      const first = await service.listZones(1, SERVER_PAGE_SIZE)
+      const requestPageSize = Math.max(1, pageSize.value)
+      const first = await service.listZones(1, requestPageSize)
       const records = [...first.zones]
       const pages = Math.ceil(first.total / Math.max(1, first.pageSize))
       for (let nextPage = 2; nextPage <= pages; nextPage += 1) {
-        const result = await service.listZones(nextPage, SERVER_PAGE_SIZE)
+        const result = await service.listZones(nextPage, requestPageSize)
         records.push(...result.zones)
       }
       const unique = new Map(records.map(item => [item.id, item]))
@@ -188,10 +188,24 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
     }
 
-    function setPageSize(value: number): void {
-      if (![20, 50, 100].includes(value)) return
-      pageSize.value = value
+    async function setPageSize(value: number): Promise<boolean> {
+      const next = Math.trunc(Number(value))
+      if (!Number.isInteger(next) || next <= 0) return false
+      pageSize.value = next
       page.value = 1
+      isLoading.value = true
+      error.value = null
+      try {
+        applyZones(await fetchAllZones())
+        return true
+      }
+      catch (cause) {
+        error.value = message(cause)
+        return false
+      }
+      finally {
+        isLoading.value = false
+      }
     }
 
     function validateFloor(input: SeatFloorWriteInput): SeatFloorValidationResult {

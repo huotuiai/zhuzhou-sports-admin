@@ -133,18 +133,20 @@ describe('traffic control API service', () => {
     const configs: SignedRequestConfig[] = []
     const requester = async <T>(config: SignedRequestConfig): Promise<T> => {
       configs.push(config)
-      const requestedPage = Number((config.params as Record<string, unknown>).page)
+      const params = config.params as Record<string, unknown>
+      const requestedPage = Number(params.page)
+      const requestedPageSize = Number(params.page_size)
       return page(
         [apiControl({ id: requestedPage, code: `GZ-00${requestedPage}`, control_type: 'limit' })],
-        { total: 101, page: requestedPage, page_size: 100 },
+        { total: 21, page: requestedPage, page_size: requestedPageSize },
       ) as T
     }
     const service = createTrafficControlService(requester)
-    const records = await service.list({ keyword: ' 东门 ', type: 'restriction', publishStatus: 'draft' })
+    const records = await service.list({ keyword: ' 东门 ', type: 'restriction', publishStatus: 'draft' }, 20)
     expect(records.map(record => record.id)).toEqual(['1', '2'])
     expect(configs).toEqual([
-      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 1, page_size: 100, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
-      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 2, page_size: 100, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
+      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 1, page_size: 20, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
+      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 2, page_size: 20, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
     ])
   })
 

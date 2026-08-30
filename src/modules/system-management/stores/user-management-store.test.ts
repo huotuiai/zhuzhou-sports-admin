@@ -178,6 +178,12 @@ describe('user management store', () => {
     await expect(store.loadDepartmentLeaderCandidates()).resolves.toBe(true)
     expect(store.departmentLeaderCandidates).toHaveLength(205)
     expect(service.userListCalls.filter(call => call.pageSize === 100).map(call => call.page)).toEqual([1, 2, 3])
+
+    await expect(store.changePageSize(50)).resolves.toBe(true)
+    expect(store.page).toBe(1)
+    expect(store.pageSize).toBe(50)
+    expect(store.users).toHaveLength(50)
+    expect(service.userListCalls.at(-1)).toMatchObject({ page: 1, pageSize: 50 })
   })
 
   it('refreshes the current page and cross-module references after initialization', async () => {

@@ -53,6 +53,7 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
     const logs = ref<IntegrationSyncLog[]>([])
     const logTotal = ref(0)
     const logPage = ref(1)
+    const logPageSize = ref(INTEGRATION_LOG_PAGE_SIZE)
     const logQuery = ref<IntegrationSyncLogQuery>({ ...DEFAULT_INTEGRATION_LOG_QUERY })
     const logOpen = ref(false)
     const isInitialized = ref(false)
@@ -253,16 +254,17 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       }
     }
 
-    async function loadLogs(targetPage = logPage.value): Promise<boolean> {
+    async function loadLogs(targetPage = logPage.value, targetPageSize = logPageSize.value): Promise<boolean> {
       const request = ++logRequest
       isLogsLoading.value = true
       logsError.value = null
       try {
-        const result = await service.listSyncLogs(logQuery.value, targetPage, INTEGRATION_LOG_PAGE_SIZE)
+        const result = await service.listSyncLogs(logQuery.value, targetPage, targetPageSize)
         if (request !== logRequest) return false
         logs.value = result.items
         logTotal.value = result.total
         logPage.value = result.page
+        logPageSize.value = result.pageSize
         return true
       }
       catch (cause) {
@@ -292,7 +294,12 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
     }
 
     async function changeLogPage(nextPage: number): Promise<boolean> {
-      return loadLogs(nextPage)
+      return loadLogs(nextPage, logPageSize.value)
+    }
+
+    async function changeLogPageSize(nextPageSize: number): Promise<boolean> {
+      if (!Number.isInteger(nextPageSize) || nextPageSize <= 0) return false
+      return loadLogs(1, nextPageSize)
     }
 
     function sourceLabel(sourceId: string): string {
@@ -310,6 +317,7 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       logs,
       logTotal,
       logPage,
+      logPageSize,
       logQuery,
       logOpen,
       isInitialized,
@@ -339,6 +347,7 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       closeLogs,
       queryLogs,
       changeLogPage,
+      changeLogPageSize,
       loadLogs,
       sourceLabel,
     }

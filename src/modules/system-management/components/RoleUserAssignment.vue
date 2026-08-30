@@ -8,7 +8,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { departmentNamesForUser } from '../lib/rbac'
 
-const PAGE_SIZE = 20
+const PAGE_SIZES = [20, 50, 100] as const
+const PAGE_SIZE = PAGE_SIZES[0]
 
 const props = withDefaults(defineProps<{
   users: readonly SystemUser[]
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 
 const keyword = ref('')
 const page = ref(1)
+const pageSize = ref<number>(PAGE_SIZE)
 const selectedSet = computed(() => new Set(props.modelValue))
 const protectedSet = computed(() => new Set(props.protectedUserIds))
 const boundUsers = computed(() => props.users.filter((user) => selectedSet.value.has(user.id)))
@@ -38,9 +40,15 @@ const candidates = computed(() => {
     return [user.name, user.username, user.phone, ...departmentNamesForUser(user, props.departments)].join(' ').normalize('NFKC').toLocaleLowerCase('zh-CN').includes(query)
   })
 })
-const paginatedCandidates = computed(() => candidates.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+const paginatedCandidates = computed(() => candidates.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 
 watch([keyword, () => props.modelValue], () => { page.value = 1 })
+
+function setPageSize(value: number): void {
+  if (!PAGE_SIZES.includes(value as typeof PAGE_SIZES[number])) return
+  pageSize.value = value
+  page.value = 1
+}
 
 function addUser(userId: string, checked: boolean | 'indeterminate'): void {
   if (checked !== true || props.disabled) return
@@ -117,14 +125,15 @@ function removeUser(userId: string): void {
         </div>
       </div>
       <PaginationBar
-        v-if="candidates.length > PAGE_SIZE"
+        v-if="candidates.length > 0"
         class="mt-3"
         :page="page"
-        :page-size="PAGE_SIZE"
-        :page-sizes="[PAGE_SIZE]"
+        :page-size="pageSize"
+        :page-sizes="PAGE_SIZES"
         :total="candidates.length"
         :disabled="disabled"
         @update:page="page = $event"
+        @update:page-size="setPageSize"
       />
     </section>
   </div>

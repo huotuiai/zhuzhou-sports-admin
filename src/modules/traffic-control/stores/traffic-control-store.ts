@@ -14,6 +14,7 @@ import { sortTrafficControls, trafficControlService, validateTrafficControlInput
 
 const DEFAULT_QUERY: TrafficControlQuery = { keyword: '', type: 'all', publishStatus: 'all', timeStatus: 'all', dateStart: '', dateEnd: '' }
 const PAGE_SIZE = 20
+const MAP_PAGE_SIZE = 100
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
@@ -52,6 +53,7 @@ function includes(source: string, keyword: string): boolean {
 export function createTrafficControlStore(service: TrafficControlService, now: () => Date = () => new Date(), storeId = 'traffic-control') {
   return defineStore(storeId, () => {
     const records = ref<TrafficControl[]>([])
+    const mapRecords = ref<TrafficControl[]>([])
     const query = reactive<TrafficControlQuery>({ ...DEFAULT_QUERY })
     const page = ref(1)
     const pageSize = ref(PAGE_SIZE)
@@ -63,11 +65,11 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
     const error = ref<string | null>(null)
     const clock = ref(now().getTime())
 
-    const filteredRecords = computed(() => {
+    function filterRecords(source: readonly TrafficControl[]): TrafficControl[] {
       const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
       const rangeStart = query.dateStart ? new Date(query.dateStart + 'T00:00:00').getTime() : Number.NEGATIVE_INFINITY
       const rangeEnd = query.dateEnd ? new Date(query.dateEnd + 'T23:59:59.999').getTime() : Number.POSITIVE_INFINITY
-      return sortTrafficControls(records.value.filter((item) => {
+      return sortTrafficControls(source.filter((item) => {
         if (keyword && ![item.code, item.title, item.areaName].some(value => includes(value, keyword))) return false
         if (query.type !== 'all' && item.type !== query.type) return false
         if (query.publishStatus !== 'all' && item.publishStatus !== query.publishStatus) return false
@@ -75,7 +77,10 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
         if (Date.parse(item.startAt) > rangeEnd || Date.parse(item.endAt) < rangeStart) return false
         return true
       }))
-    })
+    }
+
+    const filteredRecords = computed(() => filterRecords(records.value))
+    const filteredMapRecords = computed(() => filterRecords(mapRecords.value))
     const total = computed(() => filteredRecords.value.length)
     const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
     const currentPage = computed(() => Math.min(Math.max(page.value, 1), pageCount.value))
@@ -88,8 +93,22 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       isLoading.value = true
       error.value = null
       try {
-        records.value = await service.list(serverQuery(query))
+        records.value = await service.list(serverQuery(query), pageSize.value)
         page.value = Math.min(page.value, pageCount.value)
+        return true
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return false
+      }
+      finally { isLoading.value = false }
+    }
+
+    async function loadMap(): Promise<boolean> {
+      isLoading.value = true
+      error.value = null
+      try {
+        mapRecords.value = await service.list(serverQuery(query), MAP_PAGE_SIZE)
         return true
       }
       catch (cause) {
@@ -115,11 +134,12 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
     }
 
-    function setPageSize(value: number): void {
-      if (Number.isInteger(value) && value > 0) {
-        pageSize.value = value
-        page.value = 1
-      }
+    async function setPageSize(value: number): Promise<boolean> {
+      const next = Math.trunc(Number(value))
+      if (!Number.isInteger(next) || next <= 0) return false
+      pageSize.value = next
+      page.value = 1
+      return load()
     }
 
     function validate(input: TrafficControlWriteInput, mode: 'create' | 'edit'): TrafficControlValidationResult {
@@ -250,6 +270,7 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
 
     return {
       records,
+      mapRecords: filteredMapRecords,
       query,
       page,
       pageSize,
@@ -270,6 +291,7 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       setPageSize,
       validate,
       load,
+      loadMap,
       get,
       create,
       update,

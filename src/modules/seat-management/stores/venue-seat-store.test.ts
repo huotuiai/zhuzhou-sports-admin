@@ -180,7 +180,7 @@ describe('seat planning store', () => {
     const store = useStore()
 
     expect(await store.initialize()).toBe(true)
-    expect(service.listZoneCalls).toEqual([[1, 100], [2, 100]])
+    expect(service.listZoneCalls).toEqual(Array.from({ length: 7 }, (_, index) => [index + 1, 20]))
     expect(store.zones).toHaveLength(125)
     expect(store.zones[0]?.id).toBe('zone-1')
     expect(store.total).toBe(125)
@@ -195,9 +195,10 @@ describe('seat planning store', () => {
       item.name.includes('东看台') && item.floorId === 'floor-1' && item.status === 'enabled',
     )).toBe(true)
 
-    store.setPageSize(50)
+    expect(await store.setPageSize(50)).toBe(true)
     expect(store.pageSize).toBe(50)
     expect(store.currentPage).toBe(1)
+    expect(service.listZoneCalls.slice(-3)).toEqual([[1, 50], [2, 50], [3, 50]])
   })
 
   it('refreshes changed gate options on re-entry while preserving filters and the current page', async () => {
@@ -222,8 +223,7 @@ describe('seat planning store', () => {
     expect(store.gateById.get('gate-1')).toMatchObject({ openStatus: 'closed', matchOpen: false })
     expect(store.query).toEqual(query({ keyword: '看台', gateIds: ['gate-1'] }))
     expect(store.page).toBe(2)
-    expect(service.listZoneCalls).toHaveLength(7)
-    expect(service.listZoneCalls.slice(-3)).toEqual([[1, 100], [1, 100], [2, 100]])
+    expect(service.listZoneCalls.slice(-7)).toEqual(Array.from({ length: 7 }, (_, index) => [index + 1, 20]))
   })
 
   it('uses detail and CRUD APIs while preserving immutable codes and authoritative floor counts', async () => {

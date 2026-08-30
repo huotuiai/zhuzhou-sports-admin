@@ -411,7 +411,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" @click="openStations(row)"><MapPin aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="Boolean(store.deletingId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button></div></template>
         </DataTable>
-        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20]" @update:page="changePage" @update:page-size="changePageSize" />
+        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
 
       <ShuttleRouteMapView v-else :records="store.mapRecords" :theme="themeStore.mode" />

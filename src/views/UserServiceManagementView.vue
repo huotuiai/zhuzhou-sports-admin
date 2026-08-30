@@ -52,7 +52,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import ContactNumberForm from '@/modules/user-service-management/components/ContactNumberForm.vue'
 import FeedbackHandleForm from '@/modules/user-service-management/components/FeedbackHandleForm.vue'
-import { DEFAULT_FEEDBACK_QUERY, USER_SERVICE_PAGE_SIZE, useUserServiceStore } from '@/modules/user-service-management/stores/user-service-store'
+import { DEFAULT_FEEDBACK_QUERY, useUserServiceStore } from '@/modules/user-service-management/stores/user-service-store'
 import { useTodoStore } from '@/modules/todo/stores/todo-store'
 
 type ServiceTab = 'feedback' | 'contact'
@@ -139,6 +139,14 @@ function feedbackTypeClass(type: FeedbackType): string {
   if (type === 'complaint') return 'border-warning/35 bg-warning/10 text-warning'
   if (type === 'suggestion') return 'border-primary/30 bg-primary/10 text-primary'
   return 'border-border bg-muted/55 text-muted-foreground'
+}
+
+async function changePage(page: number): Promise<void> {
+  if (!await store.changePage(page)) toast.error(store.error ?? '反馈分页加载失败')
+}
+
+async function changePageSize(pageSize: number): Promise<void> {
+  if (!await store.changePageSize(pageSize)) toast.error(store.error ?? '反馈分页加载失败')
 }
 
 async function applyQuery(): Promise<void> {
@@ -534,11 +542,12 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </DataTable>
         <PaginationBar
           :page="store.currentPage"
-          :page-size="USER_SERVICE_PAGE_SIZE"
-          :page-sizes="[USER_SERVICE_PAGE_SIZE]"
+          :page-size="store.pageSize"
+          :page-sizes="[20, 50, 100]"
           :total="store.total"
           :disabled="store.isFeedbackLoading"
-          @update:page="store.changePage"
+          @update:page="changePage"
+          @update:page-size="changePageSize"
         />
       </template>
 

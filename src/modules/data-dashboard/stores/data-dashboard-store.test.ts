@@ -226,6 +226,10 @@ describe('data dashboard store', () => {
     await store.setDetailPage(2)
     expect(service.detailCalls.at(-1)).toMatchObject({ page: 2, pageSize: 20 })
     expect(store.metricDetail.page).toBe(2)
+
+    await store.setDetailPageSize(50)
+    expect(service.detailCalls.at(-1)).toMatchObject({ page: 1, pageSize: 50 })
+    expect(store.metricDetail.pageSize).toBe(50)
   })
 
   it('refreshes only operations and reloads an open metric with the new query', async () => {
@@ -310,6 +314,10 @@ describe('data dashboard store', () => {
     await store.setDistributionDetailPage(2)
     expect(service.distributionDetailCalls.at(-1)).toEqual({ kind: 'parking_fee', slice: 'free', page: 2, pageSize: 20 })
     expect(store.distributionDetail.page).toBe(2)
+
+    await store.setDistributionDetailPageSize(50)
+    expect(service.distributionDetailCalls.at(-1)).toEqual({ kind: 'parking_fee', slice: 'free', page: 1, pageSize: 50 })
+    expect(store.distributionDetail.pageSize).toBe(50)
 
     store.closeDistributionDetail()
     expect(store.selectedDistribution).toBeNull()

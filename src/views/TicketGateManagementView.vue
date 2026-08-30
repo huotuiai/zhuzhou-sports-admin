@@ -337,7 +337,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </template>
       </DataTable>
 
-      <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" @update:page="changePage" @update:page-size="changePageSize" />
+      <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :page-sizes="[20, 50, 100]" :disabled="store.isLoading" @update:page="changePage" @update:page-size="changePageSize" />
     </div>
 
     <CrudSheet :open="formOpen" :mode="formMode" :title="formMode === 'create' ? '新增检票口' : `编辑检票口 · ${formValue.code}`" description="维护检票口位置、导航信息、排序与开放状态。" :saving="store.isSaving" :dirty="formDirty" @submit="save" @request-close="requestFormClose">

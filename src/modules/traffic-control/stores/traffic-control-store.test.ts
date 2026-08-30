@@ -64,8 +64,11 @@ class StubTrafficControlService implements TrafficControlService {
   failDelete: Error | null = null
   exportFile: TrafficControlExportFile = { content: new Blob(['csv']), filename: 'control_zones.csv' }
 
-  async list(query: TrafficControlServerQuery = { keyword: '', type: 'all', publishStatus: 'all' }): Promise<TrafficControl[]> {
+  listPageSizes: number[] = []
+
+  async list(query: TrafficControlServerQuery = { keyword: '', type: 'all', publishStatus: 'all' }, pageSize = 20): Promise<TrafficControl[]> {
     this.listQueries.push({ ...query })
+    this.listPageSizes.push(pageSize)
     return structuredClone(this.records)
   }
 
@@ -160,6 +163,17 @@ describe('traffic control store', () => {
     expect(store.paginatedRecords).toHaveLength(20)
     store.setPage(2)
     expect(store.paginatedRecords).toHaveLength(2)
+    expect(service.listPageSizes).toEqual([20])
+
+    expect(await store.setPageSize(50)).toBe(true)
+    expect(store.pageSize).toBe(50)
+    expect(store.currentPage).toBe(1)
+    expect(store.paginatedRecords).toHaveLength(22)
+    expect(service.listPageSizes.at(-1)).toBe(50)
+
+    expect(await store.loadMap()).toBe(true)
+    expect(store.mapRecords).toHaveLength(22)
+    expect(service.listPageSizes.at(-1)).toBe(100)
   })
 
   it('reads detail before editing and refreshes after CRUD mutations', async () => {

@@ -40,7 +40,6 @@ import { validateIntegrationSourceInput } from '@/modules/external-data-integrat
 import {
   DEFAULT_INTEGRATION_LOG_QUERY,
   DEFAULT_INTEGRATION_SOURCE_QUERY,
-  INTEGRATION_LOG_PAGE_SIZE,
   useIntegrationStore,
 } from '@/modules/external-data-integration/stores/integration-store'
 import { useTodoStore } from '@/modules/todo/stores/todo-store'
@@ -256,6 +255,10 @@ async function changeLogPage(page: number): Promise<void> {
   if (!await store.changeLogPage(page)) toast.error(store.logsError ?? '同步日志分页加载失败。')
 }
 
+async function changeLogPageSize(pageSize: number): Promise<void> {
+  if (!await store.changeLogPageSize(pageSize)) toast.error(store.logsError ?? '同步日志分页加载失败。')
+}
+
 onMounted(() => {
   void load()
 })
@@ -396,7 +399,7 @@ onMounted(() => {
       :logs="store.logs"
       :query="logDraft"
       :page="store.logPage"
-      :page-size="INTEGRATION_LOG_PAGE_SIZE"
+      :page-size="store.logPageSize"
       :total="store.logTotal"
       :loading="store.isLogsLoading"
       :error="store.logsError"
@@ -405,6 +408,7 @@ onMounted(() => {
       @update:query="logDraft = $event"
       @query="queryLogs"
       @page="changeLogPage"
+      @page-size="changeLogPageSize"
       @retry="store.loadLogs()"
     />
   </section>

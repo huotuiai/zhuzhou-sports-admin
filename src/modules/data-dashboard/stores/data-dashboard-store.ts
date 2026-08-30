@@ -169,7 +169,13 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
       await loadMetricDetail(page)
     }
 
-    async function loadMetricDetail(page = metricDetail.value.page): Promise<boolean> {
+    async function setDetailPageSize(nextPageSize: number): Promise<void> {
+      if (!Number.isInteger(nextPageSize) || nextPageSize <= 0) return
+      metricDetail.value = { ...metricDetail.value, page: 1, pageSize: nextPageSize }
+      await loadMetricDetail(1, nextPageSize)
+    }
+
+    async function loadMetricDetail(page = metricDetail.value.page, pageSize = metricDetail.value.pageSize): Promise<boolean> {
       const metricId = selectedMetricId.value
       const query = snapshot.value?.operations.query
       if (!metricId || !query) return false
@@ -177,7 +183,7 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
       isDetailLoading.value = true
       detailError.value = null
       try {
-        const result = await service.getMetricDetails(metricId, query, page, DASHBOARD_DETAIL_PAGE_SIZE)
+        const result = await service.getMetricDetails(metricId, query, page, pageSize)
         if (request !== detailRequest || selectedMetricId.value !== metricId) return false
         metricDetail.value = result
         return true
@@ -225,7 +231,13 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
       await loadDistributionDetail(page)
     }
 
-    async function loadDistributionDetail(page = distributionDetail.value.page): Promise<boolean> {
+    async function setDistributionDetailPageSize(nextPageSize: number): Promise<void> {
+      if (!Number.isInteger(nextPageSize) || nextPageSize <= 0) return
+      distributionDetail.value = { ...distributionDetail.value, page: 1, pageSize: nextPageSize }
+      await loadDistributionDetail(1, nextPageSize)
+    }
+
+    async function loadDistributionDetail(page = distributionDetail.value.page, pageSize = distributionDetail.value.pageSize): Promise<boolean> {
       const selection = selectedDistribution.value
       if (!selection) return false
       const selectionKey = distributionSelectionKey(selection)
@@ -237,7 +249,7 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
           selection.kind,
           selection.slice,
           page,
-          DISTRIBUTION_DETAIL_PAGE_SIZE,
+          pageSize,
         )
         if (request !== distributionDetailRequest || distributionSelectionKey(selectedDistribution.value) !== selectionKey) return false
         distributionDetail.value = result
@@ -299,12 +311,14 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
       closeMetricDetail,
       setDetailDimension,
       setDetailPage,
+      setDetailPageSize,
       loadMetricTrend,
       loadMetricDetail,
       exportMetricDetails,
       selectDistribution,
       closeDistributionDetail,
       setDistributionDetailPage,
+      setDistributionDetailPageSize,
       loadDistributionDetail,
       syncVrWorks,
     }

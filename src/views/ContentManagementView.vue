@@ -55,7 +55,6 @@ import {
   validatePriorityHintInput,
 } from '@/modules/content-management/services/content-management-service'
 import {
-  CONTENT_MANAGEMENT_PAGE_SIZE,
   DEFAULT_ACTIVITY_QUERY,
   DEFAULT_BANNER_QUERY,
   DEFAULT_HINT_QUERY,
@@ -628,7 +627,7 @@ onBeforeRouteLeave(() => confirmLeave())
             </div>
           </template>
         </DataTable>
-        <PaginationBar :page="store.pages[activeTab]" :page-size="CONTENT_MANAGEMENT_PAGE_SIZE" :page-sizes="[20]" :total="activeTab === 'activity' ? store.activityRecords.length : store.newsRecords.length" :disabled="store.isLoading" @update:page="store.setPage(activeTab, $event)" />
+        <PaginationBar :page="store.pages[activeTab]" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="activeTab === 'activity' ? store.activityRecords.length : store.newsRecords.length" :disabled="store.isLoading" @update:page="store.setPage(activeTab, $event)" @update:page-size="store.setPageSize" />
       </template>
 
       <template v-else-if="activeTab === 'banner'">
@@ -644,7 +643,7 @@ onBeforeRouteLeave(() => confirmLeave())
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openBannerEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(store.setBannerEnabled(row.id, !row.displayEnabled), row.displayEnabled ? 'Banner 已停用。' : 'Banner 已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'banner', record: row }">删除</Button></div></template>
         </DataTable>
-        <PaginationBar :page="store.pages.banner" :page-size="CONTENT_MANAGEMENT_PAGE_SIZE" :page-sizes="[20]" :total="store.bannerRecords.length" :disabled="store.isLoading" @update:page="store.setPage('banner', $event)" />
+        <PaginationBar :page="store.pages.banner" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.bannerRecords.length" :disabled="store.isLoading" @update:page="store.setPage('banner', $event)" @update:page-size="store.setPageSize" />
       </template>
 
       <template v-else>
@@ -659,7 +658,7 @@ onBeforeRouteLeave(() => confirmLeave())
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openHintEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(store.setPriorityHintEnabled(row.id, !row.displayEnabled), row.displayEnabled ? '高优提示已停用。' : '高优提示已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'hint', record: row }">删除</Button></div></template>
         </DataTable>
-        <PaginationBar :page="store.pages.hint" :page-size="CONTENT_MANAGEMENT_PAGE_SIZE" :page-sizes="[20]" :total="store.priorityHintRecords.length" :disabled="store.isLoading" @update:page="store.setPage('hint', $event)" />
+        <PaginationBar :page="store.pages.hint" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.priorityHintRecords.length" :disabled="store.isLoading" @update:page="store.setPage('hint', $event)" @update:page-size="store.setPageSize" />
       </template>
     </div>
 

@@ -125,6 +125,20 @@ describe('user service store', () => {
     expect(store.feedbacks[0]?.id).toBe('2')
   })
 
+  it('requests the selected page size from the server and returns to page 1', async () => {
+    const listFeedbacks = vi.fn(async (_query: FeedbackQuery, requestedPage: number, pageSize: number) => (
+      page([feedback({ id: String(requestedPage) })], 41, requestedPage, pageSize)
+    ))
+    const store = createUserServiceStore(createService({ listFeedbacks }), 'user-service-page-size-test')()
+
+    expect(await store.queryFeedbacks({ ...DEFAULT_FEEDBACK_QUERY, type: 'complaint' })).toBe(true)
+    expect(await store.changePage(2)).toBe(true)
+    expect(await store.changePageSize(50)).toBe(true)
+    expect(store.page).toBe(1)
+    expect(store.pageSize).toBe(50)
+    expect(listFeedbacks.mock.calls.at(-1)).toEqual([expect.objectContaining({ type: 'complaint' }), 1, 50])
+  })
+
   it('rejects reversed dates without sending a request', async () => {
     const listFeedbacks = vi.fn(async () => page([]))
     const useStore = createUserServiceStore(createService({ listFeedbacks }), 'user-service-date-test')

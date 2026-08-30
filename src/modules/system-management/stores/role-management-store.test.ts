@@ -175,6 +175,13 @@ describe('role management store', () => {
     await store.queryRoles({ keyword: '角色 25' })
     expect(store.roles.map(item => item.id)).toEqual(['25'])
     expect(service.listCalls.at(-1)).toMatchObject({ query: { keyword: '角色 25' }, page: 1, pageSize: 20 })
+
+    await store.queryRoles({ keyword: '' })
+    await expect(store.changePageSize(50)).resolves.toBe(true)
+    expect(store.page).toBe(1)
+    expect(store.pageSize).toBe(50)
+    expect(store.roles).toHaveLength(45)
+    expect(service.listCalls.at(-1)).toMatchObject({ page: 1, pageSize: 50 })
   })
 
   it('refreshes the current page and invalidates cached role references', async () => {

@@ -72,6 +72,12 @@ describe('operation log store', () => {
     expect(store.page).toBe(3)
     expect(store.logs).toHaveLength(5)
     expect(service.listCalls.at(-1)).toMatchObject({ page: 3, pageSize: 20 })
+
+    await expect(store.changePageSize(50)).resolves.toBe(true)
+    expect(store.page).toBe(1)
+    expect(store.pageSize).toBe(50)
+    expect(store.logs).toHaveLength(45)
+    expect(service.listCalls.at(-1)).toMatchObject({ page: 1, pageSize: 50 })
   })
 
   it('refreshes the current filtered page instead of reusing initialized data', async () => {

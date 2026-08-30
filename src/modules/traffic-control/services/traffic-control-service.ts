@@ -406,12 +406,13 @@ export function createTrafficControlService(
       }))
     },
 
-    async list(query = DEFAULT_QUERY) {
-      const first = await service.listPage(1, MAX_PAGE_SIZE, query)
+    async list(query = DEFAULT_QUERY, pageSize = MAX_PAGE_SIZE) {
+      const requestPageSize = Math.max(1, Math.trunc(pageSize) || MAX_PAGE_SIZE)
+      const first = await service.listPage(1, requestPageSize, query)
       const records = [...first.records]
       const pageCount = Math.ceil(first.total / Math.max(1, first.pageSize))
       for (let page = 2; page <= pageCount; page += 1) {
-        records.push(...(await service.listPage(page, MAX_PAGE_SIZE, query)).records)
+        records.push(...(await service.listPage(page, requestPageSize, query)).records)
       }
       return sortTrafficControls([...new Map(records.map(record => [record.id, record])).values()])
     },

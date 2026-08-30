@@ -557,7 +557,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         <PaginationBar
           :page="store.currentPage"
           :page-size="store.pageSize"
-          :page-sizes="[20]"
+          :page-sizes="[20, 50, 100]"
           :total="store.total"
           :disabled="store.isLoading"
           @update:page="changePage"

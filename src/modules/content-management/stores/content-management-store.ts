@@ -74,6 +74,7 @@ export function createContentManagementStore(
     const bannerQuery = reactive<BannerQuery>({ ...DEFAULT_BANNER_QUERY })
     const hintQuery = reactive<PriorityHintQuery>({ ...DEFAULT_HINT_QUERY })
     const pages = reactive<Record<ContentManagementTab, number>>({ activity: 1, news: 1, banner: 1, hint: 1 })
+    const pageSize = ref(CONTENT_MANAGEMENT_PAGE_SIZE)
     const now = ref(Date.now())
     const isLoading = ref(false)
     const isSaving = ref(false)
@@ -118,9 +119,10 @@ export function createContentManagementStore(
     })))
 
     function paginated<T>(records: readonly T[], tab: ContentManagementTab): T[] {
-      const maxPage = Math.max(1, Math.ceil(records.length / CONTENT_MANAGEMENT_PAGE_SIZE))
+      const size = Math.max(1, pageSize.value)
+      const maxPage = Math.max(1, Math.ceil(records.length / size))
       const page = Math.min(Math.max(pages[tab], 1), maxPage)
-      return records.slice((page - 1) * CONTENT_MANAGEMENT_PAGE_SIZE, page * CONTENT_MANAGEMENT_PAGE_SIZE)
+      return records.slice((page - 1) * size, page * size)
     }
 
     const paginatedActivities = computed(() => paginated(activityRecords.value, 'activity'))
@@ -179,7 +181,7 @@ export function createContentManagementStore(
       }
       if (tab === 'banner') snapshot.value.banners = await fetchBanners()
       if (tab === 'hint') snapshot.value.priorityHints = await fetchHints()
-      pages[tab] = Math.min(pages[tab], Math.max(1, Math.ceil(recordsForTab(tab).length / CONTENT_MANAGEMENT_PAGE_SIZE)))
+      pages[tab] = Math.min(pages[tab], Math.max(1, Math.ceil(recordsForTab(tab).length / Math.max(1, pageSize.value))))
     }
 
     async function load(tab?: ContentManagementTab): Promise<boolean> {
@@ -274,8 +276,14 @@ export function createContentManagementStore(
 
     function setPage(tab: ContentManagementTab, page: number): void {
       if (!Number.isFinite(page)) return
-      const maxPage = Math.max(1, Math.ceil(recordsForTab(tab).length / CONTENT_MANAGEMENT_PAGE_SIZE))
+      const maxPage = Math.max(1, Math.ceil(recordsForTab(tab).length / Math.max(1, pageSize.value)))
       pages[tab] = Math.min(Math.max(1, Math.trunc(page)), maxPage)
+    }
+
+    function setPageSize(value: number): void {
+      if (!Number.isInteger(value) || value <= 0) return
+      pageSize.value = value
+      for (const tab of Object.keys(pages) as ContentManagementTab[]) pages[tab] = 1
     }
 
     async function getDetail<T>(id: string, getter: () => Promise<T>): Promise<T | null> {
@@ -354,6 +362,7 @@ export function createContentManagementStore(
       bannerQuery,
       hintQuery,
       pages,
+      pageSize,
       now,
       bannerTotal,
       priorityHintTotal,
@@ -376,6 +385,7 @@ export function createContentManagementStore(
       isBannerEffective: bannerIsEffective,
       isPriorityHintEffective: priorityHintIsEffective,
       setPage,
+      setPageSize,
       setActivityQuery,
       setNewsQuery,
       setBannerQuery,

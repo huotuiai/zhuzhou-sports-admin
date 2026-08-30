@@ -175,6 +175,12 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       return loadFeedbackPage({ ...query }, target)
     }
 
+    async function changePageSize(nextPageSize: number): Promise<boolean> {
+      if (!Number.isInteger(nextPageSize) || nextPageSize <= 0) return false
+      pageSize.value = nextPageSize
+      return loadFeedbackPage({ ...query }, 1)
+    }
+
     function validateHandle(input: FeedbackHandleInput) {
       return validateFeedbackHandleInput(input)
     }
@@ -338,6 +344,7 @@ export function createUserServiceStore(service: UserServiceService, storeId = 'u
       queryFeedbacks,
       resetQuery,
       changePage,
+      changePageSize,
       refreshOverview,
       getFeedback,
       handleFeedback,

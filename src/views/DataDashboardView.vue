@@ -416,6 +416,7 @@ onMounted(async () => {
       @update:open="!$event && store.closeMetricDetail()"
       @update:dimension="store.setDetailDimension($event)"
       @update:page="store.setDetailPage($event)"
+      @update:page-size="store.setDetailPageSize($event)"
       @retry="store.loadMetricDetail()"
       @retry-trend="store.loadMetricTrend()"
       @export="exportMetricDetails"
@@ -428,6 +429,7 @@ onMounted(async () => {
       :error="store.distributionDetailError"
       @update:open="!$event && store.closeDistributionDetail()"
       @update:page="store.setDistributionDetailPage($event)"
+      @update:page-size="store.setDistributionDetailPageSize($event)"
       @retry="store.loadDistributionDetail()"
     />
   </section>

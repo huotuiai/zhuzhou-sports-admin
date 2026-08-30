@@ -19,7 +19,7 @@ const props = withDefaults(defineProps<{
   pageSizes?: readonly number[]
   disabled?: boolean
 }>(), {
-  pageSizes: () => [10, 20, 50, 100],
+  pageSizes: () => [20, 50, 100],
   disabled: false,
 })
 

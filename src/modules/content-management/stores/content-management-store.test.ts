@@ -277,6 +277,11 @@ describe('content management store', () => {
     expect(store.newsRecords[0]?.id).toBe('20')
     store.setPage('news', 2)
     expect(store.paginatedNews).toHaveLength(1)
+
+    store.setPageSize(50)
+    expect(store.pageSize).toBe(50)
+    expect(store.pages.news).toBe(1)
+    expect(store.paginatedNews).toHaveLength(21)
   })
 
   it('reads latest details and refreshes lists/references after CRUD and quick actions', async () => {

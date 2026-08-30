@@ -125,6 +125,12 @@ export function createOperationLogStore(
       return loadPage({ ...query }, target)
     }
 
+    async function changePageSize(nextPageSize: number): Promise<boolean> {
+      if (!Number.isInteger(nextPageSize) || nextPageSize <= 0) return false
+      pageSize.value = nextPageSize
+      return loadPage({ ...query }, 1)
+    }
+
     async function exportLogs(): Promise<OperationLogExportFile | null> {
       if (isExporting.value) return null
       isExporting.value = true
@@ -162,6 +168,7 @@ export function createOperationLogStore(
       queryLogs,
       resetQuery,
       changePage,
+      changePageSize,
       exportLogs,
       resetError,
     }

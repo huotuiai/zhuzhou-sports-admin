@@ -32,6 +32,7 @@ const emit = defineEmits<{
   'update:open': [open: boolean]
   'update:dimension': [dimension: DashboardMetricDimension]
   'update:page': [page: number]
+  'update:pageSize': [pageSize: number]
   retry: []
   retryTrend: []
   export: []
@@ -200,10 +201,11 @@ function referenceLabel(row: DashboardMetricDetail): string {
               class="mt-3"
               :page="detail.page"
               :page-size="detail.pageSize"
-              :page-sizes="[20]"
+              :page-sizes="[20, 50, 100]"
               :total="detail.total"
               :disabled="loading"
               @update:page="emit('update:page', $event)"
+              @update:page-size="emit('update:pageSize', $event)"
             />
           </template>
         </section>

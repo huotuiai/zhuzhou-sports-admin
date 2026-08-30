@@ -158,6 +158,25 @@ export function createUserManagementStore(service: UserManagementService, storeI
       }
     }
 
+    async function changePageSize(nextPageSize: number): Promise<boolean> {
+      if (!Number.isInteger(nextPageSize) || nextPageSize <= 0) return false
+      pageSize.value = nextPageSize
+      page.value = 1
+      isLoading.value = true
+      error.value = null
+      try {
+        await loadCurrentUsers()
+        return true
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return false
+      }
+      finally {
+        isLoading.value = false
+      }
+    }
+
     async function getUser(id: string): Promise<SystemUser | null> {
       loadingDetailId.value = id
       error.value = null
@@ -334,6 +353,7 @@ export function createUserManagementStore(service: UserManagementService, storeI
       refresh,
       queryUsers,
       changePage,
+      changePageSize,
       getUser,
       createUser,
       updateUser,

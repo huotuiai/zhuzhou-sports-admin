@@ -79,7 +79,7 @@ export interface TrafficControlValidationResult {
 }
 
 export interface TrafficControlService {
-  list(query?: TrafficControlServerQuery): Promise<TrafficControl[]>
+  list(query?: TrafficControlServerQuery, pageSize?: number): Promise<TrafficControl[]>
   listPage(page: number, pageSize: number, query: TrafficControlServerQuery): Promise<TrafficControlPage>
   get(id: string): Promise<TrafficControl>
   create(input: TrafficControlWriteInput): Promise<TrafficControl>

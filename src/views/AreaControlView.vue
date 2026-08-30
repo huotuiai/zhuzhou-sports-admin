@@ -177,19 +177,36 @@ function requestFormClose(request: CrudDialogCloseRequest): void {
   else closeForm()
 }
 
+async function refreshMapIfNeeded(): Promise<void> {
+  if (viewMode.value !== 'map') return
+  if (!await store.loadMap()) toast.error(store.error ?? '交通管制地图数据加载失败。')
+}
+
 async function applyQuery(): Promise<void> {
   if (queryDraft.value.dateStart && queryDraft.value.dateEnd && queryDraft.value.dateStart > queryDraft.value.dateEnd) {
     toast.error('查询开始日期不能晚于结束日期。')
     return
   }
-  if (!await store.setQuery({ ...queryDraft.value })) toast.error(store.error ?? '交通管制查询失败。')
-  else loadError.value = ''
+  if (!await store.setQuery({ ...queryDraft.value })) {
+    toast.error(store.error ?? '交通管制查询失败。')
+    return
+  }
+  loadError.value = ''
+  await refreshMapIfNeeded()
 }
 
 async function resetQuery(): Promise<void> {
-  if (!await store.resetQuery()) toast.error(store.error ?? '交通管制查询重置失败。')
-  else loadError.value = ''
+  if (!await store.resetQuery()) {
+    toast.error(store.error ?? '交通管制查询重置失败。')
+    return
+  }
+  loadError.value = ''
   queryDraft.value = { ...store.query }
+  await refreshMapIfNeeded()
+}
+
+async function changePageSize(value: number): Promise<void> {
+  if (!await store.setPageSize(value)) toast.error(store.error ?? '交通管制分页加载失败。')
 }
 
 async function persistSave(): Promise<void> {
@@ -270,6 +287,10 @@ async function load(): Promise<void> {
 }
 
 watch(now, () => store.refreshTime())
+watch(viewMode, async (mode) => {
+  if (mode !== 'map') return
+  if (!await store.loadMap()) toast.error(store.error ?? '交通管制地图数据加载失败。')
+})
 onMounted(load)
 onBeforeRouteLeave(() => confirmLeave())
 useEventListener(window, 'beforeunload', beforeUnload)
@@ -284,6 +305,14 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <div><h1 id="traffic-control-title" class="text-2xl font-semibold tracking-tight">交通管制管理</h1><p class="mt-1 text-sm text-muted-foreground">交警管制信息发布</p></div>
         </div>
         <div class="flex items-center gap-2">
+          <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
+            <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">
+              <List aria-hidden="true" />列表
+            </Button>
+            <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" :aria-pressed="viewMode === 'map'" @click="viewMode = 'map'">
+              <MapIcon aria-hidden="true" />地图
+            </Button>
+          </div>
           <Button size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
           <Button variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出全部' }}</Button>
         </div>
@@ -297,14 +326,6 @@ useEventListener(window, 'beforeunload', beforeUnload)
         <div class="space-y-2"><Label for="traffic-date-end">查询结束日期</Label><Input id="traffic-date-end" v-model="queryDraft.dateEnd" type="date" class="h-11" /></div>
         <div class="space-y-2"><Label for="traffic-keyword">关键字</Label><Input id="traffic-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="标题 / 区域关键字" autocomplete="off" @keydown.enter.prevent="applyQuery" /></div>
       </QueryPanel>
-
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
-          <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表视图</Button>
-          <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图视图</Button>
-        </div>
-        <p class="text-xs text-muted-foreground">地图视图按 geometry_json 渲染管制区域，未配置区域的记录仅在列表展示。</p>
-      </div>
 
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert"><AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button></div>
 
@@ -327,10 +348,10 @@ useEventListener(window, 'beforeunload', beforeUnload)
             </div>
           </template>
         </DataTable>
-        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="store.setPage" @update:page-size="store.setPageSize" />
+        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="store.setPage" @update:page-size="changePageSize" />
       </template>
 
-      <TrafficControlMapView v-else-if="!formOpen" :records="store.filteredRecords" :theme="themeStore.mode" />
+      <TrafficControlMapView v-else-if="!formOpen" :records="store.mapRecords" :theme="themeStore.mode" />
     </div>
 
     <CrudSheet :open="formOpen" :mode="formMode" size="wide" :title="formMode === 'create' ? '新增交通管制' : `编辑交通管制 · ${store.records.find((item) => item.id === editingId)?.code ?? ''}`" description="维护核心信息；地图区域为选填项。" :saving="store.isSaving" :dirty="formDirty" @submit="save" @request-close="requestFormClose">

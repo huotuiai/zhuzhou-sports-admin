@@ -96,6 +96,10 @@ async function resetQuery(): Promise<void> {
   queryDraft.value = cloneQuery(store.query)
 }
 
+async function changePageSize(value: number): Promise<void> {
+  if (!await store.setPageSize(value)) toast.error(store.error ?? '座位分区分页加载失败')
+}
+
 function toggleQueryGate(gateId: string, checked: boolean | 'indeterminate'): void {
   const next = new Set(queryDraft.value.gateIds)
   if (checked === true) next.add(gateId)
@@ -358,7 +362,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </template>
       </DataTable>
 
-      <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :page-sizes="[20, 50, 100]" :disabled="store.isLoading" @update:page="store.setPage" @update:page-size="store.setPageSize" />
+      <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :page-sizes="[20, 50, 100]" :disabled="store.isLoading" @update:page="store.setPage" @update:page-size="changePageSize" />
     </div>
 
     <CrudSheet :open="zoneOpen" :mode="zoneMode" :title="zoneMode === 'create' ? '新增座位分区' : `编辑座位分区 · ${zoneValue.code}`" description="维护分区范围、排序及其对应检票口。" :saving="store.isSaving" :dirty="zoneDirty" @submit="saveZone" @request-close="requestZoneClose">
