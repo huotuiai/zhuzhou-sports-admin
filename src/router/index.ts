@@ -26,7 +26,7 @@ export const router = createRouter({
         {
           path: 'operations/data-screen',
           name: 'data-screen',
-          component: () => import('@/views/EmptyRouteView.vue'),
+          component: () => import('@/views/DataScreenView.vue'),
           meta: { title: '数据大屏', sectionTitle: '运营管理', menuPath: '/operations/data-screen', requiredPermission: 'dashboard:view' },
         },
         {

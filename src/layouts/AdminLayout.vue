@@ -93,6 +93,7 @@ watch(
         </nav>
 
         <div class="ml-auto flex min-w-0 items-center gap-2">
+          <div id="admin-page-actions" class="contents" />
           <div v-if="visibleTodos.length" class="hidden max-w-[600px] items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-primary/6 p-1 xl:flex" aria-label="运营待办">
             <BellRingIcon class="mx-1 size-4 shrink-0 text-primary" aria-hidden="true" />
             <button

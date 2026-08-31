@@ -33,13 +33,13 @@
     "name": "数据大屏",
     "menu_type": 2,
     "path": "/operations/data-screen",
-    "component": "EmptyRouteView",
+    "component": "DataScreenView",
     "perms": null,
     "icon": "layout-dashboard",
     "sort_order": 20,
     "visible": 1,
     "status": 1,
-    "remark": "前端路由名：data-screen；当前为占位页"
+    "remark": "前端路由名：data-screen；iframe 内嵌外部大屏"
   },
   {
     "key": "content-management",
