@@ -53,6 +53,7 @@ import {
   validateRolePermissionInput,
 } from '@/modules/system-management/services/role-management-validation'
 import { useRoleManagementStore } from '@/modules/system-management/stores/role-management-store'
+import { useAuthStore } from '@/stores/auth'
 
 type DialogKind = 'create' | 'edit' | 'permission' | 'assignment'
 interface FormHandle { validateAndFocus(): boolean }
@@ -61,7 +62,7 @@ const EMPTY_CREATE: RoleCreateInput = { name: '', description: '', permissionIds
 const EMPTY_BASIC: RoleBasicInfoInput = { name: '', description: '' }
 const EMPTY_PERMISSION: RolePermissionInput = { permissionIds: [] }
 
-const columns: readonly DataTableColumn<SystemRole>[] = [
+const baseColumns: readonly DataTableColumn<SystemRole>[] = [
   { key: 'name', label: '角色名称', minWidth: '190px' },
   { key: 'kind', label: '标识', width: '100px', align: 'center' },
   { key: 'users', label: '绑定用户数', width: '120px', align: 'center' },
@@ -72,6 +73,10 @@ const columns: readonly DataTableColumn<SystemRole>[] = [
 ]
 
 const store = useRoleManagementStore()
+const authStore = useAuthStore()
+const canOperate = computed(() => authStore.hasPermission('role:operate'))
+const canExport = computed(() => authStore.hasPermission('role:view'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const queryDraft = ref(store.query.keyword)
 
 const createOpen = ref(false)
@@ -153,6 +158,7 @@ function permissionSummary(role: SystemRole): string {
 }
 
 async function openCreate(): Promise<void> {
+  if (!canOperate.value) return
   if (!await store.loadRoleReferences()) return showStoreError('参考角色加载失败')
   createForm.value = { ...EMPTY_CREATE, permissionIds: [] }
   createReferenceRoleId.value = null
@@ -162,6 +168,7 @@ async function openCreate(): Promise<void> {
 }
 
 async function openEdit(role: SystemRole): Promise<void> {
+  if (!canOperate.value) return
   const [referencesLoaded, detail] = await Promise.all([
     store.loadRoleReferences(),
     store.getRole(role.id),
@@ -174,6 +181,7 @@ async function openEdit(role: SystemRole): Promise<void> {
 }
 
 async function openPermission(role: SystemRole): Promise<void> {
+  if (!canOperate.value) return
   const detail = await store.getRole(role.id)
   if (!detail) return showStoreError('角色详情加载失败')
   permissionRole.value = detail
@@ -187,6 +195,7 @@ async function openPermission(role: SystemRole): Promise<void> {
 }
 
 async function openAssignment(role: SystemRole): Promise<void> {
+  if (!canOperate.value) return
   if (!await store.loadAssignment(role.id)) return showStoreError('角色用户加载失败')
   assignmentRole.value = role
   assignmentUserIds.value = [...store.assignmentBoundUserIds]
@@ -220,6 +229,7 @@ function discardChanges(): void {
 }
 
 async function saveCreate(): Promise<void> {
+  if (!canOperate.value) return
   createIssues.value = validateRoleCreateInput(createForm.value, store.roleReferences, store.permissions)
   await nextTick()
   if (!createFormRef.value?.validateAndFocus() || createIssues.value.length) return
@@ -230,7 +240,7 @@ async function saveCreate(): Promise<void> {
 }
 
 async function saveEdit(): Promise<void> {
-  if (!editRole.value) return
+  if (!canOperate.value || !editRole.value) return
   editIssues.value = validateRoleBasicInfoInput(editForm.value, store.roleReferences, editRole.value.id)
   await nextTick()
   if (!editFormRef.value?.validateAndFocus() || editIssues.value.length) return
@@ -241,7 +251,7 @@ async function saveEdit(): Promise<void> {
 }
 
 async function savePermissions(): Promise<void> {
-  if (!permissionRole.value || permissionRole.value.kind === 'super-admin') return
+  if (!canOperate.value || !permissionRole.value || permissionRole.value.kind === 'super-admin') return
   permissionIssues.value = validateRolePermissionInput(permissionForm.value, store.permissions)
   await nextTick()
   if (!permissionFormRef.value?.validateAndFocus() || permissionIssues.value.length) return
@@ -252,7 +262,7 @@ async function savePermissions(): Promise<void> {
 }
 
 async function saveAssignment(): Promise<void> {
-  if (!assignmentRole.value || assignmentReadOnly.value) return
+  if (!canOperate.value || !assignmentRole.value || assignmentReadOnly.value) return
   const saved = await store.replaceRoleUsers(assignmentRole.value.id, assignmentUserIds.value)
   if (!saved) return showStoreError('角色分配保存失败')
   closeDialog('assignment')
@@ -260,12 +270,12 @@ async function saveAssignment(): Promise<void> {
 }
 
 function requestDelete(role: SystemRole): void {
-  if (role.kind !== 'custom') return
+  if (!canOperate.value || role.kind !== 'custom') return
   deleteTarget.value = role
 }
 
 async function removeRole(): Promise<void> {
-  if (!deleteTarget.value || deleteBoundCount.value > 0) return
+  if (!canOperate.value || !deleteTarget.value || deleteBoundCount.value > 0) return
   const removed = await store.deleteRole(deleteTarget.value.id)
   if (!removed) return showStoreError('角色删除失败')
   deleteTarget.value = null
@@ -282,6 +292,7 @@ function csvCell(value: unknown): string {
 }
 
 function exportRoles(): void {
+  if (!canExport.value) return
   const headers = ['角色名称', '标识', '绑定用户数', '权限范围', '描述', '创建时间']
   const records = rows.value.map((role) => [
     role.name,
@@ -321,10 +332,10 @@ onMounted(async () => {
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="lg" class="h-11" :disabled="rows.length === 0" @click="exportRoles">
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="rows.length === 0" @click="exportRoles">
             <Download aria-hidden="true" />导出当前页
           </Button>
-          <Button size="lg" class="h-11" @click="openCreate">
+          <Button v-if="canOperate" size="lg" class="h-11" @click="openCreate">
             <Plus aria-hidden="true" />新增角色
           </Button>
         </div>

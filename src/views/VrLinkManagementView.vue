@@ -28,6 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import VrLinkForm from '@/modules/vr-link-management/components/VrLinkForm.vue'
 import VrLinkStatusBadge from '@/modules/vr-link-management/components/VrLinkStatusBadge.vue'
 import { useVrLinkStore } from '@/modules/vr-link-management/stores/vr-link-store'
+import { useAuthStore } from '@/stores/auth'
 
 const EMPTY: VrLinkWriteInput = {
   title: '',
@@ -38,7 +39,7 @@ const EMPTY: VrLinkWriteInput = {
   remark: '',
 }
 
-const columns: readonly DataTableColumn<VrLink>[] = [
+const baseColumns: readonly DataTableColumn<VrLink>[] = [
   { key: 'title', label: '展示名称', minWidth: '230px' },
   { key: 'placeType', label: '地点类型', width: '120px', align: 'center' },
   { key: 'placeName', label: '绑定地点', minWidth: '210px' },
@@ -49,6 +50,9 @@ const columns: readonly DataTableColumn<VrLink>[] = [
 ]
 
 const store = useVrLinkStore()
+const authStore = useAuthStore()
+const canOperate = computed(() => authStore.hasPermission('vr:operate'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const queryDraft = ref<VrLinkQuery>({ ...store.query })
 const formOpen = ref(false)
 const formMode = ref<CrudDialogMode>('create')
@@ -124,6 +128,7 @@ async function refreshFormPlaceOptions(placeType: VrPlaceType): Promise<void> {
 }
 
 function openCreate(): void {
+  if (!canOperate.value) return
   store.resetError()
   formMode.value = 'create'
   editingId.value = null
@@ -136,6 +141,7 @@ function openCreate(): void {
 }
 
 async function openEdit(item: VrLink): Promise<void> {
+  if (!canOperate.value) return
   store.resetError()
   const detail = await store.get(item.id)
   if (!detail) {
@@ -176,6 +182,7 @@ function updateForm(value: VrLinkWriteInput): void {
 }
 
 async function save(): Promise<void> {
+  if (!canOperate.value) return
   issues.value = store.validate(formValue.value).issues
   await nextTick()
   if (!formRef.value?.validateAndFocus() || issues.value.length) return
@@ -192,6 +199,7 @@ async function save(): Promise<void> {
 }
 
 async function toggleStatus(item: VrLink): Promise<void> {
+  if (!canOperate.value) return
   if (store.updatingStatusId) return
   const nextStatus = item.status === 'enabled' ? 'disabled' : 'enabled'
   const saved = await store.updateStatus(item.id, nextStatus)
@@ -224,12 +232,13 @@ async function changePageSize(value: number): Promise<void> {
 }
 
 function requestDelete(item: VrLink): void {
+  if (!canOperate.value) return
   store.resetError()
   deleteTarget.value = item
 }
 
 async function remove(): Promise<void> {
-  if (!deleteTarget.value) return
+  if (!canOperate.value || !deleteTarget.value) return
   if (await store.remove(deleteTarget.value.id)) {
     deleteTarget.value = null
     toast.success('VR 地点绑定已删除。')
@@ -269,7 +278,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><ScanEye class="size-5" aria-hidden="true" /></span>
           <div><h1 id="vr-link-title" class="text-2xl font-semibold tracking-tight">VR 地点绑定</h1><p class="mt-1 text-sm text-muted-foreground">将 VR 外链与场馆地点建立一对一绑定</p></div>
         </div>
-        <Button size="lg" class="h-11 px-4" :disabled="store.isLoading" @click="openCreate"><Plus aria-hidden="true" />新增绑定</Button>
+        <Button v-if="canOperate" size="lg" class="h-11 px-4" :disabled="store.isLoading" @click="openCreate"><Plus aria-hidden="true" />新增绑定</Button>
       </header>
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
@@ -293,7 +302,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
             <span class="truncate font-mono text-xs">{{ hostName(row.vrUrl) }}</span><ExternalLink class="size-3.5 shrink-0 transition-colors group-hover:text-primary" aria-hidden="true" />
           </a>
         </template>
-        <template #cell-status="{ row }"><VrLinkStatusBadge :status="row.status" interactive :loading="store.updatingStatusId === row.id" @click="toggleStatus(row)" /></template>
+        <template #cell-status="{ row }"><VrLinkStatusBadge :status="row.status" :interactive="canOperate" :loading="store.updatingStatusId === row.id" @click="toggleStatus(row)" /></template>
         <template #cell-updatedAt="{ row }"><time :datetime="row.updatedAt" class="whitespace-nowrap text-sm tabular-nums text-muted-foreground">{{ formatDateTime(row.updatedAt) }}</time></template>
         <template #cell-actions="{ row }">
           <div class="flex justify-end gap-1">

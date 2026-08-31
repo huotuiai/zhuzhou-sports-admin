@@ -54,6 +54,7 @@ import ContactNumberForm from '@/modules/user-service-management/components/Cont
 import FeedbackHandleForm from '@/modules/user-service-management/components/FeedbackHandleForm.vue'
 import { DEFAULT_FEEDBACK_QUERY, useUserServiceStore } from '@/modules/user-service-management/stores/user-service-store'
 import { useTodoStore } from '@/modules/todo/stores/todo-store'
+import { useAuthStore } from '@/stores/auth'
 
 type ServiceTab = 'feedback' | 'contact'
 type FormKind = 'feedback' | 'contact'
@@ -68,7 +69,7 @@ const feedbackColumns: readonly DataTableColumn<UserFeedback>[] = [
   { key: 'actions', label: '操作', width: '190px', align: 'right' },
 ]
 
-const contactColumns: readonly DataTableColumn<ContactNumber>[] = [
+const baseContactColumns: readonly DataTableColumn<ContactNumber>[] = [
   { key: 'sort', label: '排序', width: '100px', align: 'center' },
   { key: 'name', label: '号码名称', minWidth: '220px' },
   { key: 'phone', label: '联系电话', minWidth: '220px' },
@@ -86,6 +87,10 @@ const feedbackTypeLabels: Record<FeedbackType, string> = {
 
 const store = useUserServiceStore()
 const todoStore = useTodoStore()
+const authStore = useAuthStore()
+const canOperate = computed(() => authStore.hasPermission('service:operate'))
+const canExport = computed(() => authStore.hasPermission('service:export'))
+const contactColumns = computed(() => canOperate.value ? baseContactColumns : baseContactColumns.filter(column => column.key !== 'actions'))
 const route = useRoute()
 const router = useRouter()
 const activeTab = ref<ServiceTab>('feedback')
@@ -172,6 +177,7 @@ async function openDetail(feedback: UserFeedback): Promise<void> {
 }
 
 async function openHandle(feedback: UserFeedback): Promise<void> {
+  if (!canOperate.value) return
   const detail = await store.getFeedback(feedback.id)
   if (!detail) {
     toast.error(store.error ?? '反馈详情加载失败')
@@ -194,7 +200,7 @@ function closeHandle(): void {
 }
 
 async function saveHandle(): Promise<void> {
-  if (!handleTarget.value) return
+  if (!canOperate.value || !handleTarget.value) return
   const input = { ...handleValue.value }
   handleIssues.value = store.validateHandle(input)
   await nextTick()
@@ -211,6 +217,7 @@ async function saveHandle(): Promise<void> {
 }
 
 function openCreateContact(): void {
+  if (!canOperate.value) return
   const nextSort = store.contacts.reduce((maximum, item) => Math.max(maximum, item.sort), 0) + 1
   const value = { ...emptyContact(), sort: nextSort }
   contactMode.value = 'create'
@@ -223,6 +230,7 @@ function openCreateContact(): void {
 }
 
 function openEditContact(contact: ContactNumber): void {
+  if (!canOperate.value) return
   const value: ContactNumberWriteInput = {
     name: contact.name,
     phone: contact.phone,
@@ -246,6 +254,7 @@ function closeContact(): void {
 }
 
 async function saveContact(): Promise<void> {
+  if (!canOperate.value) return
   contactIssues.value = store.validateContact(contactValue.value)
   await nextTick()
   if (!contactFormRef.value?.validateAndFocus() || contactIssues.value.length) return
@@ -277,7 +286,7 @@ function confirmDiscard(): void {
 }
 
 async function removeContact(): Promise<void> {
-  if (!deleteTarget.value) return
+  if (!canOperate.value || !deleteTarget.value) return
   const name = deleteTarget.value.name
   if (await store.deleteContact(deleteTarget.value.id)) {
     deleteTarget.value = null
@@ -288,6 +297,7 @@ async function removeContact(): Promise<void> {
 }
 
 async function exportFeedbacks(): Promise<void> {
+  if (!canExport.value) return
   const file = await store.exportFeedbacks()
   if (!file) {
     toast.error(store.error ?? '反馈导出失败')
@@ -506,7 +516,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
             <Input id="feedback-query-end" v-model="queryDraft.endDate" type="date" class="h-11" :min="queryDraft.startDate || undefined" />
           </div>
           <template #actions-after>
-            <Button type="button" variant="outline" size="lg" class="h-11 min-w-24" :disabled="store.isFeedbackLoading || store.isExporting" @click="exportFeedbacks">
+            <Button v-if="canExport" type="button" variant="outline" size="lg" class="h-11 min-w-24" :disabled="store.isFeedbackLoading || store.isExporting" @click="exportFeedbacks">
               <Download aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}
             </Button>
           </template>
@@ -536,7 +546,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button variant="ghost" class="h-11 px-3" :disabled="store.detailLoadingId === row.id" @click="openDetail(row)"><Info aria-hidden="true" />详情</Button>
-              <Button variant="ghost" class="h-11 px-3 text-primary hover:text-primary" :disabled="store.detailLoadingId === row.id" @click="openHandle(row)"><PencilLine aria-hidden="true" />{{ row.status === 'processed' ? '修改备注' : '处理' }}</Button>
+              <Button v-if="canOperate" variant="ghost" class="h-11 px-3 text-primary hover:text-primary" :disabled="store.detailLoadingId === row.id" @click="openHandle(row)"><PencilLine aria-hidden="true" />{{ row.status === 'processed' ? '修改备注' : '处理' }}</Button>
             </div>
           </template>
         </DataTable>
@@ -559,7 +569,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
               <p class="font-medium">联系我们号码配置</p>
               <p class="mt-1 text-xs leading-5 text-muted-foreground">这里维护后台侧的数据源；本次不修改 H5 工程，仅标记哪些号码允许后续提供给 H5 展示。</p>
             </div>
-            <Button size="lg" class="h-11" @click="openCreateContact"><Plus aria-hidden="true" />新增号码</Button>
+            <Button v-if="canOperate" size="lg" class="h-11" @click="openCreateContact"><Plus aria-hidden="true" />新增号码</Button>
           </CardContent>
         </Card>
 
@@ -569,7 +579,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
               <span class="grid size-11 place-items-center rounded-xl border bg-muted/40"><PhoneCall class="size-5" aria-hidden="true" /></span>
               <span class="mt-3 text-sm">暂无联系方式</span>
               <span class="mt-1 text-xs">后续 H5 联系我们弹窗应降级提示“暂无联系方式”</span>
-              <Button variant="outline" class="mt-4 h-11" @click="openCreateContact"><Plus aria-hidden="true" />新增号码</Button>
+              <Button v-if="canOperate" variant="outline" class="mt-4 h-11" @click="openCreateContact"><Plus aria-hidden="true" />新增号码</Button>
             </div>
           </template>
           <template #cell-sort="{ row }"><span class="inline-grid size-7 place-items-center rounded-full bg-primary/10 font-semibold tabular-nums text-primary">{{ row.sort }}</span></template>
@@ -624,7 +634,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </div>
           <SheetFooter class="shrink-0 flex-row justify-end border-t bg-card/90 px-5 py-4">
             <Button variant="outline" size="lg" class="h-11 min-w-24" @click="detailTarget = null">关闭</Button>
-            <Button size="lg" class="h-11" @click="openHandle(detailTarget); detailTarget = null"><PencilLine aria-hidden="true" />{{ detailTarget.status === 'processed' ? '修改备注' : '处理反馈' }}</Button>
+            <Button v-if="canOperate" size="lg" class="h-11" @click="openHandle(detailTarget); detailTarget = null"><PencilLine aria-hidden="true" />{{ detailTarget.status === 'processed' ? '修改备注' : '处理反馈' }}</Button>
           </SheetFooter>
         </div>
       </SheetContent>

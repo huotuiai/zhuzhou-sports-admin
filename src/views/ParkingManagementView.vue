@@ -68,10 +68,11 @@ import {
 } from '@/modules/parking-management/types'
 import { ticketGateService } from '@/modules/ticket-gate-management/services/ticket-gate-service'
 import { useThemeStore } from '@/stores/theme'
+import { useAuthStore } from '@/stores/auth'
 
 type ViewMode = 'list' | 'map'
 
-const columns: readonly DataTableColumn<ParkingLot>[] = [
+const baseColumns: readonly DataTableColumn<ParkingLot>[] = [
   { key: 'code', label: '停车场编号', width: '118px' },
   { key: 'name', label: '名称', minWidth: '160px' },
   { key: 'locationDescription', label: '位置描述', minWidth: '220px' },
@@ -86,7 +87,10 @@ const columns: readonly DataTableColumn<ParkingLot>[] = [
 ]
 
 const store = useParkingLotStore()
+const authStore = useAuthStore()
 const themeStore = useThemeStore()
+const canOperate = computed(() => authStore.hasPermission('parking:operate'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const viewMode = ref<ViewMode>('list')
 const queryDraft = reactive<ParkingLotQuery>({ ...store.query })
 const sheetOpen = ref(false)
@@ -153,6 +157,7 @@ function nextSortOrder(): number {
 }
 
 function openCreate(): void {
+  if (!canOperate.value) return
   store.resetError()
   sheetMode.value = 'create'
   editingId.value = null
@@ -164,6 +169,7 @@ function openCreate(): void {
 }
 
 async function openEdit(record: ParkingLot): Promise<void> {
+  if (!canOperate.value) return
   store.resetError()
   loadingRelationsId.value = record.id
   try {
@@ -222,6 +228,7 @@ function parsedFormInput(): ReturnType<typeof parkingLotFormToCreateInput> | nul
 }
 
 async function persistForm(clampAvailableSpaces = false): Promise<void> {
+  if (!canOperate.value) return
   const created = sheetMode.value === 'create'
   const nearbyGateBindings = formValue.value.nearbyGateBindings.map(binding => ({
     gateId: binding.gateId,
@@ -270,6 +277,7 @@ async function confirmCapacityClamp(): Promise<void> {
 }
 
 function openAvailability(record: ParkingLot): void {
+  if (!canOperate.value) return
   store.resetError()
   availabilityTarget.value = record
   availabilityValue.value = String(record.availableSpaces)
@@ -298,6 +306,7 @@ function handleAvailabilityOpenChange(open: boolean): void {
 }
 
 async function saveAvailability(): Promise<void> {
+  if (!canOperate.value) return
   const target = availabilityTarget.value
   if (!target) return
   const source = availabilityValue.value.toString()?.trim()
@@ -317,6 +326,7 @@ async function saveAvailability(): Promise<void> {
 }
 
 async function removeParkingLot(): Promise<void> {
+  if (!canOperate.value) return
   const target = deleteTarget.value
   if (!target) return
   const removed = await store.remove(target.id)
@@ -329,6 +339,7 @@ async function removeParkingLot(): Promise<void> {
 }
 
 async function toggleParkingLot(record: ParkingLot): Promise<void> {
+  if (!canOperate.value) return
   const saved = await store.updateEnabled(record.id, !record.enabled)
   if (!saved) {
     toast.error(store.error ?? '停车场状态更新失败。')
@@ -449,7 +460,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
               <MapIcon aria-hidden="true" />地图
             </Button>
           </div>
-          <Button size="lg" class="h-11 px-4" @click="openCreate">
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate">
             <Plus aria-hidden="true" />
             新增停车场
           </Button>

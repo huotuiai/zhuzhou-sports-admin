@@ -26,13 +26,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import SeatStatusBadge from '@/modules/seat-management/components/SeatStatusBadge.vue'
 import VenueSeatForm from '@/modules/seat-management/components/VenueSeatForm.vue'
 import { useSeatPlanningStore } from '@/modules/seat-management/stores/venue-seat-store'
+import { useAuthStore } from '@/stores/auth'
 
 const EMPTY_ZONE: SeatZoneWriteInput = {
   code: '', name: '', floorId: '', rowStart: 1, rowEnd: 30,
   gateIds: [], sortOrder: 1, status: 'enabled', remark: '',
 }
 
-const columns: readonly DataTableColumn<SeatZone>[] = [
+const baseColumns: readonly DataTableColumn<SeatZone>[] = [
   { key: 'code', label: '分区编号', width: '120px' },
   { key: 'name', label: '区域名称', minWidth: '220px' },
   { key: 'floor', label: '楼层', width: '100px', align: 'center' },
@@ -44,6 +45,9 @@ const columns: readonly DataTableColumn<SeatZone>[] = [
 ]
 
 const store = useSeatPlanningStore()
+const authStore = useAuthStore()
+const canOperate = computed(() => authStore.hasPermission('seat:operate'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const queryDraft = ref<SeatPlanningQuery>({ ...store.query, gateIds: [...store.query.gateIds] })
 const zoneOpen = ref(false)
 const zoneMode = ref<CrudDialogMode>('create')
@@ -108,6 +112,7 @@ function toggleQueryGate(gateId: string, checked: boolean | 'indeterminate'): vo
 }
 
 function openCreateZone(floorId?: string): void {
+  if (!canOperate.value) return
   store.resetError()
   const selectedFloor = store.floors.find((item) => item.id === floorId) ??
     store.floors.find((item) => item.id === queryDraft.value.floorId) ?? store.floors[0]
@@ -124,6 +129,7 @@ function openCreateZone(floorId?: string): void {
 }
 
 async function openEditZone(zone: SeatZone): Promise<void> {
+  if (!canOperate.value) return
   store.resetError()
   const detail = await store.getZone(zone.id)
   if (!detail) {
@@ -161,6 +167,7 @@ function requestZoneClose(request: CrudDialogCloseRequest): void {
 }
 
 async function saveZone(): Promise<void> {
+  if (!canOperate.value) return
   zoneIssues.value = store.validateZone(zoneValue.value, editingId.value ?? undefined).issues
   await nextTick()
   if (!zoneFormRef.value?.validateAndFocus() || zoneIssues.value.length) return
@@ -177,6 +184,7 @@ async function saveZone(): Promise<void> {
 }
 
 function openCreateFloor(): void {
+  if (!canOperate.value) return
   store.resetError()
   floorName.value = ''
   initialFloorName.value = ''
@@ -200,6 +208,7 @@ function requestFloorClose(request: CrudDialogCloseRequest): void {
 }
 
 async function saveFloor(): Promise<void> {
+  if (!canOperate.value) return
   const result = store.validateFloor({ name: floorName.value })
   floorError.value = result.issues[0]?.message ?? ''
   if (floorError.value) {
@@ -224,6 +233,7 @@ function confirmDiscard(): void {
 }
 
 async function toggleZoneStatus(zone: SeatZone): Promise<void> {
+  if (!canOperate.value) return
   const nextStatus = zone.status === 'enabled' ? 'disabled' : 'enabled'
   const saved = await store.updateStatus(zone.id, nextStatus)
   if (!saved) toast.error(store.error ?? '状态更新失败')
@@ -231,12 +241,13 @@ async function toggleZoneStatus(zone: SeatZone): Promise<void> {
 }
 
 function requestZoneDelete(zone: SeatZone): void {
+  if (!canOperate.value) return
   if (zone.status === 'enabled') zoneBlockedTarget.value = zone
   else zoneDeleteTarget.value = zone
 }
 
 async function removeZone(): Promise<void> {
-  if (!zoneDeleteTarget.value) return
+  if (!canOperate.value || !zoneDeleteTarget.value) return
   if (await store.removeZone(zoneDeleteTarget.value.id)) {
     zoneDeleteTarget.value = null
     toast.success('座位分区已删除。')
@@ -244,12 +255,13 @@ async function removeZone(): Promise<void> {
 }
 
 function requestFloorDelete(floor: SeatFloor): void {
+  if (!canOperate.value) return
   if (store.totalZoneCount(floor.id) > 0) floorBlockedTarget.value = floor
   else floorDeleteTarget.value = floor
 }
 
 async function removeFloor(): Promise<void> {
-  if (!floorDeleteTarget.value) return
+  if (!canOperate.value || !floorDeleteTarget.value) return
   const id = floorDeleteTarget.value.id
   if (await store.removeFloor(id)) {
     if (zoneOpen.value && zoneValue.value.floorId === id) {
@@ -296,8 +308,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <div><h1 id="seat-planning-title" class="text-2xl font-semibold tracking-tight">座位规划管理</h1><p class="mt-1 text-sm text-muted-foreground">座位分区与检票口对应关系</p></div>
         </div>
         <div class="flex items-center gap-2">
-          <Button size="lg" class="h-11 px-4" @click="openCreateZone()"><Plus aria-hidden="true" />新增分区</Button>
-          <DropdownMenu>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreateZone()"><Plus aria-hidden="true" />新增分区</Button>
+          <DropdownMenu v-if="canOperate">
             <DropdownMenuTrigger as-child><Button variant="outline" size="lg" class="h-11 px-4"><Building2 aria-hidden="true" />楼层管理<ChevronDown aria-hidden="true" /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="w-64">
               <DropdownMenuLabel>场馆楼层</DropdownMenuLabel>

@@ -24,6 +24,7 @@ const props = defineProps<{
   loading?: boolean
   trendLoading?: boolean
   exporting?: boolean
+  canExport?: boolean
   error?: string | null
   trendError?: string | null
 }>()
@@ -96,6 +97,7 @@ function referenceLabel(row: DashboardMetricDetail): string {
             </SheetDescription>
           </div>
           <Button
+            v-if="canExport"
             variant="outline"
             class="h-10 shrink-0 self-start"
             :disabled="!metric || loading || exporting"

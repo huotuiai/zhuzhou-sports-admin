@@ -1,5 +1,4 @@
 import type { Component } from 'vue'
-import type { RouteLocationRaw } from 'vue-router'
 import {
   ArmchairIcon,
   BookOpenTextIcon,
@@ -18,166 +17,84 @@ import {
   UsersRoundIcon,
 } from '@lucide/vue'
 
-export interface SidebarNavigationItem {
+export type PermissionCode
+  = | 'dashboard:view'
+    | 'dashboard:export'
+    | 'content:view'
+    | 'content:operate'
+    | 'content:export'
+    | 'control:view'
+    | 'control:operate'
+    | 'control:export'
+    | 'seat:view'
+    | 'seat:operate'
+    | 'seat:export'
+    | 'gate:view'
+    | 'gate:operate'
+    | 'gate:export'
+    | 'parking:view'
+    | 'parking:operate'
+    | 'parking:export'
+    | 'shuttle:view'
+    | 'shuttle:operate'
+    | 'shuttle:export'
+    | 'vr:view'
+    | 'vr:operate'
+    | 'user:view'
+    | 'user:operate'
+    | 'user:export'
+    | 'role:view'
+    | 'role:operate'
+    | 'integration:view'
+    | 'integration:operate'
+    | 'audit:view'
+    | 'audit:export'
+    | 'service:view'
+    | 'service:operate'
+    | 'service:export'
+
+export interface NavigationRegistration {
   id: string
-  label: string
+  path: string
+  routeName: string
+  permission: PermissionCode
   icon: Component
-  to: RouteLocationRaw
-  permissionId: SidebarPermissionId
   trailingIcon?: Component
 }
 
-export type SidebarPermissionId =
-  | 'permission-home'
-  | 'permission-data-screen'
-  | 'permission-content'
-  | 'permission-area'
-  | 'permission-seat'
-  | 'permission-ticket-gate'
-  | 'permission-parking'
-  | 'permission-shuttle'
-  | 'permission-vr'
-  | 'permission-user'
-  | 'permission-role'
-  | 'permission-external-data'
-  | 'permission-operation-log'
-  | 'permission-user-service'
+export interface AuthorizedNavigationItem extends NavigationRegistration {
+  label: string
+}
 
-export interface SidebarNavigationGroup {
+export interface AuthorizedNavigationGroup {
   id: string
   label: string
-  items: readonly SidebarNavigationItem[]
+  items: AuthorizedNavigationItem[]
 }
 
 const managementArrow = ChevronRightIcon
 
-export const sidebarNavigation: readonly SidebarNavigationGroup[] = [
-  {
-    id: 'operations-management',
-    label: '运营管理',
-    items: [
-      {
-        id: 'data-dashboard',
-        label: '数据看板',
-        icon: ChartNoAxesCombinedIcon,
-        to: { name: 'data-dashboard' },
-        permissionId: 'permission-home',
-      },
-      {
-        id: 'data-screen',
-        label: '数据大屏',
-        icon: LayoutDashboardIcon,
-        to: { name: 'data-screen' },
-        permissionId: 'permission-data-screen',
-      },
-      {
-        id: 'content-management',
-        label: '内容管理',
-        icon: BookOpenTextIcon,
-        to: { name: 'content-management' },
-        permissionId: 'permission-content',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'traffic-control',
-        label: '交通管制',
-        icon: TrafficConeIcon,
-        to: { name: 'area-control' },
-        permissionId: 'permission-area',
-        trailingIcon: managementArrow,
-      },
-    ],
-  },
-  {
-    id: 'venue-management',
-    label: '场地管理',
-    items: [
-      {
-        id: 'venue-seats',
-        label: '座位规划管理',
-        icon: ArmchairIcon,
-        to: { name: 'seat-management' },
-        permissionId: 'permission-seat',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'ticket-gates',
-        label: '检票口管理',
-        icon: CircleDotIcon,
-        to: { name: 'ticket-gate-management' },
-        permissionId: 'permission-ticket-gate',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'parking-areas',
-        label: '停车区管理',
-        icon: CarFrontIcon,
-        to: { name: 'parking-management' },
-        permissionId: 'permission-parking',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'shuttle-buses',
-        label: '接驳车管理',
-        icon: BusFrontIcon,
-        to: { name: 'shuttle-point-management' },
-        permissionId: 'permission-shuttle',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'vr-links',
-        label: 'VR 地点绑定',
-        icon: ScanEyeIcon,
-        to: { name: 'vr-link-management' },
-        permissionId: 'permission-vr',
-        trailingIcon: managementArrow,
-      },
-    ],
-  },
-  {
-    id: 'system-management',
-    label: '系统管理',
-    items: [
-      {
-        id: 'users',
-        label: '用户管理',
-        icon: UserRoundIcon,
-        to: { name: 'user-management' },
-        permissionId: 'permission-user',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'roles',
-        label: '角色管理',
-        icon: UsersRoundIcon,
-        to: { name: 'role-management' },
-        permissionId: 'permission-role',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'external-data',
-        label: '外部数据对接',
-        icon: ShieldIcon,
-        to: { name: 'external-data-integration' },
-        permissionId: 'permission-external-data',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'operation-logs',
-        label: '操作日志',
-        icon: FileTextIcon,
-        to: { name: 'operation-logs' },
-        permissionId: 'permission-operation-log',
-        trailingIcon: managementArrow,
-      },
-      {
-        id: 'user-services',
-        label: '用户服务管理',
-        icon: MessageSquareIcon,
-        to: { name: 'user-service-management' },
-        permissionId: 'permission-user-service',
-        trailingIcon: managementArrow,
-      },
-    ],
-  },
+/**
+ * Only trusted frontend routes and icons are registered here. The API menu tree
+ * supplies labels, grouping, ordering and access, but never executable components.
+ */
+export const navigationRegistry: readonly NavigationRegistration[] = [
+  { id: 'data-dashboard', path: '/', routeName: 'data-dashboard', permission: 'dashboard:view', icon: ChartNoAxesCombinedIcon },
+  { id: 'data-screen', path: '/operations/data-screen', routeName: 'data-screen', permission: 'dashboard:view', icon: LayoutDashboardIcon },
+  { id: 'content-management', path: '/operations/content', routeName: 'content-management', permission: 'content:view', icon: BookOpenTextIcon, trailingIcon: managementArrow },
+  { id: 'traffic-control', path: '/area-control', routeName: 'area-control', permission: 'control:view', icon: TrafficConeIcon, trailingIcon: managementArrow },
+  { id: 'venue-seats', path: '/seats', routeName: 'seat-management', permission: 'seat:view', icon: ArmchairIcon, trailingIcon: managementArrow },
+  { id: 'ticket-gates', path: '/ticket-gates', routeName: 'ticket-gate-management', permission: 'gate:view', icon: CircleDotIcon, trailingIcon: managementArrow },
+  { id: 'parking-areas', path: '/parking-management', routeName: 'parking-management', permission: 'parking:view', icon: CarFrontIcon, trailingIcon: managementArrow },
+  { id: 'shuttle-buses', path: '/shuttle-points', routeName: 'shuttle-point-management', permission: 'shuttle:view', icon: BusFrontIcon, trailingIcon: managementArrow },
+  { id: 'vr-links', path: '/vr-links', routeName: 'vr-link-management', permission: 'vr:view', icon: ScanEyeIcon, trailingIcon: managementArrow },
+  { id: 'users', path: '/system/users', routeName: 'user-management', permission: 'user:view', icon: UserRoundIcon, trailingIcon: managementArrow },
+  { id: 'roles', path: '/system/roles', routeName: 'role-management', permission: 'role:view', icon: UsersRoundIcon, trailingIcon: managementArrow },
+  { id: 'external-data', path: '/system/external-data', routeName: 'external-data-integration', permission: 'integration:view', icon: ShieldIcon, trailingIcon: managementArrow },
+  { id: 'operation-logs', path: '/system/operation-logs', routeName: 'operation-logs', permission: 'audit:view', icon: FileTextIcon, trailingIcon: managementArrow },
+  { id: 'user-services', path: '/system/user-services', routeName: 'user-service-management', permission: 'service:view', icon: MessageSquareIcon, trailingIcon: managementArrow },
 ] as const
+
+export function navigationRegistrationForPath(path: string): NavigationRegistration | undefined {
+  return navigationRegistry.find(item => item.path === path)
+}

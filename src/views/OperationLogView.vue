@@ -31,6 +31,7 @@ import {
   operationLogActionLabel,
   operationLogModuleLabel,
 } from '@/modules/operation-log/types'
+import { useAuthStore } from '@/stores/auth'
 
 const columns: readonly DataTableColumn<OperationLog>[] = [
   { key: 'performedAt', label: '操作时间', minWidth: '176px' },
@@ -45,6 +46,8 @@ const columns: readonly DataTableColumn<OperationLog>[] = [
 ]
 
 const store = useOperationLogStore()
+const authStore = useAuthStore()
+const canExport = computed(() => authStore.hasPermission('audit:export'))
 const queryDraft = ref<OperationLogQuery>({ ...store.query })
 const detailTarget = ref<OperationLog | null>(null)
 const hasActiveQuery = computed(() => Object.entries(DEFAULT_OPERATION_LOG_QUERY)
@@ -97,6 +100,7 @@ function closeDetail(): void {
 }
 
 async function exportCurrent(): Promise<void> {
+  if (!canExport.value) return
   const file = await store.exportLogs()
   if (!file) {
     toast.error(store.error ?? '操作日志导出失败，请稍后重试。')
@@ -144,6 +148,7 @@ onMounted(() => {
           </div>
         </div>
         <Button
+          v-if="canExport"
           variant="outline"
           size="lg"
           class="h-11 self-start xl:self-auto"

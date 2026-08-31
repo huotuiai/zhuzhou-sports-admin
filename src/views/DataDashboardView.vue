@@ -44,6 +44,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useThemeStore } from '@/stores/theme'
+import { useAuthStore } from '@/stores/auth'
 
 const groupTabs: readonly { value: DashboardMetricGroup, label: string }[] = [
   { value: 'entry', label: '入口行为' },
@@ -64,7 +65,10 @@ const vrColumns: readonly DataTableColumn<VrWorkMetric>[] = [
 ]
 
 const store = useDataDashboardStore()
+const authStore = useAuthStore()
 const themeStore = useThemeStore()
+const canExport = computed(() => authStore.hasPermission('dashboard:export'))
+const canSyncVr = computed(() => authStore.hasPermission('integration:operate'))
 const reducedMotion = usePreferredReducedMotion()
 const now = new Date()
 const today = toDashboardDate(now)
@@ -171,7 +175,7 @@ function downloadFile(content: Blob, filename: string): void {
 }
 
 async function exportMetricDetails(): Promise<void> {
-  if (!store.selectedMetric || exporting.value) return
+  if (!canExport.value || !store.selectedMetric || exporting.value) return
   exporting.value = true
   try {
     const file = await store.exportMetricDetails()
@@ -186,6 +190,7 @@ async function exportMetricDetails(): Promise<void> {
 }
 
 async function syncVrWorks(): Promise<void> {
+  if (!canSyncVr.value) return
   const result = await store.syncVrWorks()
   if (!result) {
     toast.error(store.vrSyncError ?? '同步失败，可重试')
@@ -364,7 +369,7 @@ onMounted(async () => {
             </span>
             <h2 id="vr-section-title" class="text-base font-semibold">板块三 · VR 作品数据</h2>
             <Badge variant="secondary">720 云累计，固定展示</Badge>
-            <Button variant="outline" size="sm" class="ml-auto" :disabled="store.isVrSyncing" @click="syncVrWorks">
+            <Button v-if="canSyncVr" variant="outline" size="sm" class="ml-auto" :disabled="store.isVrSyncing" @click="syncVrWorks">
               <LoaderCircle v-if="store.isVrSyncing" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
               <RotateCw v-else aria-hidden="true" />
               {{ store.isVrSyncing ? '同步中' : '同步全部 720 云' }}
@@ -411,6 +416,7 @@ onMounted(async () => {
       :loading="store.isDetailLoading"
       :trend-loading="store.isTrendLoading"
       :exporting="exporting"
+      :can-export="canExport"
       :error="store.detailError"
       :trend-error="store.trendError"
       @update:open="!$event && store.closeMetricDetail()"

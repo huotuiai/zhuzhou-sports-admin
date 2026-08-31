@@ -10,6 +10,7 @@ import {
   UserRoundIcon,
 } from '@lucide/vue'
 import AppSidebar from '@/components/navigation/AppSidebar.vue'
+import AccessDeniedView from '@/views/AccessDeniedView.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { Avatar, AvatarBadge, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -40,9 +41,21 @@ const currentPageTitle = computed(() => String(route.meta.title ?? '未命名页
 const currentSectionTitle = computed(() => route.meta.sectionTitle
   ? String(route.meta.sectionTitle)
   : '')
+const pageAuthorized = computed(() => {
+  const menuPath = typeof route.meta.menuPath === 'string' ? route.meta.menuPath : ''
+  const permission = typeof route.meta.requiredPermission === 'string' ? route.meta.requiredPermission : ''
+  if (!menuPath) return true
+  return authStore.canAccessPath(menuPath) && (!permission || authStore.hasPermission(permission))
+})
+const visibleTodos = computed(() => todoStore.visibleItems.filter((item) => {
+  const path = router.resolve(todoRoute(item)).path
+  return authStore.canAccessPath(path)
+}))
+const visibleTodoCount = computed(() => visibleTodos.value.reduce((total, item) => total + item.count, 0))
 
 async function handleTodo(item: TodoItem) {
-  await router.push(todoRoute(item))
+  const target = todoRoute(item)
+  if (authStore.canAccessPath(router.resolve(target).path)) await router.push(target)
 }
 
 async function handleLogout() {
@@ -80,10 +93,10 @@ watch(
         </nav>
 
         <div class="ml-auto flex min-w-0 items-center gap-2">
-          <div v-if="todoStore.visibleItems.length" class="hidden max-w-[600px] items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-primary/6 p-1 xl:flex" aria-label="运营待办">
+          <div v-if="visibleTodos.length" class="hidden max-w-[600px] items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-primary/6 p-1 xl:flex" aria-label="运营待办">
             <BellRingIcon class="mx-1 size-4 shrink-0 text-primary" aria-hidden="true" />
             <button
-              v-for="item in todoStore.visibleItems"
+              v-for="item in visibleTodos"
               :key="item.key"
               type="button"
               class="inline-flex min-h-8 shrink-0 cursor-pointer items-center gap-1 rounded-full border border-primary/20 bg-card px-2.5 text-[11px] text-primary transition-colors duration-150 hover:border-primary/45 hover:bg-primary/8 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
@@ -95,18 +108,18 @@ watch(
             </button>
           </div>
 
-          <DropdownMenu v-if="todoStore.visibleItems.length">
+          <DropdownMenu v-if="visibleTodos.length">
             <DropdownMenuTrigger as-child>
-              <Button variant="outline" size="icon" class="relative xl:hidden" :aria-label="`查看 ${todoStore.totalCount} 项运营待办`">
+              <Button variant="outline" size="icon" class="relative xl:hidden" :aria-label="`查看 ${visibleTodoCount} 项运营待办`">
                 <BellRingIcon aria-hidden="true" />
-                <span class="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[9px] font-bold leading-4 text-white">{{ todoStore.totalCount }}</span>
+                <span class="absolute -right-1 -top-1 grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[9px] font-bold leading-4 text-white">{{ visibleTodoCount }}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" :side-offset="8" class="w-64">
               <DropdownMenuLabel>运营待办</DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                v-for="item in todoStore.visibleItems"
+                v-for="item in visibleTodos"
                 :key="item.key"
                 class="min-h-10 cursor-pointer justify-between"
                 @select="handleTodo(item)"
@@ -190,11 +203,12 @@ watch(
       </header>
 
       <main id="main-content" class="min-h-[calc(100svh-4rem)] min-w-0">
-        <RouterView v-slot="{ Component, route: resolvedRoute }">
+        <RouterView v-if="pageAuthorized" v-slot="{ Component, route: resolvedRoute }">
           <Transition name="page-view" mode="out-in">
             <component :is="Component" :key="String(resolvedRoute.name ?? resolvedRoute.path)" />
           </Transition>
         </RouterView>
+        <AccessDeniedView v-else />
       </main>
     </SidebarInset>
   </SidebarProvider>

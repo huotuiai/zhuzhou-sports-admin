@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import type { SidebarNavigationItem } from '@/config/navigation'
+import type { AuthorizedNavigationItem } from '@/config/navigation'
+import { computed } from 'vue'
 import { PanelLeftClose } from '@lucide/vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import BrandMark from '@/components/brand/BrandMark.vue'
 import {
   Sidebar,
@@ -16,18 +17,15 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from '@/components/ui/sidebar'
-import { sidebarNavigation } from '@/config/navigation'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
-const router = useRouter()
+const authStore = useAuthStore()
+const navigation = computed(() => authStore.authorizedNavigation)
+const homeTarget = computed(() => authStore.firstAccessibleRoute ?? route.fullPath)
 
-function isItemActive(item: SidebarNavigationItem) {
-  if (!item.to) {
-    return false
-  }
-
-  const targetName = router.resolve(item.to).name
-  return route.matched.some((record) => record.name === targetName)
+function isItemActive(item: AuthorizedNavigationItem) {
+  return route.matched.some(record => record.name === item.routeName)
 }
 
 </script>
@@ -36,7 +34,7 @@ function isItemActive(item: SidebarNavigationItem) {
   <Sidebar variant="inset" collapsible="icon" class="border-0">
     <SidebarHeader class="px-3 pt-3 group-data-[collapsible=icon]:px-1 group-data-[collapsible=icon]:pt-2">
       <RouterLink
-        :to="{ name: 'data-dashboard' }"
+        :to="homeTarget"
         class="flex h-16 w-full items-center gap-3 overflow-hidden rounded-2xl border border-sidebar-border/75 bg-sidebar-accent/50 px-3 shadow-[0_10px_30px_rgba(15,23,42,0.06)] transition-colors duration-200 hover:bg-sidebar-accent/75 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50 motion-reduce:transition-none group-data-[collapsible=icon]:size-11 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:self-center group-data-[collapsible=icon]:rounded-xl group-data-[collapsible=icon]:px-0"
         aria-label="返回首页"
       >
@@ -51,7 +49,7 @@ function isItemActive(item: SidebarNavigationItem) {
     </SidebarHeader>
 
     <SidebarContent class="px-1 pb-2 pt-2">
-      <template v-for="group in sidebarNavigation" :key="group.id">
+      <template v-for="group in navigation" :key="group.id">
         <SidebarGroup class="px-3 py-2.5 group-data-[collapsible=icon]:px-1 group-data-[collapsible=icon]:py-1.5">
           <SidebarGroupLabel
             :id="`sidebar-group-${group.id}`"
@@ -73,7 +71,7 @@ function isItemActive(item: SidebarNavigationItem) {
                   class="h-12 rounded-xl px-3 text-sidebar-foreground/78 transition-colors duration-200 hover:bg-sidebar-accent/75 hover:text-sidebar-accent-foreground motion-reduce:transition-none data-[active=true]:bg-primary/18 data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground data-[active=true]:ring-1 data-[active=true]:ring-primary/25 data-[active=true]:[&>svg]:text-primary group-data-[collapsible=icon]:size-11! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-xl group-data-[collapsible=icon]:p-0!"
                 >
                   <RouterLink
-                    :to="item.to"
+                    :to="{ name: item.routeName }"
                     :aria-label="item.label"
                     :aria-current="isItemActive(item) ? 'page' : undefined"
                   >

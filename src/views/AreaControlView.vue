@@ -20,10 +20,11 @@ import TrafficControlMapView from '@/modules/traffic-control/components/TrafficC
 import { deriveTrafficControlTimeStatus, useTrafficControlStore } from '@/modules/traffic-control/stores/traffic-control-store'
 import { TRAFFIC_CONTROL_TYPES, TRAFFIC_PUBLISH_STATUS_LABELS, TRAFFIC_TIME_STATUS_LABELS, trafficControlTypeMeta } from '@/modules/traffic-control/types'
 import { useThemeStore } from '@/stores/theme'
+import { useAuthStore } from '@/stores/auth'
 
 type ViewMode = 'list' | 'map'
 
-const columns: readonly DataTableColumn<TrafficControl>[] = [
+const baseColumns: readonly DataTableColumn<TrafficControl>[] = [
   { key: 'code', label: '管制编号', width: '110px' },
   { key: 'title', label: '标题', minWidth: '210px' },
   { key: 'type', label: '类型', width: '112px', align: 'center' },
@@ -38,7 +39,11 @@ const columns: readonly DataTableColumn<TrafficControl>[] = [
 ]
 
 const store = useTrafficControlStore()
+const authStore = useAuthStore()
 const themeStore = useThemeStore()
+const canOperate = computed(() => authStore.hasPermission('control:operate'))
+const canExport = computed(() => authStore.hasPermission('control:export'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const now = useNow({ interval: 30_000 })
 const viewMode = ref<ViewMode>('list')
 const queryDraft = ref<TrafficControlQuery>({ ...store.query })
@@ -114,6 +119,7 @@ function publishStatusClass(status: TrafficControlPublishStatus): string {
 }
 
 async function exportAll(): Promise<void> {
+  if (!canExport.value) return
   const file = await store.exportAll()
   if (!file) {
     toast.error(store.error ?? '交通管制导出失败。')
@@ -129,6 +135,7 @@ async function exportAll(): Promise<void> {
 }
 
 function openCreate(): void {
+  if (!canOperate.value) return
   store.resetError()
   formMode.value = 'create'
   editingId.value = null
@@ -141,6 +148,7 @@ function openCreate(): void {
 }
 
 async function openEdit(item: TrafficControl): Promise<void> {
+  if (!canOperate.value) return
   store.resetError()
   const detail = await store.get(item.id)
   if (!detail) {
@@ -210,6 +218,7 @@ async function changePageSize(value: number): Promise<void> {
 }
 
 async function persistSave(): Promise<void> {
+  if (!canOperate.value) return
   const created = formMode.value === 'create'
   const saved = created
     ? await store.create(formValue.value)
@@ -239,12 +248,14 @@ async function confirmHistoricalSave(): Promise<void> {
 }
 
 async function togglePinned(item: TrafficControl): Promise<void> {
+  if (!canOperate.value) return
   const updated = await store.togglePinned(item)
   if (updated) toast.success(updated.pinned ? '已置顶该管制。' : '已取消置顶。')
   else toast.error(store.error ?? '置顶状态更新失败。')
 }
 
 async function confirmStatusChange(): Promise<void> {
+  if (!canOperate.value) return
   const target = statusTarget.value
   if (!target) return
   const updated = target.action === 'publish'
@@ -260,7 +271,7 @@ async function confirmStatusChange(): Promise<void> {
 }
 
 async function remove(): Promise<void> {
-  if (!deleteTarget.value) return
+  if (!canOperate.value || !deleteTarget.value) return
   if (await store.remove(deleteTarget.value.id)) {
     deleteTarget.value = null
     toast.success('交通管制已删除。')
@@ -313,8 +324,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
               <MapIcon aria-hidden="true" />地图
             </Button>
           </div>
-          <Button size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
-          <Button variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出全部' }}</Button>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出全部' }}</Button>
         </div>
       </header>
 

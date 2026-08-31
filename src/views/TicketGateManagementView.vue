@@ -40,6 +40,7 @@ import TicketGateForm from '@/modules/ticket-gate-management/components/TicketGa
 import TicketGateStatusBadge from '@/modules/ticket-gate-management/components/TicketGateStatusBadge.vue'
 import { formatMapCoordinates } from '@/modules/ticket-gate-management/services/ticket-gate-service'
 import { useTicketGateStore } from '@/modules/ticket-gate-management/stores/ticket-gate-store'
+import { useAuthStore } from '@/stores/auth'
 
 const EMPTY: TicketGateWriteInput = {
   code: '',
@@ -53,7 +54,7 @@ const EMPTY: TicketGateWriteInput = {
   statusRemark: '',
 }
 
-const columns: readonly DataTableColumn<TicketGate>[] = [
+const baseColumns: readonly DataTableColumn<TicketGate>[] = [
   { key: 'code', label: '检票口编号', width: '130px' },
   { key: 'name', label: '名称', minWidth: '150px' },
   { key: 'floorName', label: '楼层', width: '100px', align: 'center' },
@@ -65,6 +66,10 @@ const columns: readonly DataTableColumn<TicketGate>[] = [
 ]
 
 const store = useTicketGateStore()
+const authStore = useAuthStore()
+const canOperate = computed(() => authStore.hasPermission('gate:operate'))
+const canExport = computed(() => authStore.hasPermission('gate:export'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const queryDraft = ref<TicketGateQuery>({ ...store.query })
 const formOpen = ref(false)
 const formMode = ref<CrudDialogMode>('create')
@@ -101,6 +106,7 @@ function toWriteInput(item: TicketGate): TicketGateWriteInput {
 }
 
 function openCreate(): void {
+  if (!canOperate.value) return
   store.resetError()
   formMode.value = 'create'
   editingId.value = null
@@ -114,6 +120,7 @@ function openCreate(): void {
 }
 
 async function openEdit(item: TicketGate): Promise<void> {
+  if (!canOperate.value) return
   store.resetError()
   const detail = await store.get(item.id)
   if (!detail) {
@@ -146,6 +153,7 @@ function requestFormClose(request: CrudDialogCloseRequest): void {
 }
 
 function openStatus(item: TicketGate): void {
+  if (!canOperate.value) return
   statusTarget.value = item
   statusValue.value = { status: item.status, statusRemark: item.statusRemark }
   initialStatusValue.value = { ...statusValue.value }
@@ -200,6 +208,7 @@ async function changePageSize(value: number): Promise<void> {
 }
 
 async function save(): Promise<void> {
+  if (!canOperate.value) return
   issues.value = store.validate(formValue.value, editingId.value ?? undefined).issues
   await nextTick()
   if (!formRef.value?.validateAndFocus() || issues.value.length) return
@@ -216,7 +225,7 @@ async function save(): Promise<void> {
 }
 
 async function saveStatus(): Promise<void> {
-  if (!statusTarget.value) return
+  if (!canOperate.value || !statusTarget.value) return
   const saved = await store.updateStatus(statusTarget.value.id, statusValue.value)
   if (!saved) {
     toast.error(store.error ?? '状态更新失败。')
@@ -236,6 +245,7 @@ function downloadCsv(content: Blob, filename: string): void {
 }
 
 async function exportCurrent(): Promise<void> {
+  if (!canExport.value) return
   const file = await store.exportCurrent()
   if (!file) {
     toast.error(store.error ?? '检票口导出失败。')
@@ -252,12 +262,13 @@ async function exportCurrent(): Promise<void> {
 }
 
 function requestDelete(item: TicketGate): void {
+  if (!canOperate.value) return
   store.resetError()
   deleteTarget.value = item
 }
 
 async function remove(): Promise<void> {
-  if (!deleteTarget.value) return
+  if (!canOperate.value || !deleteTarget.value) return
   if (await store.remove(deleteTarget.value.id)) {
     deleteTarget.value = null
     toast.success('检票口已删除。')
@@ -299,8 +310,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <div><h1 id="ticket-gate-title" class="text-2xl font-semibold tracking-tight">检票口管理</h1><p class="mt-1 text-sm text-muted-foreground">检票口基础信息与状态配置</p></div>
         </div>
         <div class="flex items-center gap-2">
-          <Button variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting" @click="exportCurrent"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
-          <Button size="lg" class="h-11 px-4" :disabled="store.isLoading || !store.floors.length" @click="openCreate"><Plus aria-hidden="true" />新增检票口</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting" @click="exportCurrent"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" :disabled="store.isLoading || !store.floors.length" @click="openCreate"><Plus aria-hidden="true" />新增检票口</Button>
         </div>
       </header>
 
@@ -320,7 +331,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         <template #cell-floorName="{ row }"><Badge variant="outline"><Building2 class="size-3.5" />{{ row.floorName }}</Badge></template>
         <template #cell-locationDescription="{ row }"><div class="flex items-start gap-2"><MapPin class="mt-0.5 size-4 shrink-0 text-muted-foreground" /><p class="max-w-52 truncate" :title="row.locationDescription">{{ row.locationDescription || '—' }}</p></div></template>
         <template #cell-zoneNames="{ row }"><div v-if="row.zoneNames.length" class="flex max-w-60 flex-wrap gap-1.5"><Badge v-for="zone in row.zoneNames.slice(0, 3)" :key="zone" variant="secondary">{{ zone }}</Badge><Badge v-if="row.zoneNames.length > 3" variant="outline" :title="row.zoneNames.slice(3).join('、')">+{{ row.zoneNames.length - 3 }}</Badge></div><span v-else class="text-xs text-muted-foreground">未绑定座位分区</span></template>
-        <template #cell-status="{ row }"><TicketGateStatusBadge :status="row.status" interactive @click="openStatus(row)" /></template>
+        <template #cell-status="{ row }"><TicketGateStatusBadge :status="row.status" :interactive="canOperate" @click="openStatus(row)" /></template>
         <template #cell-statusRemark="{ row }"><p :class="['max-w-52 truncate text-sm', row.status === 'open' || !row.statusRemark ? 'text-muted-foreground' : row.status === 'restricted' ? 'text-destructive' : 'text-warning']" :title="row.statusRemark">{{ row.status === 'open' || !row.statusRemark ? '—' : row.statusRemark }}</p></template>
         <template #cell-actions="{ row }">
           <div class="flex justify-end gap-1">

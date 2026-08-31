@@ -40,6 +40,19 @@ const tokenResult = {
     visible: 1,
     status: 1,
     remark: null,
+  }, {
+    id: 22,
+    parent_id: 21,
+    name: '导出',
+    menu_type: 3,
+    path: null,
+    component: null,
+    perms: 'dashboard:export',
+    icon: null,
+    sort_order: 20,
+    visible: 0,
+    status: 0,
+    remark: '按钮权限',
   }],
 }
 
@@ -53,7 +66,10 @@ describe('auth service', () => {
       user: { username: 'operator', name: '运营管理员', mustChangePassword: true },
       roleIds: ['12'],
       roleCodes: ['operator'],
-      menus: [{ id: '21', parentId: '0', permission: 'stats:view', enabled: true }],
+      menus: [
+        { id: '21', parentId: '0', permission: 'stats:view', visible: true, enabled: true },
+        { id: '22', parentId: '21', menuType: 3, permission: 'dashboard:export', visible: false, enabled: false },
+      ],
     })
     expect(typeof mapped.user.id).toBe('string')
   })

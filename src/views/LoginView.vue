@@ -20,6 +20,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuthStore } from '@/stores/auth'
+import { isRegisteredAdminPath } from '@/lib/access-control'
 
 type FieldName = 'username' | 'password' | 'captcha'
 type FieldErrors = Partial<Record<FieldName, string>>
@@ -85,10 +86,13 @@ async function handleSubmit() {
       { username: username.value.trim(), password: password.value },
       rememberUsername.value,
     )
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
+    const requestedPath = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/')
       ? route.query.redirect
-      : '/'
-    await router.replace(redirect)
+      : ''
+    const target = requestedPath && isRegisteredAdminPath(router.resolve(requestedPath).path)
+      ? requestedPath
+      : authStore.firstAccessibleRoute ?? { name: 'no-access' }
+    await router.replace(target)
   } catch (error) {
     submitError.value = error instanceof Error ? error.message : '登录失败，请稍后重试'
     password.value = ''

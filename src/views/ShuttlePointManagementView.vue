@@ -28,11 +28,12 @@ import { useShuttleRouteStore } from '@/modules/shuttle-management/stores/shuttl
 import { shuttleDirectionLabel, shuttleOperatingStatusLabel } from '@/modules/shuttle-management/types'
 import { ticketGateService } from '@/modules/ticket-gate-management/services/ticket-gate-service'
 import { useThemeStore } from '@/stores/theme'
+import { useAuthStore } from '@/stores/auth'
 
 type ViewMode = 'list' | 'map'
 type DiscardKind = 'route' | 'stations'
 
-const columns: readonly DataTableColumn<ShuttleRoute>[] = [
+const baseColumns: readonly DataTableColumn<ShuttleRoute>[] = [
   { key: 'code', label: '线路编号', width: '112px' },
   { key: 'name', label: '线路名称', minWidth: '190px' },
   { key: 'direction', label: '方向', width: '92px', align: 'center' },
@@ -46,7 +47,11 @@ const columns: readonly DataTableColumn<ShuttleRoute>[] = [
 ]
 
 const store = useShuttleRouteStore()
+const authStore = useAuthStore()
 const themeStore = useThemeStore()
+const canOperate = computed(() => authStore.hasPermission('shuttle:operate'))
+const canExport = computed(() => authStore.hasPermission('shuttle:export'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const viewMode = ref<ViewMode>('list')
 const queryDraft = reactive<ShuttleRouteQuery>({ ...store.query })
 const routeOpen = ref(false)
@@ -141,6 +146,7 @@ function nextSortOrder(): number {
 }
 
 function openCreate(): void {
+  if (!canOperate.value) return
   store.resetError()
   routeMode.value = 'create'
   editingId.value = null
@@ -152,6 +158,7 @@ function openCreate(): void {
 }
 
 function openEdit(route: ShuttleRoute): void {
+  if (!canOperate.value) return
   store.resetError()
   routeMode.value = 'edit'
   editingId.value = route.id
@@ -182,6 +189,7 @@ function requestRouteClose(request: CrudDialogCloseRequest): void {
 }
 
 function openStations(route: ShuttleRoute): void {
+  if (!canOperate.value) return
   store.resetError()
   stationRouteId.value = route.id
   stationValue.value = cloneStations(route.stations)
@@ -211,6 +219,7 @@ function discardChanges(): void {
 }
 
 async function persistRoute(): Promise<void> {
+  if (!canOperate.value) return
   const created = routeMode.value === 'create'
   const saved = created
     ? await store.create(routeValue.value)
@@ -243,7 +252,7 @@ async function confirmDirectionSave(): Promise<void> {
 }
 
 async function saveStations(): Promise<void> {
-  if (!stationRouteId.value || !stationFormRef.value?.validateAndCommit()) return
+  if (!canOperate.value || !stationRouteId.value || !stationFormRef.value?.validateAndCommit()) return
   await nextTick()
   const validation = store.validateStations(stationValue.value)
   if (!validation.valid) {
@@ -260,6 +269,7 @@ async function saveStations(): Promise<void> {
 }
 
 function requestDelete(route: ShuttleRoute): void {
+  if (!canOperate.value) return
   deleteTarget.value = route
 }
 
@@ -268,7 +278,7 @@ function closeDelete(): void {
 }
 
 async function remove(): Promise<void> {
-  if (!deleteTarget.value) return
+  if (!canOperate.value || !deleteTarget.value) return
   const target = deleteTarget.value
   if (await store.remove(target.id)) {
     closeDelete()
@@ -317,6 +327,7 @@ function downloadCsv(content: Blob, filename: string): void {
 }
 
 async function exportCurrent(): Promise<void> {
+  if (!canExport.value) return
   const file = await store.exportCurrent()
   if (!file) {
     toast.error(store.error ?? '接驳线路导出失败。')
@@ -381,12 +392,12 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <div><h1 id="shuttle-route-title" class="text-2xl font-semibold tracking-tight">接驳车管理</h1><p class="mt-1 text-sm text-muted-foreground">接驳线路 / 站点 / 排班</p></div>
         </div>
         <div class="flex items-center gap-2">
-          <Button variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting" @click="exportCurrent"><LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting" @click="exportCurrent"><LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
           <div class="flex rounded-lg border bg-card p-1" role="group" aria-label="视图切换">
             <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表</Button>
             <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图</Button>
           </div>
-          <Button size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增线路</Button>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增线路</Button>
         </div>
       </header>
 

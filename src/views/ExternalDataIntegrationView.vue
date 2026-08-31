@@ -43,13 +43,14 @@ import {
   useIntegrationStore,
 } from '@/modules/external-data-integration/stores/integration-store'
 import { useTodoStore } from '@/modules/todo/stores/todo-store'
+import { useAuthStore } from '@/stores/auth'
 import {
   INTEGRATION_SOURCE_TYPE_LABELS,
   integrationSourceTypeLabel,
   isWritableIntegrationSourceType,
 } from '@/modules/external-data-integration/types'
 
-const columns: readonly DataTableColumn<IntegrationSource>[] = [
+const baseColumns: readonly DataTableColumn<IntegrationSource>[] = [
   { key: 'code', label: '对接源编号', minWidth: '120px' },
   { key: 'name', label: '名称', minWidth: '180px' },
   { key: 'sourceType', label: '类型', minWidth: '125px', align: 'center' },
@@ -63,6 +64,9 @@ const columns: readonly DataTableColumn<IntegrationSource>[] = [
 
 const store = useIntegrationStore()
 const todoStore = useTodoStore()
+const authStore = useAuthStore()
+const canOperate = computed(() => authStore.hasPermission('integration:operate'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const queryDraft = ref<IntegrationSourceQuery>({ ...store.query })
 const unavailableSyncStatus = ref('all')
 const formOpen = ref(false)
@@ -157,6 +161,7 @@ async function changePageSize(pageSize: number): Promise<void> {
 }
 
 function openCreate(): void {
+  if (!canOperate.value) return
   formMode.value = 'create'
   editingId.value = null
   editingCode.value = ''
@@ -168,6 +173,7 @@ function openCreate(): void {
 }
 
 async function openEdit(source: IntegrationSource): Promise<void> {
+  if (!canOperate.value) return
   if (!isWritableIntegrationSourceType(source.sourceType)) {
     toast.info('存量对接类型仅支持只读展示和手动同步。')
     return
@@ -202,6 +208,7 @@ function requestFormClose(request: CrudDialogCloseRequest): void {
 }
 
 async function saveForm(): Promise<void> {
+  if (!canOperate.value) return
   formIssues.value = validateIntegrationSourceInput(formValue.value, formMode.value)
   await nextTick()
   if (!formRef.value?.validateAndFocus() || formIssues.value.length) return
@@ -219,6 +226,7 @@ async function saveForm(): Promise<void> {
 }
 
 async function toggleSource(source: IntegrationSource): Promise<void> {
+  if (!canOperate.value) return
   const updated = await store.toggleSource(source.id)
   if (!updated) {
     toast.error(store.mutationError ?? '启停状态更新失败。')
@@ -229,6 +237,7 @@ async function toggleSource(source: IntegrationSource): Promise<void> {
 }
 
 async function syncSource(source: IntegrationSource): Promise<void> {
+  if (!canOperate.value) return
   const result = await store.syncSource(source.id)
   if (!result) {
     toast.error(store.mutationError ?? '同步失败，可重试或查看同步日志。')
@@ -279,8 +288,8 @@ onMounted(() => {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <Button size="lg" class="h-11" :disabled="store.isLoading || store.isSaving" @click="openCreate"><Plus aria-hidden="true" />新增对接源</Button>
-          <span title="等待后端提供全部同步专用接口">
+          <Button v-if="canOperate" size="lg" class="h-11" :disabled="store.isLoading || store.isSaving" @click="openCreate"><Plus aria-hidden="true" />新增对接源</Button>
+          <span v-if="canOperate" title="等待后端提供全部同步专用接口">
             <Button variant="outline" size="lg" class="h-11" disabled><RotateCw aria-hidden="true" />全部同步</Button>
           </span>
           <Button variant="outline" size="lg" class="h-11" :disabled="store.isLogsLoading" @click="openLogs">

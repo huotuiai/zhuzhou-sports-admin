@@ -29,7 +29,7 @@ type DiscardAction = 'create-close' | 'edit-close' | 'switch-basic' | 'switch-pa
 const ALL_FILTER_VALUE = '__all__'
 const EMPTY_CREATE: UserCreateInput = { username: '', name: '', phone: '', departmentIds: [], roleIds: [], password: '', confirmPassword: '' }
 const EMPTY_PASSWORD: UserPasswordResetInput = { password: '', confirmPassword: '' }
-const columns: readonly DataTableColumn<SystemUser>[] = [
+const baseColumns: readonly DataTableColumn<SystemUser>[] = [
   { key: 'username', label: '用户名', minWidth: '150px' },
   { key: 'name', label: '姓名', minWidth: '130px' },
   { key: 'departments', label: '所属组织', minWidth: '220px' },
@@ -43,6 +43,9 @@ const columns: readonly DataTableColumn<SystemUser>[] = [
 
 const store = useUserManagementStore()
 const authStore = useAuthStore()
+const canOperate = computed(() => authStore.hasPermission('user:operate'))
+const canExport = computed(() => authStore.hasPermission('user:export'))
+const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const query = ref<UserQuery>({ ...store.query })
 const createOpen = ref(false)
 const createValue = ref<UserCreateInput>({ ...EMPTY_CREATE })
@@ -97,12 +100,12 @@ async function resetQuery(): Promise<void> {
 async function changePage(value: number): Promise<void> { if (!await store.changePage(value)) showError('用户分页加载失败') }
 async function changePageSize(value: number): Promise<void> { if (!await store.changePageSize(value)) showError('用户分页加载失败') }
 function isCurrentUser(user: SystemUser): boolean { return user.id === authStore.user?.id }
-function canManageUser(user: SystemUser): boolean { return Boolean(authStore.user?.isSuper) || !user.builtIn }
+function canManageUser(user: SystemUser): boolean { return canOperate.value && (Boolean(authStore.user?.isSuper) || !user.builtIn) }
 function isStatusProtected(user: SystemUser): boolean { return user.builtIn || isCurrentUser(user) }
-function canCreateUser(): boolean { return Boolean(authStore.user?.isSuper) }
+function canCreateUser(): boolean { return canOperate.value }
 
 function openCreate(): void {
-  if (!canCreateUser()) { toast.info('只有超级管理员可以新增用户。'); return }
+  if (!canCreateUser()) { toast.info('当前账号没有新增用户权限。'); return }
   createValue.value = { ...EMPTY_CREATE, departmentIds: [], roleIds: [] }
   createInitial.value = { ...createValue.value, departmentIds: [], roleIds: [] }
   createIssues.value = []
@@ -111,6 +114,7 @@ function openCreate(): void {
 function closeCreate(): void { createOpen.value = false; createIssues.value = []; pendingDiscard.value = null }
 function requestCreateClose(request: CrudDialogCloseRequest): void { if (request.dirty) pendingDiscard.value = 'create-close'; else closeCreate() }
 async function saveCreate(): Promise<void> {
+  if (!canOperate.value) return
   createIssues.value = validateUserCreateInput(createValue.value, store.validationContext)
   await nextTick()
   if (!createFormRef.value?.validateAndFocus() || createIssues.value.length) return
@@ -152,7 +156,7 @@ function discardChanges(): void {
   }
 }
 async function submitEdit(): Promise<void> {
-  if (!editing.value) return
+  if (!canOperate.value || !editing.value) return
   if (editTab.value === 'basic') {
     basicIssues.value = validateUserBasicInfoInput(basicValue.value, store.validationContext, editing.value)
     await nextTick()
@@ -169,19 +173,19 @@ async function submitEdit(): Promise<void> {
   resetConfirmOpen.value = true
 }
 async function confirmPasswordReset(): Promise<void> {
-  if (!editing.value) return
+  if (!canOperate.value || !editing.value) return
   const saved = await store.resetPassword(editing.value.id, passwordValue.value)
   if (!saved) return showError('密码重置失败')
   closeEdit(); toast.success('密码已重置，用户下次登录需修改密码。')
 }
 
-function canDelete(user: SystemUser): boolean { return !user.builtIn && !isCurrentUser(user) }
+function canDelete(user: SystemUser): boolean { return canOperate.value && !user.builtIn && !isCurrentUser(user) }
 function requestDelete(user: SystemUser): void {
   if (!canDelete(user)) { toast.info('当前登录账号、内置管理员和超级管理员账号不能删除。'); return }
   deleteTarget.value = user
 }
 async function removeUser(): Promise<void> {
-  if (!deleteTarget.value) return
+  if (!canOperate.value || !deleteTarget.value) return
   const removed = await store.deleteUser(deleteTarget.value.id)
   if (!removed) return showError('用户删除失败')
   deleteTarget.value = null; toast.success('用户已删除。')
@@ -202,6 +206,7 @@ async function confirmStatus(): Promise<void> {
 }
 function csvCell(value: unknown): string { return `"${String(value ?? '').replaceAll('"', '""')}"` }
 function exportUsers(): void {
+  if (!canExport.value) return
   const records = store.users.map(user => [
     user.username, user.name, departmentNamesForUser(user, store.departments).join(' / '), roleNamesForUser(user, store.roles).join(' / '),
     user.phone, ({ enabled: '启用', disabled: '禁用', locked: '锁定' } as const)[user.status], formatDateTime(user.lastLoginAt), formatDateTime(user.createdAt),
@@ -227,9 +232,9 @@ onMounted(async () => {
           <div class="min-w-0"><h1 id="user-management-title" class="text-2xl font-semibold tracking-tight">用户管理</h1><p class="mt-1 text-sm text-muted-foreground">管理系统账号、组织归属与角色绑定</p></div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="lg" class="h-11" @click="organizationOpen = true"><Building2 aria-hidden="true" />组织架构管理</Button>
-          <Button variant="outline" size="lg" class="h-11" @click="exportUsers"><Download aria-hidden="true" />导出当前页</Button>
-          <Button size="lg" class="h-11" :disabled="!canCreateUser()" @click="openCreate"><Plus aria-hidden="true" />新增用户</Button>
+          <Button v-if="canOperate" variant="outline" size="lg" class="h-11" @click="organizationOpen = true"><Building2 aria-hidden="true" />组织架构管理</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" @click="exportUsers"><Download aria-hidden="true" />导出当前页</Button>
+          <Button v-if="canCreateUser()" size="lg" class="h-11" @click="openCreate"><Plus aria-hidden="true" />新增用户</Button>
         </div>
       </header>
 
@@ -284,6 +289,6 @@ onMounted(async () => {
     <AlertDialog :open="Boolean(statusTarget)" @update:open="!$event && (statusTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认{{ statusTarget?.status === 'enabled' ? '启用' : '禁用' }}“{{ statusTarget?.user.name }}”？</AlertDialogTitle><AlertDialogDescription>{{ statusTarget?.status === 'enabled' ? '启用后该账号可恢复使用。' : '禁用后该账号将不能登录系统，已有配置关系会保留。' }}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><Button :variant="statusTarget?.status === 'disabled' ? 'destructive' : 'default'" :disabled="store.isSaving" @click="confirmStatus"><Power />确认{{ statusTarget?.status === 'enabled' ? '启用' : '禁用' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && (deleteTarget = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>删除后不可恢复；如该用户是部门主管，对应主管引用会自动置空。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><Button variant="destructive" :disabled="Boolean(store.deletingId)" @click="removeUser"><Trash2 />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
-    <OrganizationManagementSheet :open="organizationOpen" @update:open="organizationOpen = $event" />
+    <OrganizationManagementSheet v-if="canOperate" :open="organizationOpen" @update:open="organizationOpen = $event" />
   </section>
 </template>

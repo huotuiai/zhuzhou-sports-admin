@@ -8,6 +8,21 @@ import {
 } from '@/lib/auth-session'
 import { createAuthStore } from './auth'
 
+const menus = [
+  {
+    id: '1', parentId: '0', name: '场地管理', menuType: 1 as const, path: null, component: null,
+    permission: null, icon: null, sortOrder: 10, visible: true, enabled: true, remark: null,
+  },
+  {
+    id: '2', parentId: '1', name: 'VR 导航', menuType: 2 as const, path: '/vr-links', component: null,
+    permission: 'vr:view', icon: 'VR', sortOrder: 10, visible: true, enabled: true, remark: null,
+  },
+  {
+    id: '3', parentId: '2', name: '操作', menuType: 3 as const, path: null, component: null,
+    permission: 'vr:operate', icon: null, sortOrder: 10, visible: false, enabled: true, remark: null,
+  },
+]
+
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>()
 
@@ -43,6 +58,7 @@ class StubAuthService implements AuthService {
   loginCalls: AuthCredentials[] = []
   profileCalls = 0
   profileDelayMs = 0
+  profileFails = false
   refreshCalls = 0
   logoutFails = false
 
@@ -53,6 +69,7 @@ class StubAuthService implements AuthService {
 
   async getProfile(): Promise<AuthProfile> {
     this.profileCalls += 1
+    if (this.profileFails) throw new Error('me 请求失败')
     if (this.profileDelayMs > 0) {
       await new Promise<void>((resolve) => setTimeout(resolve, this.profileDelayMs))
     }
@@ -91,8 +108,39 @@ describe('auth store', () => {
 
     expect(store.isAuthenticated).toBe(true)
     expect(JSON.parse(browserSessionStorage.getItem(AUTH_SESSION_KEY)!)).toMatchObject({ accessToken: 'token-1' })
+    expect(service.profileCalls).toBe(1)
     expect(browserLocalStorage.getItem('zz-sports-remembered-username')).toBe('admin')
     expect(browserLocalStorage.getItem('password')).toBeNull()
+  })
+
+  it('derives permissions, page access and dynamic navigation from the active profile', async () => {
+    service.profile = {
+      user: { id: '1', username: 'operator', name: '运营员', isSuper: false },
+      roleIds: ['2'],
+      roleCodes: ['operator'],
+      menus,
+    }
+    const store = createAuthStore(service, 'auth-access-test')()
+    await store.login({ username: 'operator', password: 'secret' }, false)
+
+    expect(store.permissionCodes).toEqual(['vr:operate', 'vr:view'])
+    expect(store.hasPermission('vr:operate')).toBe(true)
+    expect(store.hasPermission('vr:export')).toBe(false)
+    expect(store.canAccessPath('/vr-links?status=enabled')).toBe(true)
+    expect(store.canAccessPath('/ticket-gates')).toBe(false)
+    expect(store.authorizedNavigation[0]?.items[0]?.label).toBe('VR 导航')
+    expect(store.firstAccessibleRoute).toEqual({ name: 'vr-link-management' })
+  })
+
+  it('clears the provisional token when me validation fails after login', async () => {
+    service.profileFails = true
+    const store = createAuthStore(service, 'auth-login-profile-failure-test')()
+
+    await expect(store.login({ username: 'admin', password: 'secret' }, true)).rejects.toThrow('me 请求失败')
+
+    expect(store.isAuthenticated).toBe(false)
+    expect(browserSessionStorage.getItem(AUTH_SESSION_KEY)).toBeNull()
+    expect(browserLocalStorage.getItem('zz-sports-remembered-username')).toBeNull()
   })
 
   it('validates a restored session through me only once and merges the profile', async () => {
