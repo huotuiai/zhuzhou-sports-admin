@@ -71,6 +71,8 @@ export interface ContentWriteInput {
   navigationLocation: string
 }
 
+export type ContentPublicationState = Pick<ContentRecord, 'publishStatus' | 'publishAt'>
+
 export interface BannerRecord {
   id: string
   code: string
@@ -225,7 +227,7 @@ export interface ContentManagementService {
   listContentPage(page: number, pageSize: number, query: ContentServerQuery): Promise<ContentPage>
   getContent(id: string): Promise<ContentRecord>
   createContent(input: ContentWriteInput): Promise<ContentRecord>
-  updateContent(id: string, input: ContentWriteInput): Promise<ContentRecord>
+  updateContent(id: string, input: ContentWriteInput, previousPublication?: ContentPublicationState): Promise<ContentRecord>
   publishContent(id: string, publishAt?: string | null): Promise<ContentRecord>
   unpublishContent(id: string): Promise<ContentRecord>
   setContentPinned(id: string, pinned: boolean): Promise<ContentRecord>

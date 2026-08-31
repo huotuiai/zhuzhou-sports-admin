@@ -218,7 +218,7 @@ describe('content management API service', () => {
     ])
   })
 
-  it('creates a draft then publishes on schedule, and withdraws when update clears publish time', async () => {
+  it('creates a draft, publishes it, updates published content without republishing, and explicitly withdraws it', async () => {
     const configs: SignedRequestConfig[] = []
     const responses = [
       apiContent({ id: 21, code: 'CT-021' }),
@@ -234,7 +234,11 @@ describe('content management API service', () => {
     await service.createContent(contentInput({
       publishAt: '2026-08-28T10:00', attachments: [asset({ name: 'guide.pdf', url: 'https://cdn.example.com/guide.pdf', mimeType: 'application/pdf' })],
     }))
-    await service.updateContent('21', contentInput())
+    await service.updateContent('21', contentInput(), {
+      publishStatus: 'published',
+      publishAt: '2026-08-28T10:00:00+08:00',
+    })
+    await service.unpublishContent('21')
 
     expect(configs[0]).toMatchObject({ method: 'POST', url: 'api/v1/admin/contents', data: { title: '新的场馆资讯', content_type: 'news', attachments: [{ file_name: 'guide.pdf', file_url: 'https://cdn.example.com/guide.pdf' }] } })
     expect(configs[0]?.data).not.toHaveProperty('code')
@@ -270,23 +274,22 @@ describe('content management API service', () => {
     expect(configs[2]).toEqual({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '体育中心开放通知', content_type: 'activity', status: 0 } })
   })
 
-  it('keeps an existing publish schedule when editing without changing its time', async () => {
+  it('keeps the original publication state when PATCH omits it and does not publish again', async () => {
     const configs: SignedRequestConfig[] = []
     const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
       configs.push(config as SignedRequestConfig)
-      return apiContent({
-        id: 21,
-        code: 'CT-021',
-        publish_status: 'published',
-        publish_at: '2026-08-28T10:00:00+08:00',
-      }) as T
+      return apiContent({ id: 21, code: 'CT-021', publish_status: 'draft', publish_at: null }) as T
     }
     const service = createContentManagementService(requester)
 
-    await service.updateContent('21', contentInput({ publishAt: '2026-08-28T10:00' }))
+    const updated = await service.updateContent('21', contentInput({ publishAt: '2026-08-28T10:01' }), {
+      publishStatus: 'published',
+      publishAt: '2026-08-28T10:00:37+08:00',
+    })
 
     expect(configs).toHaveLength(1)
     expect(configs[0]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/contents/21' })
+    expect(updated).toMatchObject({ publishStatus: 'published', publishAt: '2026-08-28T10:00:37+08:00' })
   })
 
   it('uses Banner/highlight enum mappings, date boundaries and latest-detail status updates', async () => {

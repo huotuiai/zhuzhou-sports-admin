@@ -17,9 +17,11 @@ const props = withDefaults(defineProps<{
   value: ContentWriteInput
   issues?: readonly ValidationIssue<ContentValidationField>[]
   saving?: boolean
+  published?: boolean
 }>(), {
   issues: () => [],
   saving: false,
+  published: false,
 })
 
 const emit = defineEmits<{
@@ -240,11 +242,12 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
           type="datetime-local"
           :model-value="value.publishAt ?? ''"
           class="h-11 pl-9"
-          :disabled="saving"
+          :disabled="saving || published"
           @update:model-value="patch({ publishAt: String($event) || null })"
         />
       </div>
-      <p class="text-xs text-muted-foreground">填写后保存草稿并调用发布接口；留空保存为草稿，可在列表手动发布。</p>
+      <p v-if="published" class="text-xs text-muted-foreground">已发布内容的发布时间为历史记录；如需调整发布状态，请先在列表撤回为草稿。</p>
+      <p v-else class="text-xs text-muted-foreground">填写后保存草稿并调用发布接口；留空保存为草稿，可在列表手动发布。</p>
     </div>
 
     <div class="space-y-2">

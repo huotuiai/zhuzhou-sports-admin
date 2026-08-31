@@ -705,14 +705,6 @@ function hintQuery(page: number, pageSize: number, query: PriorityHintServerQuer
   return params
 }
 
-function sameDateTime(first: string | null, second: string | null): boolean {
-  if (!first || !second) return first === second
-  const firstTime = Date.parse(first)
-  const secondTime = Date.parse(second)
-  if (Number.isFinite(firstTime) && Number.isFinite(secondTime)) return firstTime === secondTime
-  return formatContentRequestDateTime(first) === formatContentRequestDateTime(second)
-}
-
 function headerValue(response: AxiosResponse, name: string): string | null {
   const direct = response.headers?.[name]
   if (typeof direct === 'string') return direct
@@ -792,14 +784,18 @@ export function createContentManagementService(
       return input.publishAt ? service.publishContent(created.id, input.publishAt) : created
     },
 
-    async updateContent(id, input) {
+    async updateContent(id, input, previousPublication) {
       const issues = validateContentInput(input)
       if (issues.length) throw new ContentManagementServiceError(issues[0]!.message)
+      const publication = previousPublication ?? await service.getContent(id)
       const updated = mapApiContent(await request<ApiContentVO, ApiContentWriteRequest>({
         method: 'PATCH', url: endpoint('api/v1/admin/contents', id), data: contentBody(input),
       }))
-      if (input.publishAt) return sameDateTime(input.publishAt, updated.publishAt) ? updated : service.publishContent(id, input.publishAt)
-      return updated.publishStatus === 'published' || updated.publishAt ? service.unpublishContent(id) : updated
+      if (publication.publishStatus === 'published') {
+        return { ...updated, publishStatus: publication.publishStatus, publishAt: publication.publishAt }
+      }
+      if (input.publishAt) return service.publishContent(id, input.publishAt)
+      return updated
     },
 
     async publishContent(id, publishAt = null) {

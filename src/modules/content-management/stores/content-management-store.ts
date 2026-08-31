@@ -320,7 +320,11 @@ export function createContentManagementStore(
     }
 
     const createContent = (input: ContentWriteInput) => mutate(() => service.createContent(input), [input.type === 'activity' ? 'activity' : 'news'], true)
-    const updateContent = (id: string, input: ContentWriteInput) => mutate(() => service.updateContent(id, input), [input.type === 'activity' ? 'activity' : 'news'], true)
+    const updateContent = (id: string, input: ContentWriteInput, previousPublication?: Pick<ContentRecord, 'publishStatus' | 'publishAt'>) => mutate(
+      () => service.updateContent(id, input, previousPublication),
+      [input.type === 'activity' ? 'activity' : 'news'],
+      true,
+    )
     const publishContent = (id: string, type: ContentRecord['type']) => mutate(() => service.publishContent(id), [type === 'activity' ? 'activity' : 'news'], true)
     const unpublishContent = (id: string, type: ContentRecord['type']) => mutate(() => service.unpublishContent(id), [type === 'activity' ? 'activity' : 'news'], true)
     const setContentPinned = (id: string, pinned: boolean, type: ContentRecord['type']) => mutate(() => service.setContentPinned(id, pinned), [type === 'activity' ? 'activity' : 'news'])

@@ -27,6 +27,7 @@ import type {
   BannerValidationField,
   BannerWriteInput,
   ContentManagementTab,
+  ContentPublicationState,
   ContentRecord,
   ContentValidationField,
   ContentWriteInput,
@@ -174,6 +175,7 @@ const hintQueryDraft = ref<PriorityHintQuery>({ ...DEFAULT_HINT_QUERY })
 const sheetKind = ref<SheetKind | null>(null)
 const sheetMode = ref<CrudDialogMode>('create')
 const editingId = ref<string | null>(null)
+const editingPublication = ref<ContentPublicationState | null>(null)
 const contentForm = ref<ContentWriteInput>(emptyContentForm('activity'))
 const bannerForm = ref<BannerWriteInput>(emptyBannerForm())
 const hintForm = ref<PriorityHintWriteInput>(emptyHintForm())
@@ -286,6 +288,7 @@ function openSheet(kind: SheetKind, mode: CrudDialogMode, id: string | null, val
 }
 
 function openCreate(): void {
+  editingPublication.value = null
   if (activeTab.value === 'activity') openSheet('content', 'create', null, emptyContentForm('activity'))
   if (activeTab.value === 'news') openSheet('content', 'create', null, emptyContentForm('news'))
   if (activeTab.value === 'banner') openSheet('banner', 'create', null, emptyBannerForm())
@@ -296,6 +299,10 @@ async function openContentEdit(record: ContentRecord): Promise<void> {
   if (!canOperate.value) return
   const detail = await store.getContent(record.id)
   if (!detail) return showStoreError('内容详情加载失败')
+  editingPublication.value = {
+    publishStatus: record.publishStatus,
+    publishAt: record.publishAt ?? detail.publishAt,
+  }
   openSheet('content', 'edit', detail.id, contentToForm(detail))
 }
 
@@ -317,6 +324,7 @@ function closeSheet(): void {
   formUploading.value = false
   sheetKind.value = null
   editingId.value = null
+  editingPublication.value = null
   initialFormJson.value = ''
   discardConfirmOpen.value = false
 }
@@ -334,7 +342,7 @@ async function saveSheet(): Promise<void> {
     if (!contentFormRef.value?.validateAndFocus() || contentIssues.value.length) return
     const success = sheetMode.value === 'create'
       ? await store.createContent(contentForm.value)
-      : editingId.value ? await store.updateContent(editingId.value, contentForm.value) : false
+      : editingId.value ? await store.updateContent(editingId.value, contentForm.value, editingPublication.value ?? undefined) : false
     if (!success) return showStoreError('内容保存失败')
     closeSheet()
     await todoStore.refresh()
@@ -676,7 +684,7 @@ onBeforeRouteLeave(() => confirmLeave())
     </div>
 
     <CrudSheet :open="sheetOpen" :mode="sheetMode" :title="sheetKind === 'content' ? `${sheetMode === 'create' ? '新增' : '编辑'}${contentForm.type === 'activity' ? '活动' : '内容'}` : sheetKind === 'banner' ? `${sheetMode === 'create' ? '新增' : '编辑'} Banner` : `${sheetMode === 'create' ? '新增' : '编辑'}高优提示`" :description="sheetKind === 'content' ? '维护内容信息；发布时间由保存后的发布接口处理。' : sheetKind === 'banner' ? '配置首页轮播图及其跳转目标。' : '配置首页高优提示及引用目标。'" :saving="sheetSaving" :dirty="sheetDirty" size="wide" @submit="saveSheet" @request-close="requestSheetClose">
-      <ContentForm v-if="sheetKind === 'content'" ref="contentFormRef" :value="contentForm" :issues="contentIssues" :saving="sheetSaving" @update:value="contentForm = $event" @update:uploading="formUploading = $event" />
+      <ContentForm v-if="sheetKind === 'content'" ref="contentFormRef" :value="contentForm" :issues="contentIssues" :saving="sheetSaving" :published="editingPublication?.publishStatus === 'published'" @update:value="contentForm = $event" @update:uploading="formUploading = $event" />
       <BannerForm v-else-if="sheetKind === 'banner'" ref="bannerFormRef" :value="bannerForm" :references="store.selectableReferences" :issues="bannerIssues" :saving="sheetSaving" @update:value="bannerForm = $event" @update:uploading="formUploading = $event" />
       <PriorityHintForm v-else ref="hintFormRef" :value="hintForm" :references="store.selectableReferences" :issues="hintIssues" :saving="store.isSaving" @update:value="hintForm = $event" />
     </CrudSheet>
