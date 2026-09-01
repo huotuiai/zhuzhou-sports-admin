@@ -204,17 +204,9 @@ async function confirmStatus(): Promise<void> {
   if (!saved) return showError('账号状态更新失败')
   statusTarget.value = null; toast.success(`账号已${status === 'enabled' ? '启用' : '禁用'}。`)
 }
-function csvCell(value: unknown): string { return `"${String(value ?? '').replaceAll('"', '""')}"` }
 function exportUsers(): void {
   if (!canExport.value) return
-  const records = store.users.map(user => [
-    user.username, user.name, departmentNamesForUser(user, store.departments).join(' / '), roleNamesForUser(user, store.roles).join(' / '),
-    user.phone, ({ enabled: '启用', disabled: '禁用', locked: '锁定' } as const)[user.status], formatDateTime(user.lastLoginAt), formatDateTime(user.createdAt),
-  ])
-  const csv = `\uFEFF${[['用户名', '姓名', '所属组织', '绑定角色', '手机号', '账号状态', '最后登录时间', '创建时间'], ...records].map(record => record.map(csvCell).join(',')).join('\r\n')}`
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `用户管理-${new Date().toISOString().slice(0, 10)}.csv`; anchor.click(); URL.revokeObjectURL(url)
-  toast.success('已导出当前页用户。')
+  toast.info('后端接口未提供')
 }
 
 onMounted(async () => {
@@ -233,7 +225,7 @@ onMounted(async () => {
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <Button v-if="canOperate" variant="outline" size="lg" class="h-11" @click="organizationOpen = true"><Building2 aria-hidden="true" />组织架构管理</Button>
-          <Button v-if="canExport" variant="outline" size="lg" class="h-11" @click="exportUsers"><Download aria-hidden="true" />导出当前页</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" @click="exportUsers"><Download aria-hidden="true" />导出</Button>
           <Button v-if="canCreateUser()" size="lg" class="h-11" @click="openCreate"><Plus aria-hidden="true" />新增用户</Button>
         </div>
       </header>

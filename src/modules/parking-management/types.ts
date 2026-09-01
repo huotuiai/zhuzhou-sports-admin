@@ -1,4 +1,5 @@
 import type { GeoPoint } from '@/components/map/types'
+import type { BackendCsvExportFile } from '@/lib/http'
 
 export type ParkingFeeType = 'free' | 'paid'
 export type ParkingOpenStatus = 'open' | 'closed'
@@ -80,6 +81,10 @@ export interface ParkingLotPage {
   pageSize: number
 }
 
+export interface ParkingLotImportResult {
+  imported: number
+}
+
 export interface ParkingLotService {
   list(query?: ParkingLotQuery): Promise<ParkingLot[]>
   listPage(page: number, pageSize: number, query?: ParkingLotQuery): Promise<ParkingLotPage>
@@ -89,6 +94,8 @@ export interface ParkingLotService {
   updateEnabled(id: string, enabled: boolean): Promise<ParkingLot>
   updateAvailability(id: string, availableSpaces: number): Promise<ParkingLot>
   remove(id: string): Promise<void>
+  exportCsv(): Promise<BackendCsvExportFile>
+  importCsv(csv: string): Promise<ParkingLotImportResult>
 }
 
 export interface ParkingLotQuery {

@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   SeatFloor,
@@ -9,13 +10,14 @@ import type {
   SeatGateOption,
   SeatPlanningService,
   SeatZone,
+  SeatZoneImportResult,
   SeatZonePage,
   SeatZoneStatus,
   SeatZoneValidationIssue,
   SeatZoneValidationResult,
   SeatZoneWriteInput,
 } from '../types'
-import { ApiError, requestData } from '@/lib/http'
+import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
 
 export interface ApiFloorVO {
   id: number | string
@@ -80,10 +82,22 @@ interface ApiZoneCreateRequest {
   gate_ids: number[]
 }
 
+interface ApiZoneImportRequest {
+  csv: string
+}
+
+interface ApiZoneImportResponse {
+  imported: number | string
+}
+
 type ApiZoneUpdateRequest = Omit<ApiZoneCreateRequest, 'code'>
 
 export interface SeatPlanningDataRequester {
   <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface SeatPlanningFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
 function responseError(message: string): ApiError {
@@ -220,6 +234,12 @@ function mapZonePage(value: ApiPage<ApiZoneVO>): SeatZonePage {
   }
 }
 
+function mapZoneImportResult(value: ApiZoneImportResponse): SeatZoneImportResult {
+  const imported = Number(value?.imported)
+  if (!Number.isSafeInteger(imported) || imported < 0) throw responseError('服务器返回的导入数量无效')
+  return { imported }
+}
+
 export function sanitizeSeatFloorInput(input: SeatFloorWriteInput): SeatFloorWriteInput {
   return { name: normalizeText(input.name) }
 }
@@ -345,8 +365,11 @@ function zoneUpdateBody(input: SeatZoneWriteInput): ApiZoneUpdateRequest {
   }
 }
 
+const defaultFileRequester: SeatPlanningFileRequester = config => rawHttpClient.request<Blob>(config)
+
 export function createSeatPlanningService(
   request: SeatPlanningDataRequester = requestData,
+  requestFile: SeatPlanningFileRequester = defaultFileRequester,
 ): SeatPlanningService {
   return {
     async listFloors() {
@@ -391,6 +414,25 @@ export function createSeatPlanningService(
 
     async deleteZone(id: string) {
       await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/zones', id) })
+    },
+
+    async exportCsv() {
+      const response = await requestFile({
+        method: 'GET',
+        url: 'api/v1/admin/zones/export',
+        responseType: 'blob',
+        headers: { Accept: 'text/csv' },
+      })
+      return mapCsvExportResponse(response, 'seat_zones.csv')
+    },
+
+    async importCsv(csv: string) {
+      const data: ApiZoneImportRequest = { csv }
+      return mapZoneImportResult(await request<ApiZoneImportResponse, ApiZoneImportRequest>({
+        method: 'POST',
+        url: 'api/v1/admin/zones/import',
+        data,
+      }))
     },
 
     async listGateOptions() {

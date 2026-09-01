@@ -287,29 +287,9 @@ function showStoreError(fallback: string): void {
   store.resetError()
 }
 
-function csvCell(value: unknown): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`
-}
-
 function exportRoles(): void {
   if (!canExport.value) return
-  const headers = ['角色名称', '标识', '绑定用户数', '权限范围', '描述', '创建时间']
-  const records = rows.value.map((role) => [
-    role.name,
-    ROLE_KIND_LABELS[role.kind],
-    userCount(role),
-    permissionSummary(role),
-    role.description,
-    formatDate(role.createdAt),
-  ])
-  const csv = `\uFEFF${[headers, ...records].map((record) => record.map(csvCell).join(',')).join('\r\n')}`
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `角色管理-${new Date().toISOString().slice(0, 10)}.csv`
-  anchor.click()
-  URL.revokeObjectURL(url)
-  toast.success('已导出当前页角色。')
+  toast.info('后端接口未提供')
 }
 
 onMounted(async () => {
@@ -332,8 +312,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="rows.length === 0" @click="exportRoles">
-            <Download aria-hidden="true" />导出当前页
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" @click="exportRoles">
+            <Download aria-hidden="true" />导出
           </Button>
           <Button v-if="canOperate" size="lg" class="h-11" @click="openCreate">
             <Plus aria-hidden="true" />新增角色

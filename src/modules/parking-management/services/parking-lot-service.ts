@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   ParkingAvailabilityUpdateMethod,
@@ -8,6 +9,7 @@ import type {
   ParkingLotCreateOptions,
   ParkingLotDetail,
   ParkingLotGateBindingValue,
+  ParkingLotImportResult,
   ParkingLotPage,
   ParkingLotQuery,
   ParkingLotService,
@@ -18,7 +20,7 @@ import type {
   ParkingOpenStatus,
 } from '../types'
 import { isValidGeoPoint } from '@/components/map/geometry'
-import { ApiError, requestData } from '@/lib/http'
+import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
 
 type ApiParkingOpenStatus = 0 | 1 | 2
 type ApiParkingUpdateMode = 'manual' | 'sync'
@@ -88,8 +90,20 @@ interface ApiParkingEnabledRequest {
   status: 0 | 1
 }
 
+interface ApiParkingImportRequest {
+  csv: string
+}
+
+interface ApiParkingImportResponse {
+  imported: number | string
+}
+
 export interface ParkingLotDataRequester {
   <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface ParkingLotFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
 export class ParkingLotServiceError extends Error {
@@ -428,7 +442,18 @@ function mapApiParkingPage(value: ApiParkingPage): ParkingLotPage {
   }
 }
 
-export function createParkingLotService(request: ParkingLotDataRequester = requestData): ParkingLotService {
+function mapParkingImportResult(value: ApiParkingImportResponse): ParkingLotImportResult {
+  const imported = Number(value?.imported)
+  if (!Number.isSafeInteger(imported) || imported < 0) throw responseError('服务器返回的导入数量无效')
+  return { imported }
+}
+
+const defaultFileRequester: ParkingLotFileRequester = config => rawHttpClient.request<Blob>(config)
+
+export function createParkingLotService(
+  request: ParkingLotDataRequester = requestData,
+  requestFile: ParkingLotFileRequester = defaultFileRequester,
+): ParkingLotService {
   async function rawDetail(id: string): Promise<ApiParkingVO> {
     return request<ApiParkingVO>({ method: 'GET', url: endpoint(id) })
   }
@@ -521,6 +546,25 @@ export function createParkingLotService(request: ParkingLotDataRequester = reque
 
     async remove(id) {
       await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint(id) })
+    },
+
+    async exportCsv() {
+      const response = await requestFile({
+        method: 'GET',
+        url: 'api/v1/admin/parkings/export',
+        responseType: 'blob',
+        headers: { Accept: 'text/csv' },
+      })
+      return mapCsvExportResponse(response, 'parkings.csv')
+    },
+
+    async importCsv(csv: string) {
+      const data: ApiParkingImportRequest = { csv }
+      return mapParkingImportResult(await request<ApiParkingImportResponse, ApiParkingImportRequest>({
+        method: 'POST',
+        url: 'api/v1/admin/parkings/import',
+        data,
+      }))
     },
   }
 

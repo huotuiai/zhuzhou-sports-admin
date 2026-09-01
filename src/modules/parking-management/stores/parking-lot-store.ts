@@ -1,8 +1,10 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   ParkingLot,
   ParkingLotCreateInput,
   ParkingLotCreateOptions,
   ParkingLotDetail,
+  ParkingLotImportResult,
   ParkingLotPage,
   ParkingLotQuery,
   ParkingLotService,
@@ -52,6 +54,8 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
     const total = ref(0)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
+    const isImporting = ref(false)
     const detailLoadingId = ref<string | null>(null)
     const updatingAvailabilityId = ref<string | null>(null)
     const deletingId = ref<string | null>(null)
@@ -274,6 +278,45 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       }
     }
 
+    async function exportCsv(): Promise<BackendCsvExportFile | null> {
+      if (isExporting.value) return null
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.exportCsv()
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        isExporting.value = false
+      }
+    }
+
+    async function importCsv(csv: string): Promise<ParkingLotImportResult | null> {
+      if (isImporting.value) return null
+      isImporting.value = true
+      error.value = null
+      try {
+        const result = await service.importCsv(csv)
+        try {
+          applyPage(await service.listPage(page.value, pageSize.value, normalizeQuery(query)))
+        }
+        catch (cause) {
+          error.value = `已成功导入 ${result.imported} 条停车场，但最新列表刷新失败：${errorMessage(cause)}`
+        }
+        return result
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        isImporting.value = false
+      }
+    }
+
     function resetError(): void {
       error.value = null
     }
@@ -286,6 +329,8 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       pageSize,
       isLoading,
       isSaving,
+      isExporting,
+      isImporting,
       detailLoadingId,
       updatingAvailabilityId,
       deletingId,
@@ -310,6 +355,8 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       updateEnabled,
       updateAvailability,
       remove,
+      exportCsv,
+      importCsv,
       resetError,
     }
   })

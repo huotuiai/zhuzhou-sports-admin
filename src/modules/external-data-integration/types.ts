@@ -106,7 +106,9 @@ export interface IntegrationService {
   getSource(id: string): Promise<IntegrationSource>
   createSource(input: IntegrationSourceWriteInput): Promise<IntegrationSource>
   updateSource(id: string, input: IntegrationSourceWriteInput): Promise<IntegrationSource>
+  deleteSource(id: string): Promise<void>
   syncSource(id: string): Promise<IntegrationSyncResult>
+  syncSourceType(sourceType: IntegrationSourceType): Promise<IntegrationSyncResult>
   listSyncLogs(query: IntegrationSyncLogQuery, page: number, pageSize: number): Promise<IntegrationSyncLogPage>
 }
 

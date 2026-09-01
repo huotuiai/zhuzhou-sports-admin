@@ -1,3 +1,4 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   SeatFloor,
   SeatFloorValidationResult,
@@ -6,6 +7,7 @@ import type {
   SeatPlanningQuery,
   SeatPlanningService,
   SeatZone,
+  SeatZoneImportResult,
   SeatZoneStatus,
   SeatZoneValidationResult,
   SeatZoneWriteInput,
@@ -73,6 +75,8 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
     const initialized = ref(false)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
+    const isImporting = ref(false)
     const deletingId = ref<string | null>(null)
     const changingStatusId = ref<string | null>(null)
     const detailLoadingId = ref<string | null>(null)
@@ -404,6 +408,45 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       }
     }
 
+    async function exportCsv(): Promise<BackendCsvExportFile | null> {
+      if (isExporting.value) return null
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.exportCsv()
+      }
+      catch (cause) {
+        error.value = message(cause)
+        return null
+      }
+      finally {
+        isExporting.value = false
+      }
+    }
+
+    async function importCsv(csv: string): Promise<SeatZoneImportResult | null> {
+      if (isImporting.value) return null
+      isImporting.value = true
+      error.value = null
+      try {
+        const result = await service.importCsv(csv)
+        try {
+          await loadBundle()
+        }
+        catch (cause) {
+          error.value = `已成功导入 ${result.imported} 条座位分区，但最新列表刷新失败：${message(cause)}`
+        }
+        return result
+      }
+      catch (cause) {
+        error.value = message(cause)
+        return null
+      }
+      finally {
+        isImporting.value = false
+      }
+    }
+
     function resetError(): void {
       error.value = null
     }
@@ -419,6 +462,8 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       initialized,
       isLoading,
       isSaving,
+      isExporting,
+      isImporting,
       deletingId,
       changingStatusId,
       detailLoadingId,
@@ -447,6 +492,8 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       updateZone,
       updateStatus,
       removeZone,
+      exportCsv,
+      importCsv,
       resetError,
     }
   })

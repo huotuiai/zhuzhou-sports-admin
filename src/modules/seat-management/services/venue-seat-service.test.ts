@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type { SeatFloor, SeatZoneWriteInput } from '../types'
 import { describe, expect, it } from 'vitest'
@@ -14,6 +15,7 @@ import type {
   ApiGateOptionVO,
   ApiZoneVO,
   SeatPlanningDataRequester,
+  SeatPlanningFileRequester,
 } from './venue-seat-service'
 
 const timestamp = '2026-08-26T08:00:00+08:00'
@@ -143,6 +145,42 @@ describe('seat planning API service', () => {
     })
     expect(configs[3]).toMatchObject({ method: 'DELETE', url: 'api/v1/admin/zones/32' })
     expect(configs[4]).toMatchObject({ method: 'DELETE', url: 'api/v1/admin/floors/12' })
+  })
+
+  it('exports the backend CSV and imports CSV text with the documented JSON body', async () => {
+    const blob = new Blob(['\uFEFF编号,名称'], { type: 'text/csv;charset=utf-8' })
+    let fileConfig: SignedRequestConfig | null = null
+    const requestFile: SeatPlanningFileRequester = async (config) => {
+      fileConfig = config
+      return {
+        data: blob,
+        headers: { 'content-disposition': "attachment; filename*=UTF-8''seat%20zones.csv" },
+      } as unknown as AxiosResponse<Blob>
+    }
+    const { configs, request } = queuedRequester([{ imported: '3' }])
+    const service = createSeatPlanningService(request, requestFile)
+
+    await expect(service.exportCsv()).resolves.toMatchObject({
+      content: blob,
+      filename: 'seat zones.csv',
+    })
+    await expect(service.importCsv('\uFEFF编号,名称\nA-01,A 区')).resolves.toEqual({ imported: 3 })
+    expect(fileConfig).toEqual({
+      method: 'GET',
+      url: 'api/v1/admin/zones/export',
+      responseType: 'blob',
+      headers: { Accept: 'text/csv' },
+    })
+    expect(configs[0]).toMatchObject({
+      method: 'POST',
+      url: 'api/v1/admin/zones/import',
+      data: { csv: '\uFEFF编号,名称\nA-01,A 区' },
+    })
+  })
+
+  it('rejects an invalid imported count from the backend', async () => {
+    const { request } = queuedRequester([{ imported: -1 }])
+    await expect(createSeatPlanningService(request).importCsv('编号,名称')).rejects.toThrow('导入数量无效')
   })
 
   it('rejects IDs that cannot be represented safely in a JSON number', async () => {

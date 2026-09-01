@@ -325,7 +325,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
             </Button>
           </div>
           <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
-          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出全部' }}</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
         </div>
       </header>
 

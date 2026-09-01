@@ -1,8 +1,10 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   ParkingLot,
   ParkingLotCreateInput,
   ParkingLotCreateOptions,
   ParkingLotDetail,
+  ParkingLotImportResult,
   ParkingLotPage,
   ParkingLotQuery,
   ParkingLotService,
@@ -48,6 +50,13 @@ class StubParkingLotService implements ParkingLotService {
   failList = false
   failSave = false
   failDelete = false
+  failExport = false
+  failImport = false
+  exportCalls = 0
+  readonly importCsvInputs: string[] = []
+  exportPromise: Promise<BackendCsvExportFile> | null = null
+  importPromise: Promise<ParkingLotImportResult> | null = null
+  importedLot: ParkingLot | null = null
 
   private filtered(query: ParkingLotQuery): ParkingLot[] {
     const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
@@ -126,6 +135,29 @@ class StubParkingLotService implements ParkingLotService {
   async remove(id: string): Promise<void> {
     if (this.failDelete) throw new Error('删除失败')
     this.records = this.records.filter((record) => record.id !== id)
+  }
+
+  async exportCsv(): Promise<BackendCsvExportFile> {
+    this.exportCalls += 1
+    if (this.failExport) throw new Error('停车场导出失败')
+    if (this.exportPromise) return this.exportPromise
+    return {
+      content: new Blob(['编号,名称']),
+      filename: 'parkings.csv',
+      truncated: false,
+      count: null,
+      total: null,
+    }
+  }
+
+  async importCsv(csv: string): Promise<ParkingLotImportResult> {
+    this.importCsvInputs.push(csv)
+    if (this.failImport) throw new Error('停车场导入失败')
+    const result = this.importPromise ? await this.importPromise : { imported: 1 }
+    if (this.importedLot && !this.records.some(item => item.id === this.importedLot!.id)) {
+      this.records.push(structuredClone(this.importedLot))
+    }
+    return result
   }
 }
 
@@ -252,5 +284,70 @@ describe('parking lot store', () => {
     service.failDelete = true
     await expect(store.remove('A-001')).resolves.toBe(false)
     expect(store.records).toHaveLength(1)
+  })
+
+  it('exports once while a download is in flight and exposes export failures', async () => {
+    let finishExport!: (file: BackendCsvExportFile) => void
+    service.exportPromise = new Promise(resolve => { finishExport = resolve })
+    const store = createParkingLotStore(service, `parking-export-${Math.random()}`)()
+
+    const first = store.exportCsv()
+    expect(store.isExporting).toBe(true)
+    await expect(store.exportCsv()).resolves.toBeNull()
+    expect(service.exportCalls).toBe(1)
+    finishExport({
+      content: new Blob(['csv']), filename: 'parkings.csv', truncated: false, count: null, total: null,
+    })
+    await expect(first).resolves.toMatchObject({ filename: 'parkings.csv' })
+    expect(store.isExporting).toBe(false)
+
+    service.exportPromise = null
+    service.failExport = true
+    await expect(store.exportCsv()).resolves.toBeNull()
+    expect(store.error).toBe('停车场导出失败')
+  })
+
+  it('imports once, refreshes authoritative data and preserves the applied filter', async () => {
+    service.records = [
+      lot('A-001', { name: '东区停车场', feeType: 'paid', feeStandard: '5 元/小时' }),
+      lot('B-001', { name: '西区停车场' }),
+    ]
+    service.importedLot = lot('A-002', { name: '东区备用停车场', feeType: 'paid', feeStandard: '5 元/小时' })
+    let finishImport!: (result: ParkingLotImportResult) => void
+    service.importPromise = new Promise(resolve => { finishImport = resolve })
+    const store = createParkingLotStore(service, `parking-import-${Math.random()}`)()
+    await store.load()
+    await store.setQuery({ keyword: '东区', feeType: 'paid' })
+
+    const first = store.importCsv('编号,名称\nA-002,东区备用停车场')
+    expect(store.isImporting).toBe(true)
+    await expect(store.importCsv('duplicate')).resolves.toBeNull()
+    expect(service.importCsvInputs).toEqual(['编号,名称\nA-002,东区备用停车场'])
+    service.importPromise = null
+    service.importedLot = lot('A-002', { name: '东区备用停车场', feeType: 'paid', feeStandard: '5 元/小时' })
+    finishImport({ imported: 1 })
+
+    await expect(first).resolves.toEqual({ imported: 1 })
+    expect(store.isImporting).toBe(false)
+    expect(store.query.keyword).toBe('东区')
+    expect(store.query.feeType).toBe('paid')
+    expect(store.records.map(item => item.id)).toContain('A-002')
+    expect(store.error).toBeNull()
+  })
+
+  it('returns the import count with a warning when the post-import refresh fails', async () => {
+    service.records = [lot('A-001')]
+    const store = createParkingLotStore(service, `parking-import-refresh-${Math.random()}`)()
+    await store.load()
+    const beforeIds = store.records.map(item => item.id)
+    service.failList = true
+
+    await expect(store.importCsv('编号,名称')).resolves.toEqual({ imported: 1 })
+    expect(store.records.map(item => item.id)).toEqual(beforeIds)
+    expect(store.error).toBe('已成功导入 1 条停车场，但最新列表刷新失败：加载失败')
+
+    service.failImport = true
+    await expect(store.importCsv('bad csv')).resolves.toBeNull()
+    expect(store.error).toBe('停车场导入失败')
   })
 })

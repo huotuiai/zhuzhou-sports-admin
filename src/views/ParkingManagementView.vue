@@ -11,7 +11,9 @@ import {
   AlertTriangle,
   CircleDollarSign,
   Clock3,
+  Download,
   List,
+  LoaderCircle,
   Map as MapIcon,
   PencilLine,
   Plus,
@@ -19,6 +21,7 @@ import {
   RefreshCw,
   SquareParking,
   Trash2,
+  Upload,
 } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
@@ -90,6 +93,7 @@ const store = useParkingLotStore()
 const authStore = useAuthStore()
 const themeStore = useThemeStore()
 const canOperate = computed(() => authStore.hasPermission('parking:operate'))
+const canExport = computed(() => authStore.hasPermission('parking:export'))
 const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const viewMode = ref<ViewMode>('list')
 const queryDraft = reactive<ParkingLotQuery>({ ...store.query })
@@ -114,6 +118,10 @@ const ticketGates = ref<TicketGate[]>([])
 const ticketGatesLoading = ref(false)
 const ticketGatesError = ref('')
 const loadingRelationsId = ref<string | null>(null)
+const importInput = ref<HTMLInputElement | null>(null)
+const importFile = ref<File | null>(null)
+const importConfirmOpen = ref(false)
+const isReadingImport = ref(false)
 
 const formDirty = computed(() => JSON.stringify(formValue.value) !== JSON.stringify(initialFormValue.value))
 const availabilityDirty = computed(() => availabilityOpen.value && availabilityValue.value !== availabilityInitial.value)
@@ -154,6 +162,95 @@ function cloneForm(value: ParkingLotFormValue): ParkingLotFormValue {
 
 function nextSortOrder(): number {
   return store.records.reduce((maximum, record) => Math.max(maximum, record.sortOrder), 0) + 1
+}
+
+function downloadCsv(content: Blob, filename: string): void {
+  const url = URL.createObjectURL(content)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+async function exportAll(): Promise<void> {
+  if (!canExport.value) return
+  const file = await store.exportCsv()
+  if (!file) {
+    toast.error(store.error ?? '停车场导出失败')
+    return
+  }
+  downloadCsv(file.content, file.filename)
+  toast.success('已导出全部停车场。')
+}
+
+function resetImportSelection(): void {
+  importConfirmOpen.value = false
+  importFile.value = null
+  if (importInput.value) importInput.value.value = ''
+}
+
+function chooseImportFile(): void {
+  if (!canOperate.value || store.isImporting || isReadingImport.value) return
+  importInput.value?.click()
+}
+
+function selectImportFile(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!file.name.toLocaleLowerCase('en-US').endsWith('.csv')) {
+    toast.error('请选择 CSV 格式的文件')
+    resetImportSelection()
+    return
+  }
+  if (file.size === 0) {
+    toast.error('所选 CSV 文件为空')
+    resetImportSelection()
+    return
+  }
+  importFile.value = file
+  importConfirmOpen.value = true
+}
+
+function updateImportConfirmOpen(open: boolean): void {
+  if (open) importConfirmOpen.value = true
+  else if (!store.isImporting && !isReadingImport.value) resetImportSelection()
+}
+
+async function confirmImport(): Promise<void> {
+  if (!canOperate.value || !importFile.value || store.isImporting || isReadingImport.value) return
+  isReadingImport.value = true
+  let csv: string
+  try {
+    csv = await importFile.value.text()
+  }
+  catch {
+    toast.error('CSV 文件读取失败，请重新选择文件')
+    isReadingImport.value = false
+    resetImportSelection()
+    return
+  }
+  isReadingImport.value = false
+  if (!csv.trim()) {
+    toast.error('所选 CSV 文件没有可导入的内容')
+    resetImportSelection()
+    return
+  }
+
+  const result = await store.importCsv(csv)
+  if (!result) {
+    toast.error(store.error ?? '停车场导入失败')
+    return
+  }
+  const refreshWarning = store.error
+  resetImportSelection()
+  if (refreshWarning) toast.warning(refreshWarning)
+  else {
+    loadError.value = ''
+    toast.success(`已导入或更新 ${result.imported} 条停车场。`)
+  }
+  await refreshMapIfNeeded()
 }
 
 function openCreate(): void {
@@ -460,12 +557,20 @@ useEventListener(window, 'beforeunload', beforeUnload)
               <MapIcon aria-hidden="true" />地图
             </Button>
           </div>
-          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate">
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting || store.isImporting" @click="exportAll">
+            <LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}
+          </Button>
+          <Button v-if="canOperate" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting || store.isImporting || isReadingImport" @click="chooseImportFile">
+            <LoaderCircle v-if="store.isImporting || isReadingImport" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Upload v-else aria-hidden="true" />{{ store.isImporting || isReadingImport ? '导入中' : '导入' }}
+          </Button>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" :disabled="store.isImporting" @click="openCreate">
             <Plus aria-hidden="true" />
             新增停车场
           </Button>
         </div>
       </header>
+
+      <input ref="importInput" class="sr-only" type="file" accept=".csv,text/csv" tabindex="-1" @change="selectImportFile">
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
         <div class="space-y-2">
@@ -651,6 +756,24 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </form>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog :open="importConfirmOpen" @update:open="updateImportConfirmOpen">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认导入“{{ importFile?.name }}”？</AlertDialogTitle>
+          <AlertDialogDescription class="space-y-2">
+            <span class="block">系统将按停车场编号导入数据；已存在的同编号停车场会被 CSV 内容覆盖。</span>
+            <span class="block">建议使用本页面导出的 CSV 作为模板。导入完成后无法在此处一键撤销。</span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel class="h-11" :disabled="store.isImporting || isReadingImport">取消</AlertDialogCancel>
+          <Button class="h-11" :disabled="store.isImporting || isReadingImport" @click="confirmImport">
+            <LoaderCircle v-if="store.isImporting || isReadingImport" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Upload v-else aria-hidden="true" />{{ store.isImporting || isReadingImport ? '导入中' : '确认导入' }}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     <AlertDialog :open="discardConfirmOpen" @update:open="discardConfirmOpen = $event">
       <AlertDialogContent>

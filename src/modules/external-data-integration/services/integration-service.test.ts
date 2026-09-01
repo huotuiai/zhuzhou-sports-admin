@@ -113,7 +113,7 @@ describe('integration API service', () => {
     })
   })
 
-  it('reads details, syncs one source and pages logs by result', async () => {
+  it('reads details, syncs and deletes sources, then pages logs by result', async () => {
     const configs: SignedRequestConfig[] = []
     const service = createIntegrationService(async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
       configs.push(config as SignedRequestConfig)
@@ -124,10 +124,14 @@ describe('integration API service', () => {
 
     await service.getSource('12')
     await service.syncSource('12')
+    await service.syncSourceType('parking')
+    await service.deleteSource('12')
     await service.listSyncLogs({ sourceId: '12', result: 'fail' }, 1, 20)
     expect(configs).toEqual([
       { method: 'GET', url: 'api/v1/admin/integrations/12' },
       { method: 'POST', url: 'api/v1/admin/integrations/12/sync', data: {} },
+      { method: 'POST', url: 'api/v1/admin/integrations/sync', data: { source_type: 'parking' } },
+      { method: 'DELETE', url: 'api/v1/admin/integrations/12' },
       { method: 'GET', url: 'api/v1/admin/integrations/logs', params: { page: 1, page_size: 20, source_id: '12', result: 'fail' } },
     ])
   })

@@ -17,6 +17,7 @@ import {
   RefreshCw,
   RotateCw,
   ShieldAlert,
+  Trash2,
 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
@@ -59,7 +60,7 @@ const baseColumns: readonly DataTableColumn<IntegrationSource>[] = [
   { key: 'lastSyncAt', label: '最近同步', minWidth: '170px' },
   { key: 'lastSyncStatus', label: '同步状态', minWidth: '110px', align: 'center' },
   { key: 'enabled', label: '启停', width: '90px', align: 'center' },
-  { key: 'actions', label: '操作', minWidth: '230px', align: 'right' },
+  { key: 'actions', label: '操作', minWidth: '280px', align: 'right' },
 ]
 
 const store = useIntegrationStore()
@@ -79,6 +80,7 @@ const initialFormJson = ref('')
 const formIssues = ref<IntegrationValidationIssue[]>([])
 const formRef = ref<IntegrationSourceFormHandle | null>(null)
 const discardOpen = ref(false)
+const deleteTarget = ref<IntegrationSource | null>(null)
 const logDraft = ref<IntegrationSyncLogQuery>({ ...DEFAULT_INTEGRATION_LOG_QUERY })
 
 const formDirty = computed(() => formOpen.value && JSON.stringify(formValue.value) !== initialFormJson.value)
@@ -251,6 +253,42 @@ async function syncSource(source: IntegrationSource): Promise<void> {
   toast.success(result.summary)
 }
 
+async function syncAllSources(): Promise<void> {
+  if (!canOperate.value) return
+  const summary = await store.syncAllSources()
+  if (!summary) {
+    toast.error(store.mutationError ?? '全部同步失败，请稍后重试。')
+    return
+  }
+  await todoStore.refresh()
+  if (summary.failed > 0) {
+    toast.error(`全部同步已完成：成功 ${summary.succeeded} 类，失败 ${summary.failed} 类。${store.mutationError ?? ''}`)
+    return
+  }
+  toast.success(`已完成 ${summary.totalTypes} 类对接源同步。`)
+}
+
+function requestDelete(source: IntegrationSource): void {
+  if (!canOperate.value) return
+  deleteTarget.value = source
+}
+
+function closeDelete(): void {
+  if (!store.deletingId) deleteTarget.value = null
+}
+
+async function confirmDelete(): Promise<void> {
+  if (!canOperate.value || !deleteTarget.value) return
+  const source = deleteTarget.value
+  if (!await store.deleteSource(source.id)) {
+    toast.error(store.mutationError ?? '对接源删除失败。')
+    return
+  }
+  deleteTarget.value = null
+  await todoStore.refresh()
+  toast.success(`${source.code} 已删除。`)
+}
+
 async function openLogs(): Promise<void> {
   logDraft.value = { ...store.logQuery }
   if (!await store.openLogs()) toast.error(store.logsError ?? '同步日志加载失败。')
@@ -288,10 +326,10 @@ onMounted(() => {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <Button v-if="canOperate" size="lg" class="h-11" :disabled="store.isLoading || store.isSaving" @click="openCreate"><Plus aria-hidden="true" />新增对接源</Button>
-          <span v-if="canOperate" title="等待后端提供全部同步专用接口">
-            <Button variant="outline" size="lg" class="h-11" disabled><RotateCw aria-hidden="true" />全部同步</Button>
-          </span>
+          <Button v-if="canOperate" size="lg" class="h-11" :disabled="store.isLoading || store.isSaving || store.isSyncingAll || Boolean(store.deletingId)" @click="openCreate"><Plus aria-hidden="true" />新增对接源</Button>
+          <Button v-if="canOperate" variant="outline" size="lg" class="h-11" :disabled="store.isLoading || store.isSaving || store.isSyncingAll || store.syncingIds.size > 0 || store.updatingIds.size > 0 || Boolean(store.deletingId)" @click="syncAllSources">
+            <LoaderCircle v-if="store.isSyncingAll" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><RotateCw v-else aria-hidden="true" />{{ store.isSyncingAll ? '同步中' : '全部同步' }}
+          </Button>
           <Button variant="outline" size="lg" class="h-11" :disabled="store.isLogsLoading" @click="openLogs">
             <LoaderCircle v-if="store.isLogsLoading" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
             <FileClock v-else aria-hidden="true" />同步日志
@@ -303,7 +341,7 @@ onMounted(() => {
         <ShieldAlert class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
         <div class="min-w-0 flex-1">
           <p class="font-medium">同一类型仅允许一个启用中的对接源</p>
-          <p class="mt-1 text-xs leading-5 text-muted-foreground">连续同步失败达到后端阈值时会自动停用。测试连接、全部同步及部分筛选仍等待后端接口。</p>
+          <p class="mt-1 text-xs leading-5 text-muted-foreground">连续同步失败达到后端阈值时会自动停用。测试连接及部分筛选仍等待后端接口。</p>
         </div>
       </div>
 
@@ -363,18 +401,19 @@ onMounted(() => {
         <template #cell-actions="{ row }">
           <div class="flex items-center justify-end gap-1">
             <span :title="isWritableIntegrationSourceType(row.sourceType) ? '' : '存量类型配置只读'">
-              <Button variant="ghost" size="sm" :disabled="!isWritableIntegrationSourceType(row.sourceType) || store.isDetailLoading" @click="openEdit(row)"><Pencil aria-hidden="true" />编辑</Button>
+              <Button variant="ghost" size="sm" :disabled="!isWritableIntegrationSourceType(row.sourceType) || store.isDetailLoading || store.isSyncingAll || store.deletingId === row.id" @click="openEdit(row)"><Pencil aria-hidden="true" />编辑</Button>
             </span>
-            <Button variant="ghost" size="sm" :disabled="!row.enabled || store.syncingIds.has(row.id)" @click="syncSource(row)">
+            <Button variant="ghost" size="sm" :disabled="!row.enabled || store.isSyncingAll || store.syncingIds.has(row.id) || store.updatingIds.has(row.id) || store.deletingId === row.id" @click="syncSource(row)">
               <LoaderCircle v-if="store.syncingIds.has(row.id)" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><RotateCw v-else aria-hidden="true" />
               {{ store.syncingIds.has(row.id) ? '同步中' : row.lastSyncStatus === 'fail' ? '重试' : '同步' }}
             </Button>
             <span :title="isWritableIntegrationSourceType(row.sourceType) ? '' : '存量类型配置只读'">
-              <Button variant="ghost" size="sm" :disabled="!isWritableIntegrationSourceType(row.sourceType) || store.updatingIds.has(row.id)" @click="toggleSource(row)">
+              <Button variant="ghost" size="sm" :disabled="!isWritableIntegrationSourceType(row.sourceType) || store.isSyncingAll || store.updatingIds.has(row.id) || store.deletingId === row.id" @click="toggleSource(row)">
                 <LoaderCircle v-if="store.updatingIds.has(row.id)" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 {{ store.updatingIds.has(row.id) ? '更新中' : row.enabled ? '停用' : '启用' }}
               </Button>
             </span>
+            <Button variant="ghost" size="icon-sm" class="text-destructive hover:text-destructive" :disabled="store.isSyncingAll || store.syncingIds.has(row.id) || store.updatingIds.has(row.id) || Boolean(store.deletingId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button>
           </div>
         </template>
       </DataTable>
@@ -400,6 +439,21 @@ onMounted(() => {
       <AlertDialogContent>
         <AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>当前对接源配置尚未保存，关闭后无法恢复。</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter><AlertDialogCancel>继续编辑</AlertDialogCancel><Button variant="destructive" @click="closeForm">放弃修改</Button></AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && closeDelete()">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle>
+          <AlertDialogDescription>删除后该对接源将停止定时与手动同步，且无法恢复。历史同步日志按后端策略保留。</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel :disabled="Boolean(store.deletingId)">取消</AlertDialogCancel>
+          <Button variant="destructive" :disabled="Boolean(store.deletingId)" @click="confirmDelete">
+            <LoaderCircle v-if="store.deletingId" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Trash2 v-else aria-hidden="true" />{{ store.deletingId ? '删除中' : '确认删除' }}
+          </Button>
+        </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
 

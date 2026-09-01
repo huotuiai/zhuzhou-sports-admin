@@ -5,13 +5,14 @@ import type {
   IntegrationSource,
   IntegrationSourceQuery,
   IntegrationSourceReference,
+  IntegrationSourceType,
   IntegrationSourceWriteInput,
   IntegrationSyncLog,
   IntegrationSyncLogQuery,
   IntegrationSyncResult,
 } from '../types'
 import { integrationService } from '../services/integration-service'
-import { isWritableIntegrationSourceType } from '../types'
+import { integrationSourceTypeLabel, isWritableIntegrationSourceType } from '../types'
 
 export const INTEGRATION_SOURCE_PAGE_SIZE = 20
 export const INTEGRATION_LOG_PAGE_SIZE = 20
@@ -24,6 +25,14 @@ export const DEFAULT_INTEGRATION_SOURCE_QUERY: IntegrationSourceQuery = {
 export const DEFAULT_INTEGRATION_LOG_QUERY: IntegrationSyncLogQuery = {
   sourceId: '',
   result: 'all',
+}
+
+export interface IntegrationBatchSyncSummary {
+  totalTypes: number
+  succeeded: number
+  failed: number
+  results: IntegrationSyncResult[]
+  failedTypes: IntegrationSourceType[]
 }
 
 function errorMessage(error: unknown): string {
@@ -61,6 +70,8 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
     const isDetailLoading = ref(false)
     const isSaving = ref(false)
     const isLogsLoading = ref(false)
+    const isSyncingAll = ref(false)
+    const deletingId = ref<string | null>(null)
     const syncingIds = ref<Set<string>>(new Set())
     const updatingIds = ref<Set<string>>(new Set())
     const error = ref<string | null>(null)
@@ -76,6 +87,18 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       const next = { ...sourceReferences.value }
       for (const source of items) next[source.id] = { code: source.code, name: source.name }
       sourceReferences.value = next
+    }
+
+    async function listAllSources(): Promise<IntegrationSource[]> {
+      let currentPage = 1
+      let result = await service.listSources(DEFAULT_INTEGRATION_SOURCE_QUERY, currentPage, 100)
+      const items = [...result.items]
+      while (currentPage * result.pageSize < result.total) {
+        currentPage += 1
+        result = await service.listSources(DEFAULT_INTEGRATION_SOURCE_QUERY, currentPage, 100)
+        items.push(...result.items)
+      }
+      return [...new Map(items.map(item => [item.id, item])).values()]
     }
 
     async function loadSources(targetPage = page.value, targetPageSize = pageSize.value): Promise<boolean> {
@@ -191,7 +214,7 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
     }
 
     async function toggleSource(id: string): Promise<IntegrationSource | null> {
-      if (updatingIds.value.has(id)) return null
+      if (updatingIds.value.has(id) || isSyncingAll.value || deletingId.value === id) return null
       setIdBusy(updatingIds, id, true)
       mutationError.value = null
       try {
@@ -212,7 +235,7 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
     }
 
     async function syncSource(id: string): Promise<IntegrationSyncResult | null> {
-      if (syncingIds.value.has(id)) return null
+      if (syncingIds.value.has(id) || updatingIds.value.has(id) || isSyncingAll.value || deletingId.value === id) return null
       const source = sources.value.find(item => item.id === id)
       if (source && !source.enabled) {
         mutationError.value = '停用中的对接源不可同步。'
@@ -234,17 +257,74 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       finally { setIdBusy(syncingIds, id, false) }
     }
 
+    async function syncAllSources(): Promise<IntegrationBatchSyncSummary | null> {
+      if (isSyncingAll.value || syncingIds.value.size > 0 || updatingIds.value.size > 0 || deletingId.value) return null
+      isSyncingAll.value = true
+      mutationError.value = null
+      try {
+        const allSources = await listAllSources()
+        cacheSources(allSources)
+        const sourceTypes = [...new Set(allSources.filter(item => item.enabled).map(item => item.sourceType))]
+        if (!sourceTypes.length) throw new Error('暂无已启用的对接源可同步。')
+
+        const settled = await Promise.allSettled(sourceTypes.map(type => service.syncSourceType(type)))
+        const results: IntegrationSyncResult[] = []
+        const failedTypes: IntegrationSourceType[] = []
+        const failureMessages: string[] = []
+        settled.forEach((outcome, index) => {
+          const type = sourceTypes[index]!
+          if (outcome.status === 'rejected') {
+            failedTypes.push(type)
+            failureMessages.push(`${integrationSourceTypeLabel(type)}：${errorMessage(outcome.reason)}`)
+            return
+          }
+          results.push(outcome.value)
+          if (outcome.value.result === 'fail') {
+            failedTypes.push(type)
+            failureMessages.push(`${integrationSourceTypeLabel(type)}：${outcome.value.summary}`)
+          }
+        })
+        mutationError.value = failureMessages.length ? failureMessages.join('；') : null
+        await loadSources(page.value, pageSize.value)
+        if (logOpen.value) await loadLogs(logPage.value)
+        return {
+          totalTypes: sourceTypes.length,
+          succeeded: results.filter(result => result.result === 'success').length,
+          failed: failedTypes.length,
+          results,
+          failedTypes,
+        }
+      }
+      catch (cause) {
+        mutationError.value = errorMessage(cause)
+        return null
+      }
+      finally { isSyncingAll.value = false }
+    }
+
+    async function deleteSource(id: string): Promise<boolean> {
+      if (deletingId.value || syncingIds.value.has(id) || updatingIds.value.has(id) || isSyncingAll.value) return false
+      deletingId.value = id
+      mutationError.value = null
+      try {
+        await service.deleteSource(id)
+        const nextReferences = { ...sourceReferences.value }
+        delete nextReferences[id]
+        sourceReferences.value = nextReferences
+        await refresh()
+        return true
+      }
+      catch (cause) {
+        mutationError.value = errorMessage(cause)
+        return false
+      }
+      finally { deletingId.value = null }
+    }
+
     async function refreshSourceReferences(): Promise<boolean> {
       const request = ++referenceRequest
       try {
-        let currentPage = 1
-        let result = await service.listSources(DEFAULT_INTEGRATION_SOURCE_QUERY, currentPage, 100)
-        const items = [...result.items]
-        while (currentPage * result.pageSize < result.total) {
-          currentPage += 1
-          result = await service.listSources(DEFAULT_INTEGRATION_SOURCE_QUERY, currentPage, 100)
-          items.push(...result.items)
-        }
+        const items = await listAllSources()
         if (request !== referenceRequest) return false
         cacheSources(items)
         return true
@@ -325,6 +405,8 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       isDetailLoading,
       isSaving,
       isLogsLoading,
+      isSyncingAll,
+      deletingId,
       syncingIds,
       updatingIds,
       error,
@@ -343,6 +425,8 @@ export function createIntegrationStore(service: IntegrationService, storeId = 'e
       updateSource,
       toggleSource,
       syncSource,
+      syncAllSources,
+      deleteSource,
       openLogs,
       closeLogs,
       queryLogs,

@@ -256,11 +256,26 @@ export function createIntegrationService(request: IntegrationDataRequester = req
       }))
     },
 
+    async deleteSource(id) {
+      await request<{ deleted: boolean }>({
+        method: 'DELETE',
+        url: `api/v1/admin/integrations/${encodeURIComponent(id)}`,
+      })
+    },
+
     async syncSource(id) {
       return mapApiIntegrationSyncResult(await request<ApiIntegrationSyncResult>({
         method: 'POST',
         url: `api/v1/admin/integrations/${encodeURIComponent(id)}/sync`,
         data: {},
+      }))
+    },
+
+    async syncSourceType(sourceType) {
+      return mapApiIntegrationSyncResult(await request<ApiIntegrationSyncResult>({
+        method: 'POST',
+        url: 'api/v1/admin/integrations/sync',
+        data: { source_type: sourceType },
       }))
     },
 

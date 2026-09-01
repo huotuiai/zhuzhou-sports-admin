@@ -1,3 +1,5 @@
+import type { BackendCsvExportFile } from '@/lib/http'
+
 export type SeatZoneStatus = 'enabled' | 'disabled'
 export type SeatZoneStatusFilter = 'all' | SeatZoneStatus
 export type SeatGateOpenStatus = 'open' | 'closed' | 'restricted'
@@ -67,6 +69,10 @@ export interface SeatZonePage {
   pageSize: number
 }
 
+export interface SeatZoneImportResult {
+  imported: number
+}
+
 export interface SeatPlanningService {
   listFloors(): Promise<SeatFloor[]>
   createFloor(input: SeatFloorCreateInput): Promise<SeatFloor>
@@ -76,6 +82,8 @@ export interface SeatPlanningService {
   createZone(input: SeatZoneWriteInput): Promise<SeatZone>
   updateZone(id: string, input: SeatZoneWriteInput): Promise<SeatZone>
   deleteZone(id: string): Promise<void>
+  exportCsv(): Promise<BackendCsvExportFile>
+  importCsv(csv: string): Promise<SeatZoneImportResult>
   listGateOptions(): Promise<SeatGateOption[]>
 }
 

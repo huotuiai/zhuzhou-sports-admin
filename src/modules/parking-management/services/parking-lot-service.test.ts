@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type { ParkingLotCreateInput, ParkingLotUpdateInput } from '../types'
 import { describe, expect, it } from 'vitest'
@@ -10,6 +11,7 @@ import {
 import type {
   ApiParkingVO,
   ParkingLotDataRequester,
+  ParkingLotFileRequester,
 } from './parking-lot-service'
 
 const timestamp = '2026-08-28T10:00:00+08:00'
@@ -246,6 +248,42 @@ describe('parking lot API service', () => {
       data: { remain: 12 },
     })
     expect(configs[6]).toMatchObject({ method: 'DELETE', url: 'api/v1/admin/parkings/21' })
+  })
+
+  it('exports the backend CSV and imports CSV text with the documented JSON body', async () => {
+    const blob = new Blob(['\uFEFF编号,名称'], { type: 'text/csv;charset=utf-8' })
+    let fileConfig: SignedRequestConfig | null = null
+    const requestFile: ParkingLotFileRequester = async (config) => {
+      fileConfig = config
+      return {
+        data: blob,
+        headers: { 'content-disposition': "attachment; filename*=UTF-8''parkings.csv" },
+      } as unknown as AxiosResponse<Blob>
+    }
+    const { configs, request } = queuedRequester([{ imported: '3' }])
+    const service = createParkingLotService(request, requestFile)
+
+    await expect(service.exportCsv()).resolves.toMatchObject({
+      content: blob,
+      filename: 'parkings.csv',
+    })
+    await expect(service.importCsv('\uFEFF编号,名称\nP-01,中心停车场')).resolves.toEqual({ imported: 3 })
+    expect(fileConfig).toEqual({
+      method: 'GET',
+      url: 'api/v1/admin/parkings/export',
+      responseType: 'blob',
+      headers: { Accept: 'text/csv' },
+    })
+    expect(configs[0]).toMatchObject({
+      method: 'POST',
+      url: 'api/v1/admin/parkings/import',
+      data: { csv: '\uFEFF编号,名称\nP-01,中心停车场' },
+    })
+  })
+
+  it('rejects an invalid imported count from the backend', async () => {
+    const { request } = queuedRequester([{ imported: -1 }])
+    await expect(createParkingLotService(request).importCsv('编号,名称')).rejects.toThrow('导入数量无效')
   })
 
   it('rejects unsafe int64 gate IDs before submitting JSON bodies', async () => {

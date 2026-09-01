@@ -5,6 +5,7 @@ import type {
   IntegrationSource,
   IntegrationSourcePage,
   IntegrationSourceQuery,
+  IntegrationSourceType,
   IntegrationSourceWriteInput,
   IntegrationSyncLogPage,
   IntegrationSyncLogQuery,
@@ -43,7 +44,9 @@ class StubIntegrationService implements IntegrationService {
   detailCalls: string[] = []
   createCalls: IntegrationSourceWriteInput[] = []
   updateCalls: Array<{ id: string, input: IntegrationSourceWriteInput }> = []
+  deleteCalls: string[] = []
   syncCalls: string[] = []
+  syncTypeCalls: IntegrationSourceType[] = []
   logCalls: Array<{ query: IntegrationSyncLogQuery, page: number, pageSize: number }> = []
   syncResult: IntegrationSyncResult = { sourceId: '1', result: 'success', summary: '同步完成', disabled: false }
 
@@ -81,6 +84,13 @@ class StubIntegrationService implements IntegrationService {
     return { ...updated }
   }
 
+  async deleteSource(id: string): Promise<void> {
+    this.deleteCalls.push(id)
+    const index = this.sourceData.findIndex(source => source.id === id)
+    if (index < 0) throw new Error('对接源不存在')
+    this.sourceData.splice(index, 1)
+  }
+
   async syncSource(id: string): Promise<IntegrationSyncResult> {
     this.syncCalls.push(id)
     if (this.syncResult.disabled) {
@@ -88,6 +98,13 @@ class StubIntegrationService implements IntegrationService {
       if (item) item.enabled = false
     }
     return this.syncResult
+  }
+
+  async syncSourceType(sourceType: IntegrationSourceType): Promise<IntegrationSyncResult> {
+    this.syncTypeCalls.push(sourceType)
+    const item = this.sourceData.find(source => source.sourceType === sourceType && source.enabled)
+    if (!item) throw new Error('该类型暂无已启用对接源')
+    return { ...this.syncResult, sourceId: item.id }
   }
 
   async listSyncLogs(query: IntegrationSyncLogQuery, page: number, pageSize: number): Promise<IntegrationSyncLogPage> {
@@ -154,6 +171,48 @@ describe('external data integration store', () => {
     expect(service.createCalls[0]?.apiKey).toBe('new-secret')
     await expect(store.updateSource('1', writeInput({ name: '停车源（更新）' }))).resolves.toMatchObject({ name: '停车源（更新）' })
     expect(store.sources.find(item => item.id === '1')?.name).toBe('停车源（更新）')
+  })
+
+  it('syncs every enabled source type once and deletes a source', async () => {
+    const service = new StubIntegrationService()
+    service.sourceData[1] = { ...service.sourceData[1]!, enabled: true }
+    service.sourceData.push(source({ id: '3', code: 'SRC-03', name: '备用停车源', sourceType: 'parking' }))
+    const store = createIntegrationStore(service, 'integration-batch-delete-test')()
+    await store.initialize()
+
+    await expect(store.syncAllSources()).resolves.toMatchObject({
+      totalTypes: 2,
+      succeeded: 2,
+      failed: 0,
+      failedTypes: [],
+    })
+    expect(service.syncTypeCalls).toEqual(['parking', 'yun720'])
+
+    await expect(store.deleteSource('1')).resolves.toBe(true)
+    expect(service.deleteCalls).toEqual(['1'])
+    expect(service.sourceData.some(item => item.id === '1')).toBe(false)
+    expect(store.sources.some(item => item.id === '1')).toBe(false)
+  })
+
+  it('continues batch sync when one source type request fails', async () => {
+    const service = new StubIntegrationService()
+    service.sourceData[1] = { ...service.sourceData[1]!, enabled: true }
+    service.syncSourceType = async (sourceType) => {
+      service.syncTypeCalls.push(sourceType)
+      if (sourceType === 'yun720') throw new Error('720 云连接超时')
+      return { sourceId: '1', result: 'success', summary: '同步完成', disabled: false }
+    }
+    const store = createIntegrationStore(service, 'integration-batch-partial-failure-test')()
+    await store.initialize()
+
+    await expect(store.syncAllSources()).resolves.toMatchObject({
+      totalTypes: 2,
+      succeeded: 1,
+      failed: 1,
+      failedTypes: ['yun720'],
+    })
+    expect(service.syncTypeCalls).toEqual(['parking', 'yun720'])
+    expect(store.mutationError).toContain('720 云 VR：720 云连接超时')
   })
 
   it('reads the latest detail before toggling and blocks legacy configuration changes', async () => {

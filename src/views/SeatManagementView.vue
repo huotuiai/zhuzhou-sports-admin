@@ -8,8 +8,8 @@ import type {
   SeatZoneWriteInput,
 } from '@/modules/seat-management/types'
 import {
-  AlertTriangle, Ban, Building2, ChevronDown, Layers3,
-  PencilLine, Plus, RotateCcw, ShieldAlert, Trash2, Unlink, X,
+  AlertTriangle, Ban, Building2, ChevronDown, Download, Layers3, LoaderCircle,
+  PencilLine, Plus, RotateCcw, ShieldAlert, Trash2, Unlink, Upload, X,
 } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref } from 'vue'
@@ -47,6 +47,7 @@ const baseColumns: readonly DataTableColumn<SeatZone>[] = [
 const store = useSeatPlanningStore()
 const authStore = useAuthStore()
 const canOperate = computed(() => authStore.hasPermission('seat:operate'))
+const canExport = computed(() => authStore.hasPermission('seat:export'))
 const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const queryDraft = ref<SeatPlanningQuery>({ ...store.query, gateIds: [...store.query.gateIds] })
 const zoneOpen = ref(false)
@@ -68,6 +69,10 @@ const zoneBlockedTarget = ref<SeatZone | null>(null)
 const floorDeleteTarget = ref<SeatFloor | null>(null)
 const floorBlockedTarget = ref<SeatFloor | null>(null)
 const loadError = ref('')
+const importInput = ref<HTMLInputElement | null>(null)
+const importFile = ref<File | null>(null)
+const importConfirmOpen = ref(false)
+const isReadingImport = ref(false)
 
 const zoneDirty = computed(() => JSON.stringify(zoneValue.value) !== JSON.stringify(initialZoneValue.value))
 const floorDirty = computed(() => floorName.value !== initialFloorName.value)
@@ -109,6 +114,94 @@ function toggleQueryGate(gateId: string, checked: boolean | 'indeterminate'): vo
   if (checked === true) next.add(gateId)
   else next.delete(gateId)
   queryDraft.value = { ...queryDraft.value, gateIds: [...next] }
+}
+
+function downloadCsv(content: Blob, filename: string): void {
+  const url = URL.createObjectURL(content)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+async function exportAll(): Promise<void> {
+  if (!canExport.value) return
+  const file = await store.exportCsv()
+  if (!file) {
+    toast.error(store.error ?? '座位分区导出失败')
+    return
+  }
+  downloadCsv(file.content, file.filename)
+  toast.success('已导出全部座位分区。')
+}
+
+function resetImportSelection(): void {
+  importConfirmOpen.value = false
+  importFile.value = null
+  if (importInput.value) importInput.value.value = ''
+}
+
+function chooseImportFile(): void {
+  if (!canOperate.value || store.isImporting || isReadingImport.value) return
+  importInput.value?.click()
+}
+
+function selectImportFile(event: Event): void {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (!file.name.toLocaleLowerCase('en-US').endsWith('.csv')) {
+    toast.error('请选择 CSV 格式的文件')
+    resetImportSelection()
+    return
+  }
+  if (file.size === 0) {
+    toast.error('所选 CSV 文件为空')
+    resetImportSelection()
+    return
+  }
+  importFile.value = file
+  importConfirmOpen.value = true
+}
+
+function updateImportConfirmOpen(open: boolean): void {
+  if (open) importConfirmOpen.value = true
+  else if (!store.isImporting && !isReadingImport.value) resetImportSelection()
+}
+
+async function confirmImport(): Promise<void> {
+  if (!canOperate.value || !importFile.value || store.isImporting || isReadingImport.value) return
+  isReadingImport.value = true
+  let csv: string
+  try {
+    csv = await importFile.value.text()
+  }
+  catch {
+    toast.error('CSV 文件读取失败，请重新选择文件')
+    isReadingImport.value = false
+    resetImportSelection()
+    return
+  }
+  isReadingImport.value = false
+  if (!csv.trim()) {
+    toast.error('所选 CSV 文件没有可导入的内容')
+    resetImportSelection()
+    return
+  }
+
+  const result = await store.importCsv(csv)
+  if (!result) {
+    toast.error(store.error ?? '座位分区导入失败')
+    return
+  }
+  const refreshWarning = store.error
+  resetImportSelection()
+  if (refreshWarning) toast.warning(refreshWarning)
+  else {
+    loadError.value = ''
+    toast.success(`已导入或更新 ${result.imported} 条座位分区。`)
+  }
 }
 
 function openCreateZone(floorId?: string): void {
@@ -302,15 +395,17 @@ useEventListener(window, 'beforeunload', beforeUnload)
 <template>
   <section class="tech-grid min-h-[calc(100svh-4rem)] p-6" aria-labelledby="seat-planning-title">
     <div class="mx-auto flex w-full max-w-[1680px] flex-col gap-4">
-      <header class="flex items-center justify-between gap-4">
+      <header class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div class="flex items-center gap-3">
           <span class="grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary"><Layers3 class="size-5" aria-hidden="true" /></span>
           <div><h1 id="seat-planning-title" class="text-2xl font-semibold tracking-tight">座位规划管理</h1><p class="mt-1 text-sm text-muted-foreground">座位分区与检票口对应关系</p></div>
         </div>
-        <div class="flex items-center gap-2">
-          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreateZone()"><Plus aria-hidden="true" />新增分区</Button>
+        <div class="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:justify-end">
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting || store.isImporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
+          <Button v-if="canOperate" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting || store.isImporting || isReadingImport" @click="chooseImportFile"><LoaderCircle v-if="store.isImporting || isReadingImport" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Upload v-else aria-hidden="true" />{{ store.isImporting || isReadingImport ? '导入中' : '导入' }}</Button>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" :disabled="store.isImporting" @click="openCreateZone()"><Plus aria-hidden="true" />新增分区</Button>
           <DropdownMenu v-if="canOperate">
-            <DropdownMenuTrigger as-child><Button variant="outline" size="lg" class="h-11 px-4"><Building2 aria-hidden="true" />楼层管理<ChevronDown aria-hidden="true" /></Button></DropdownMenuTrigger>
+            <DropdownMenuTrigger as-child><Button variant="outline" size="lg" class="h-11 px-4" :disabled="store.isImporting"><Building2 aria-hidden="true" />楼层管理<ChevronDown aria-hidden="true" /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end" class="w-64">
               <DropdownMenuLabel>场馆楼层</DropdownMenuLabel>
               <DropdownMenuItem class="min-h-10 px-3" @select="openCreateFloor"><Plus />新增楼层</DropdownMenuItem>
@@ -323,6 +418,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
           </DropdownMenu>
         </div>
       </header>
+
+      <input ref="importInput" class="sr-only" type="file" accept=".csv,text/csv" tabindex="-1" @change="selectImportFile">
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
         <div class="space-y-2"><Label for="seat-zone-keyword">分区信息</Label><Input id="seat-zone-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="分区编号或区域名称" autocomplete="off" /></div>
@@ -384,6 +481,24 @@ useEventListener(window, 'beforeunload', beforeUnload)
     <CrudDialog :open="floorOpen" mode="create" title="新增楼层" description="楼层用于座位分区归属与列表排序。" submit-label="确认新增" :saving="store.isSaving" :dirty="floorDirty" @submit="saveFloor" @request-close="requestFloorClose">
       <div class="space-y-2"><Label for="seat-floor-name">楼层名称 <span class="text-destructive">*</span></Label><Input id="seat-floor-name" ref="floorInput" v-model="floorName" maxlength="20" class="h-11" placeholder="例如：三层" :disabled="store.isSaving" :aria-invalid="Boolean(floorError)" :aria-describedby="floorError ? 'seat-floor-name-error' : undefined" @input="floorError = ''" /><p v-if="floorError" id="seat-floor-name-error" class="flex items-center gap-1.5 text-xs text-destructive" role="alert"><AlertTriangle class="size-3.5" />{{ floorError }}</p><p v-else class="text-xs leading-5 text-muted-foreground">楼层名称不可重复；楼层下存在分区时不能删除。</p></div>
     </CrudDialog>
+
+    <AlertDialog :open="importConfirmOpen" @update:open="updateImportConfirmOpen">
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>确认导入“{{ importFile?.name }}”？</AlertDialogTitle>
+          <AlertDialogDescription class="space-y-2">
+            <span class="block">系统将按分区编号导入数据；已存在的同编号分区会被 CSV 内容覆盖。</span>
+            <span class="block">建议使用本页面导出的 CSV 作为模板。导入完成后无法在此处一键撤销。</span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel class="h-11" :disabled="store.isImporting || isReadingImport">取消</AlertDialogCancel>
+          <Button class="h-11" :disabled="store.isImporting || isReadingImport" @click="confirmImport">
+            <LoaderCircle v-if="store.isImporting || isReadingImport" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Upload v-else aria-hidden="true" />{{ store.isImporting || isReadingImport ? '导入中' : '确认导入' }}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     <AlertDialog :open="discardOpen" @update:open="discardOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>当前{{ discardKind === 'zone' ? '座位分区' : '楼层' }}内容尚未保存，关闭后将无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><Button variant="destructive" class="h-11" @click="confirmDiscard"><X />放弃修改</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
 

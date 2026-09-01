@@ -1,3 +1,4 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type {
@@ -7,6 +8,7 @@ import type {
   SeatPlanningQuery,
   SeatPlanningService,
   SeatZone,
+  SeatZoneImportResult,
   SeatZonePage,
   SeatZoneWriteInput,
 } from '../types'
@@ -55,7 +57,14 @@ class FakeService implements SeatPlanningService {
   readonly createZoneInputs: SeatZoneWriteInput[] = []
   readonly updateZoneInputs: Array<{ id: string, input: SeatZoneWriteInput }> = []
   readonly detailCalls: string[] = []
+  readonly importCsvInputs: string[] = []
+  exportCalls = 0
   failNextZoneList = false
+  failExport = false
+  failImport = false
+  exportPromise: Promise<BackendCsvExportFile> | null = null
+  importPromise: Promise<SeatZoneImportResult> | null = null
+  importedZone: SeatZone | null = null
   gateOptions = gates.map(item => ({ ...item }))
   private nextZoneId = 1000
   private nextFloorId = 10
@@ -153,6 +162,29 @@ class FakeService implements SeatPlanningService {
 
   async deleteZone(id: string): Promise<void> {
     this.zones = this.zones.filter(item => item.id !== id)
+  }
+
+  async exportCsv(): Promise<BackendCsvExportFile> {
+    this.exportCalls += 1
+    if (this.failExport) throw new Error('分区导出失败')
+    if (this.exportPromise) return this.exportPromise
+    return {
+      content: new Blob(['编号,名称']),
+      filename: 'seat_zones.csv',
+      truncated: false,
+      count: null,
+      total: null,
+    }
+  }
+
+  async importCsv(csv: string): Promise<SeatZoneImportResult> {
+    this.importCsvInputs.push(csv)
+    if (this.failImport) throw new Error('分区导入失败')
+    const result = this.importPromise ? await this.importPromise : { imported: 1 }
+    if (this.importedZone && !this.zones.some(item => item.id === this.importedZone!.id)) {
+      this.zones.push(cloneZone(this.importedZone))
+    }
+    return result
   }
 
   async listGateOptions(): Promise<SeatGateOption[]> {
@@ -266,5 +298,70 @@ describe('seat planning store', () => {
     expect(store.zones.map(item => item.id)).toEqual(beforeIds)
     expect(store.query.keyword).toBe('')
     expect(store.error).toBe('分区列表加载失败')
+  })
+
+  it('exports once while a download is in flight and exposes export failures', async () => {
+    const service = new FakeService(2)
+    let finishExport!: (file: BackendCsvExportFile) => void
+    service.exportPromise = new Promise(resolve => { finishExport = resolve })
+    const useStore = createSeatPlanningStore(service, `seat-export-${Math.random()}`)
+    const store = useStore()
+
+    const first = store.exportCsv()
+    expect(store.isExporting).toBe(true)
+    await expect(store.exportCsv()).resolves.toBeNull()
+    expect(service.exportCalls).toBe(1)
+    finishExport({
+      content: new Blob(['csv']), filename: 'seat_zones.csv', truncated: false, count: null, total: null,
+    })
+    await expect(first).resolves.toMatchObject({ filename: 'seat_zones.csv' })
+    expect(store.isExporting).toBe(false)
+
+    service.exportPromise = null
+    service.failExport = true
+    await expect(store.exportCsv()).resolves.toBeNull()
+    expect(store.error).toBe('分区导出失败')
+  })
+
+  it('imports once, refreshes authoritative data and preserves the applied filter', async () => {
+    const service = new FakeService(4)
+    service.importedZone = zone(5)
+    let finishImport!: (result: SeatZoneImportResult) => void
+    service.importPromise = new Promise(resolve => { finishImport = resolve })
+    const useStore = createSeatPlanningStore(service, `seat-import-${Math.random()}`)
+    const store = useStore()
+    await store.initialize()
+    await store.queryZones(query({ keyword: '东看台' }))
+
+    const first = store.importCsv('编号,名称\nA-005,东看台 5')
+    expect(store.isImporting).toBe(true)
+    await expect(store.importCsv('duplicate')).resolves.toBeNull()
+    expect(service.importCsvInputs).toEqual(['编号,名称\nA-005,东看台 5'])
+    service.importPromise = null
+    service.importedZone = zone(5)
+    finishImport({ imported: 1 })
+
+    await expect(first).resolves.toEqual({ imported: 1 })
+    expect(store.isImporting).toBe(false)
+    expect(store.query.keyword).toBe('东看台')
+    expect(store.zones.map(item => item.id)).toContain('zone-5')
+    expect(store.error).toBeNull()
+  })
+
+  it('returns the import count with a warning when the post-import refresh fails', async () => {
+    const service = new FakeService(4)
+    const useStore = createSeatPlanningStore(service, `seat-import-refresh-${Math.random()}`)
+    const store = useStore()
+    await store.initialize()
+    const beforeIds = store.zones.map(item => item.id)
+    service.failNextZoneList = true
+
+    await expect(store.importCsv('编号,名称')).resolves.toEqual({ imported: 1 })
+    expect(store.zones.map(item => item.id)).toEqual(beforeIds)
+    expect(store.error).toBe('已成功导入 1 条座位分区，但最新列表刷新失败：分区列表加载失败')
+
+    service.failImport = true
+    await expect(store.importCsv('bad csv')).resolves.toBeNull()
+    expect(store.error).toBe('分区导入失败')
   })
 })
