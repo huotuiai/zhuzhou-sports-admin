@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 
-// const DATA_SCREEN_URL = 'https://api_zzjj.hnhcsz.com/yhsql/ddp/'
+// const DATA_SCREEN_URL = 'https://apizzjj.hnhcsz.com/yhsql/ddp/'
 const DATA_SCREEN_URL = 'http://127.0.0.1:5176/'
 
 const screenRef = ref<HTMLElement | null>(null)

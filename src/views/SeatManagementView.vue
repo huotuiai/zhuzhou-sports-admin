@@ -488,6 +488,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <AlertDialogTitle>确认导入“{{ importFile?.name }}”？</AlertDialogTitle>
           <AlertDialogDescription class="space-y-2">
             <span class="block">系统将按分区编号导入数据；已存在的同编号分区会被 CSV 内容覆盖。</span>
+            <span class="block">“检票口编号”按业务编号匹配（例如 51、52、61、62），不是数据库 ID。</span>
             <span class="block">建议使用本页面导出的 CSV 作为模板。导入完成后无法在此处一键撤销。</span>
           </AlertDialogDescription>
         </AlertDialogHeader>

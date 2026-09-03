@@ -89,6 +89,17 @@ describe('seat planning API mapping and validation', () => {
       'code', 'floorId', 'rowStart', 'rowEnd', 'sortOrder', 'gateIds',
     ])
   })
+
+  it('accepts a single-character numeric zone code without padding it', () => {
+    const result = validateSeatZoneInput(
+      zoneInput({ code: ' 1 ' }),
+      [],
+      floors,
+      [{ id: '21' }, { id: '22' }],
+    )
+
+    expect(result).toEqual({ valid: true, issues: [] })
+  })
 })
 
 describe('seat planning API service', () => {
@@ -123,7 +134,7 @@ describe('seat planning API service', () => {
     const service = createSeatPlanningService(request)
 
     await service.createFloor({ name: ' 二层 ', sortOrder: 2, status: 'enabled' })
-    await service.createZone(zoneInput())
+    await service.createZone(zoneInput({ code: ' 1 ' }))
     await service.updateZone('32', zoneInput({ code: 'B-99', name: '调整后', status: 'disabled' }))
     await service.deleteZone('32')
     await service.deleteFloor('12')
@@ -134,7 +145,7 @@ describe('seat planning API service', () => {
     expect(configs[1]).toMatchObject({
       method: 'POST', url: 'api/v1/admin/zones',
       data: {
-        code: 'A-01', name: 'A 区', floor_id: 11, row_start: 1, row_end: 30,
+        code: '1', name: 'A 区', floor_id: 11, row_start: 1, row_end: 30,
         sort_order: 2, remark: '主看台', status: 1, gate_ids: [21, 22],
       },
     })

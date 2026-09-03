@@ -22,7 +22,7 @@ import {
 } from './signature'
 import { ApiError } from './types'
 
-const DEFAULT_API_BASE_URL = 'https://api_zzjj.hnhcsz.com/yhsql/'
+const DEFAULT_API_BASE_URL = 'https://apizzjj.hnhcsz.com/yhsql/'
 const DEFAULT_TIMEOUT_MS = 15_000
 
 export interface HttpAuthHandlers {

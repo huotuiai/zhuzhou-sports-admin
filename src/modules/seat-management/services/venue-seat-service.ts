@@ -283,8 +283,8 @@ export function validateSeatZoneInput(
   const issues: SeatZoneValidationIssue[] = []
 
   if (!value.code) issues.push({ field: 'code', code: 'required', message: '请输入分区编号' })
-  else if (!/^[A-Z0-9-]{2,10}$/.test(value.code)) {
-    issues.push({ field: 'code', code: 'invalid', message: '分区编号须为 2–10 位字母、数字或连字符' })
+  else if (!/^[A-Z0-9-]{1,10}$/.test(value.code)) {
+    issues.push({ field: 'code', code: 'invalid', message: '分区编号须为 1–10 位字母、数字或连字符' })
   }
   else if (zones.some(item => item.id !== excludedId && identity(item.code) === identity(value.code))) {
     issues.push({ field: 'code', code: 'duplicate', message: '分区编号不能重复' })

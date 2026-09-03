@@ -106,11 +106,11 @@ watch(() => [props.mode, props.editingId], () => {
       <Label :for="inputId('code')">分区编号 <span class="text-destructive">*</span></Label>
       <Input
         :id="inputId('code')" data-field="code" :model-value="value.code" class="h-11 font-mono uppercase"
-        placeholder="例如：A-01" :disabled="saving || mode === 'edit'" :aria-invalid="Boolean(issueFor('code'))"
+        placeholder="例如：1 或 A-01" :disabled="saving || mode === 'edit'" :aria-invalid="Boolean(issueFor('code'))"
         :aria-describedby="errorId('code')" @update:model-value="text('code', $event)" @blur="touched.code = true"
       />
       <p v-if="issueFor('code')" :id="errorId('code')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('code')?.message }}</p>
-      <p v-else class="text-xs leading-5 text-muted-foreground">2–10 位字母、数字或连字符，保存时自动转为大写；创建后不可修改。</p>
+      <p v-else class="text-xs leading-5 text-muted-foreground">1–10 位字母、数字或连字符，保存时自动转为大写；创建后不可修改。</p>
     </div>
 
     <div class="space-y-2">
