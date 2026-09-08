@@ -20,7 +20,7 @@ const emit = defineEmits<{ 'update:value': [value: ShuttleRouteCreateInput] }>()
 const container = ref<HTMLDivElement | null>(null)
 const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const fields: ShuttleRouteValidationField[] = [
-  'code', 'name', 'direction', 'description', 'firstDeparture', 'lastDeparture', 'schedule',
+  'code', 'name', 'description', 'firstDeparture', 'lastDeparture', 'schedule',
   'departureIntervalMinutes', 'durationMinutes', 'operatingStatus', 'sortOrder', 'enabled',
 ]
 const touched = reactive(Object.fromEntries(fields.map((field) => [field, false])) as Record<ShuttleRouteValidationField, boolean>)
@@ -93,14 +93,6 @@ watch(() => props.mode, () => { for (const field of fields) touched[field] = fal
           <Label :for="inputId('name')">线路名称 <span class="text-destructive">*</span></Label>
           <Input :id="inputId('name')" data-field="name" :model-value="value.name" class="h-11" placeholder="例如：高铁站专线" :disabled="saving" :aria-invalid="Boolean(issueFor('name'))" @update:model-value="text('name', $event)" @blur="touched.name = true" />
           <p v-if="issueFor('name')" class="field-error"><AlertTriangle />{{ issueFor('name')?.message }}</p>
-        </div>
-        <div class="space-y-2 sm:col-span-2">
-          <Label :for="inputId('direction')">线路方向 <span class="text-destructive">*</span></Label>
-          <Select :model-value="value.direction" :disabled="saving" @update:model-value="patch({ direction: $event as ShuttleRouteCreateInput['direction'] }); touched.direction = true">
-            <SelectTrigger :id="inputId('direction')" data-field="direction" class="h-11 w-full" :aria-invalid="Boolean(issueFor('direction'))"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="inbound">进场</SelectItem><SelectItem value="outbound">出场</SelectItem></SelectContent>
-          </Select>
-          <p class="text-xs leading-5 text-muted-foreground">方向决定站点顺序语义；往返线路请分别建立进场、出场两条记录。</p>
         </div>
         <div class="space-y-2 sm:col-span-2">
           <Label :for="inputId('description')">线路描述</Label>

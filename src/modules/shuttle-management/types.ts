@@ -9,6 +9,9 @@ export interface ShuttleStation {
   name: string
   point: GeoPoint | null
   navigationAddress: string
+  // 离场信息仅用于前端编辑，待新接口文档提供后接入读写。
+  outboundPoint?: GeoPoint | null
+  outboundNavigationAddress?: string
   arrivalGateIds: string[]
 }
 
@@ -81,7 +84,7 @@ export interface ShuttleRouteValidationIssue {
   message: string
 }
 
-export type ShuttleStationValidationField = 'stations' | 'name' | 'point'
+export type ShuttleStationValidationField = 'stations' | 'name' | 'point' | 'outboundPoint'
 
 export interface ShuttleStationValidationIssue {
   field: ShuttleStationValidationField

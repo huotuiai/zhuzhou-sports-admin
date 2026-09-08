@@ -1,5 +1,5 @@
 import type { SignedRequestConfig } from '@/lib/http'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createFileUploadService,
   FileUploadServiceError,
@@ -9,6 +9,80 @@ import {
 } from './file-upload-service'
 
 describe('file upload service', () => {
+  describe('cover image ratio', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+      vi.unstubAllGlobals()
+    })
+
+    function setupImage(width: number, height: number) {
+      const image = {
+        naturalWidth: width,
+        naturalHeight: height,
+        src: '',
+        onload: null as (() => void) | null,
+        onerror: null as (() => void) | null,
+      }
+      vi.stubGlobal('Image', vi.fn(function () { return image }))
+      const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:cover-image')
+      const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+      const request = vi.fn(async () => ({
+        url: 'https://api.example.com/uploads/cover/image.jpg',
+        path: '/uploads/cover/image.jpg',
+        name: '封面.jpg',
+        size: 5,
+        mime: 'image/jpeg',
+      }))
+      return {
+        image, request, createObjectURL, revokeObjectURL,
+        file: new File(['image'], '封面.jpg', { type: 'image/jpeg' }),
+        service: createFileUploadService(async <T>(): Promise<T> => await request() as T),
+      }
+    }
+
+    it.each([[1280, 720], [1920, 1080]])('uploads a %i×%i cover only after checking its dimensions', async (width, height) => {
+      const { image, request, file, service, createObjectURL, revokeObjectURL } = setupImage(width, height)
+      const upload = service.uploadImage(file, 'cover')
+
+      expect(request).not.toHaveBeenCalled()
+      expect(createObjectURL).toHaveBeenCalledWith(file)
+      expect(image.src).toBe('blob:cover-image')
+      image.onload?.()
+
+      await expect(upload).resolves.toMatchObject({ name: file.name })
+      expect(request).toHaveBeenCalledOnce()
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:cover-image')
+    })
+
+    it.each([[800, 800], [1080, 1920], [750, 420], [1280, 721]])('rejects a %i×%i cover without uploading it', async (width, height) => {
+      const { image, request, file, service, revokeObjectURL } = setupImage(width, height)
+      const upload = service.uploadImage(file, 'cover')
+      image.onload?.()
+
+      await expect(upload).rejects.toThrow(`封面图宽高比必须为 16:9，当前尺寸为 ${width}×${height}`)
+      expect(request).not.toHaveBeenCalled()
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:cover-image')
+    })
+
+    it.each(['onerror', 'onload'] as const)('rejects unreadable or empty covers on %s and releases their object URLs', async (event) => {
+      const { image, request, file, service, revokeObjectURL } = setupImage(0, 0)
+      const upload = service.uploadImage(file, 'cover')
+      image[event]?.()
+
+      await expect(upload).rejects.toThrow('无法读取封面图片，请重新选择有效的图片')
+      expect(request).not.toHaveBeenCalled()
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:cover-image')
+    })
+
+    it.each(['banner', 'editor'] as const)('does not restrict the aspect ratio for %s images', async (scene) => {
+      const { request, file, service, createObjectURL } = setupImage(800, 800)
+
+      await expect(service.uploadImage(file, scene)).resolves.toMatchObject({ name: file.name })
+      expect(request).toHaveBeenCalledOnce()
+      expect(createObjectURL).not.toHaveBeenCalled()
+    })
+  })
+
   it('uploads multipart image with scene-only signing parameters', async () => {
     const configs: SignedRequestConfig[] = []
     const service = createFileUploadService(async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {

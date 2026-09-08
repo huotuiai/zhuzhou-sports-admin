@@ -108,7 +108,7 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
         :model-value="value.cover ? [value.cover] : []"
         scene="cover"
         :max-file-size="2 * 1024 * 1024"
-        hint="支持 JPG、PNG、WebP、GIF，≤2MB，建议 750×420"
+        hint="支持 JPG、PNG、WebP、GIF，≤2MB，宽高比必须为 16:9，建议 1280×720"
         :disabled="saving"
         :invalid="Boolean(errorFor('cover'))"
         @update:model-value="patch({ cover: $event[0] ?? null })"

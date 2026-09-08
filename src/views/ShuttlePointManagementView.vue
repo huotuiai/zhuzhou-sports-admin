@@ -36,7 +36,6 @@ type DiscardKind = 'route' | 'stations'
 const baseColumns: readonly DataTableColumn<ShuttleRoute>[] = [
   { key: 'code', label: '线路编号', width: '112px' },
   { key: 'name', label: '线路名称', minWidth: '190px' },
-  { key: 'direction', label: '方向', width: '92px', align: 'center' },
   { key: 'stations', label: '站点数', width: '104px', align: 'center' },
   { key: 'schedule', label: '首末班', minWidth: '150px' },
   { key: 'interval', label: '发车间隔', width: '110px', align: 'center' },
@@ -68,7 +67,6 @@ const stationInitial = ref<ShuttleStation[]>([])
 const stationEditorDirty = ref(false)
 const stationFormRef = ref<{ validateAndCommit(): boolean } | null>(null)
 const discardKind = ref<DiscardKind | null>(null)
-const directionConfirmOpen = ref(false)
 const deleteTarget = ref<ShuttleRoute | null>(null)
 const ticketGates = ref<TicketGate[]>([])
 const ticketGatesLoading = ref(false)
@@ -78,7 +76,7 @@ const loadError = ref('')
 const routeDirty = computed(() => JSON.stringify(routeValue.value) !== JSON.stringify(routeInitial.value))
 const stationDirty = computed(() => stationEditorDirty.value || JSON.stringify(stationValue.value) !== JSON.stringify(stationInitial.value))
 const stationRoute = computed(() => store.records.find((item) => item.id === stationRouteId.value) ?? null)
-const hasQuery = computed(() => Boolean(store.query.keyword || store.query.direction !== 'all' || store.query.operatingStatus !== 'all'))
+const hasQuery = computed(() => Boolean(store.query.keyword || store.query.operatingStatus !== 'all'))
 
 function emptyRoute(): ShuttleRouteCreateInput {
   return {
@@ -101,7 +99,7 @@ function cloneRouteInput(value: ShuttleRouteCreateInput): ShuttleRouteCreateInpu
 }
 
 function cloneStations(stations: readonly ShuttleStation[]): ShuttleStation[] {
-  return stations.map((station) => ({ ...station, point: station.point ? { ...station.point } : null, arrivalGateIds: [...station.arrivalGateIds] }))
+  return stations.map((station) => ({ ...station, point: station.point ? { ...station.point } : null, outboundPoint: station.outboundPoint ? { ...station.outboundPoint } : null, arrivalGateIds: [...station.arrivalGateIds] }))
 }
 
 function toRouteInput(route: ShuttleRoute): ShuttleRouteCreateInput {
@@ -179,7 +177,6 @@ function closeRoute(): void {
   routeOpen.value = false
   editingId.value = null
   routeIssues.value = []
-  directionConfirmOpen.value = false
   if (discardKind.value === 'route') discardKind.value = null
 }
 
@@ -238,16 +235,6 @@ async function saveRoute(): Promise<void> {
     : store.validateUpdate(toUpdateInput(routeValue.value)).issues
   await nextTick()
   if (!routeFormRef.value?.validateAndFocus() || routeIssues.value.length) return
-  const current = editingId.value ? store.records.find((item) => item.id === editingId.value) : null
-  if (current && routeValue.value.direction !== routeInitial.value.direction) {
-    directionConfirmOpen.value = true
-    return
-  }
-  await persistRoute()
-}
-
-async function confirmDirectionSave(): Promise<void> {
-  directionConfirmOpen.value = false
   await persistRoute()
 }
 
@@ -403,7 +390,6 @@ useEventListener(window, 'beforeunload', beforeUnload)
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
         <div class="space-y-2"><Label for="shuttle-keyword">关键字</Label><Input id="shuttle-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="线路编号或名称" autocomplete="off" @keydown.enter.prevent="applyQuery" /></div>
-        <div class="space-y-2"><Label for="shuttle-direction">线路方向</Label><Select v-model="queryDraft.direction"><SelectTrigger id="shuttle-direction" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部方向</SelectItem><SelectItem value="inbound">进场</SelectItem><SelectItem value="outbound">出场</SelectItem></SelectContent></Select></div>
         <div class="space-y-2"><Label for="shuttle-operating-status">运营状态</Label><Select v-model="queryDraft.operatingStatus"><SelectTrigger id="shuttle-operating-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部运营状态</SelectItem><SelectItem value="operating">运营中</SelectItem><SelectItem value="suspended">停运</SelectItem><SelectItem value="partial">部分运营</SelectItem></SelectContent></Select></div>
       </QueryPanel>
 
@@ -413,7 +399,6 @@ useEventListener(window, 'beforeunload', beforeUnload)
         <DataTable :columns="columns" :rows="store.paginatedRecords" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '当前查询条件下暂无接驳线路' : '暂无接驳线路，请新增'" caption="接驳线路列表">
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs font-semibold">{{ row.code }}</span></template>
           <template #cell-name="{ row }"><p class="max-w-52 truncate font-medium" :title="row.name">{{ row.name }}</p><p v-if="row.description" class="mt-1 max-w-52 truncate text-xs text-muted-foreground" :title="row.description">{{ row.description }}</p></template>
-          <template #cell-direction="{ row }"><Badge variant="outline" :class="row.direction === 'inbound' ? 'border-primary/30 bg-primary/10 text-primary' : 'border-warning/30 bg-warning/10 text-warning'">{{ shuttleDirectionLabel(row.direction) }}</Badge></template>
           <template #cell-stations="{ row }"><div class="flex flex-col items-center"><span class="font-semibold tabular-nums">{{ row.stations.length }} 站</span><span v-if="row.stations.some((station) => !station.point)" class="mt-1 text-[11px] text-warning">{{ row.stations.filter((station) => !station.point).length }} 个缺坐标</span><span v-else-if="row.stations.length" class="mt-1 text-[11px] text-success">坐标完整</span></div></template>
           <template #cell-schedule="{ row }"><div class="flex items-center gap-1.5 whitespace-nowrap font-medium tabular-nums"><Clock3 class="size-4 text-primary" aria-hidden="true" />{{ row.firstDeparture }}–{{ row.lastDeparture }}</div></template>
           <template #cell-interval="{ row }"><span class="tabular-nums">{{ row.departureIntervalMinutes }} 分钟</span></template>
@@ -428,7 +413,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <ShuttleRouteMapView v-else :records="store.mapRecords" :theme="themeStore.mode" />
     </div>
 
-    <CrudSheet :open="routeOpen" :mode="routeMode" size="wide" :title="routeMode === 'create' ? '新增接驳线路' : `编辑接驳线路 · ${routeValue.code}`" description="维护线路方向、班次、运营状态和排序；站点保存后单独配置。" :saving="store.isSaving" :dirty="routeDirty" @submit="saveRoute" @request-close="requestRouteClose">
+    <CrudSheet :open="routeOpen" :mode="routeMode" size="wide" :title="routeMode === 'create' ? '新增接驳线路' : `编辑接驳线路 · ${routeValue.code}`" description="维护线路信息、班次、运营状态和排序；站点保存后单独配置。" :saving="store.isSaving" :dirty="routeDirty" @submit="saveRoute" @request-close="requestRouteClose">
       <ShuttleRouteForm :key="`${routeMode}-${editingId ?? 'new'}`" ref="routeFormRef" :mode="routeMode" :value="routeValue" :issues="routeIssues" :saving="store.isSaving" @update:value="updateRoute" />
     </CrudSheet>
 
@@ -437,8 +422,6 @@ useEventListener(window, 'beforeunload', beforeUnload)
     </CrudSheet>
 
     <AlertDialog :open="Boolean(discardKind)" @update:open="!$event && (discardKind = null)"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>{{ discardKind === 'stations' ? '当前站点顺序或站点信息尚未保存，关闭后将无法恢复。' : '当前接驳线路信息尚未保存，关闭后将无法恢复。' }}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><Button variant="destructive" class="h-11" @click="discardChanges"><X aria-hidden="true" />放弃修改</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
-
-    <AlertDialog :open="directionConfirmOpen" @update:open="directionConfirmOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认变更线路方向？</AlertDialogTitle><AlertDialogDescription>方向变更将影响 H5 进出场推荐；该线路现有 {{ store.records.find((item) => item.id === editingId)?.stations.length ?? 0 }} 个站点的方向语义也会同步变更。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">返回检查</AlertDialogCancel><Button class="h-11" :disabled="store.isSaving" @click="confirmDirectionSave">确认变更并保存</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
 
     <AlertDialog :open="Boolean(deleteTarget)" @update:open="!$event && closeDelete()"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除“{{ deleteTarget?.name }}”？</AlertDialogTitle><AlertDialogDescription>删除后不可恢复，是否确认删除该线路？</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">取消</AlertDialogCancel><Button variant="destructive" class="h-11" :disabled="Boolean(store.deletingId)" @click="remove"><Trash2 aria-hidden="true" />{{ store.deletingId ? '删除中' : '确认删除' }}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>

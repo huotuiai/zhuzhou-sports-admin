@@ -64,6 +64,27 @@ export function validateUploadImage(file: Pick<File, 'name' | 'size' | 'type'>, 
   }
 }
 
+async function validateCoverImageRatio(file: File): Promise<void> {
+  const url = URL.createObjectURL(file)
+  try {
+    const { width, height } = await new Promise<{ width: number, height: number }>((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight })
+      image.onerror = () => reject(new FileUploadServiceError('无法读取封面图片，请重新选择有效的图片'))
+      image.src = url
+    })
+    if (width <= 0 || height <= 0) {
+      throw new FileUploadServiceError('无法读取封面图片，请重新选择有效的图片')
+    }
+    if (width * 9 !== height * 16) {
+      throw new FileUploadServiceError(`封面图宽高比必须为 16:9，当前尺寸为 ${width}×${height}，请重新选择图片`)
+    }
+  }
+  finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
 export function validateUploadAttachment(file: Pick<File, 'size'>, maxFileSize = ATTACHMENT_UPLOAD_MAX_BYTES): void {
   const limit = Math.min(maxFileSize > 0 ? maxFileSize : ATTACHMENT_UPLOAD_MAX_BYTES, ATTACHMENT_UPLOAD_MAX_BYTES)
   if (file.size > limit) {
@@ -106,6 +127,7 @@ export function createFileUploadService(request: FileUploadRequester = requestDa
   return {
     async uploadImage(file, scene) {
       validateUploadImage(file)
+      if (scene === 'cover') await validateCoverImageRatio(file)
       return upload(file, scene)
     },
     async uploadAttachment(file) {

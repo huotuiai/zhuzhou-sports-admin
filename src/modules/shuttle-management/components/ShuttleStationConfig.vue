@@ -10,7 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClientId } from '@/lib/id'
-import { parseGeoPointInput, serializeGeoPoint } from '@/components/map/geometry'
+import { isValidGeoPoint, parseGeoPointInput, serializeGeoPoint } from '@/components/map/geometry'
 import { validateShuttleStations } from '../services/shuttle-route-service'
 
 const props = withDefaults(defineProps<{
@@ -30,12 +30,14 @@ const emit = defineEmits<{
 type EditorMode = 'create' | 'edit'
 interface StationEditor {
   name: string
-  coordinate: string
-  navigationAddress: string
+  inboundCoordinate: string
+  inboundNavigationAddress: string
+  outboundCoordinate: string
+  outboundNavigationAddress: string
   arrivalGateIds: string[]
 }
 
-const emptyEditor = (): StationEditor => ({ name: '', coordinate: '', navigationAddress: '', arrivalGateIds: [] })
+const emptyEditor = (): StationEditor => ({ name: '', inboundCoordinate: '', inboundNavigationAddress: '', outboundCoordinate: '', outboundNavigationAddress: '', arrivalGateIds: [] })
 const editorMode = ref<EditorMode | null>(null)
 const editingId = ref<string | null>(null)
 const editor = reactive<StationEditor>(emptyEditor())
@@ -43,7 +45,7 @@ const editorInitial = ref<StationEditor>(emptyEditor())
 const editorError = ref('')
 const editorErrorField = ref<keyof StationEditor | ''>('')
 const editorDirty = computed(() => editorMode.value !== null && JSON.stringify(editor) !== JSON.stringify(editorInitial.value))
-const missingCoordinateCount = computed(() => props.value.filter((station) => !station.point).length)
+const missingCoordinateCount = computed(() => props.value.filter((station) => !station.point || !station.outboundPoint).length)
 const ticketGateById = computed(() => new Map(props.ticketGates.map((gate) => [gate.id, gate])))
 const unavailableArrivalGateIds = computed(() => editor.arrivalGateIds.filter((id) => !ticketGateById.value.has(id)))
 
@@ -57,6 +59,8 @@ function cloneStation(station: ShuttleStation): ShuttleStation {
     name: station.name,
     point: station.point ? { ...station.point } : null,
     navigationAddress: station.navigationAddress,
+    outboundPoint: station.outboundPoint ? { ...station.outboundPoint } : null,
+    outboundNavigationAddress: station.outboundNavigationAddress ?? '',
     arrivalGateIds: [...station.arrivalGateIds],
   }
 }
@@ -85,8 +89,10 @@ function beginEdit(station: ShuttleStation): void {
   editingId.value = station.id
   setEditor({
     name: station.name,
-    coordinate: station.point ? serializeGeoPoint(station.point) : '',
-    navigationAddress: station.navigationAddress,
+    inboundCoordinate: station.point ? serializeGeoPoint(station.point) : '',
+    inboundNavigationAddress: station.navigationAddress,
+    outboundCoordinate: station.outboundPoint ? serializeGeoPoint(station.outboundPoint) : '',
+    outboundNavigationAddress: station.outboundNavigationAddress ?? '',
     arrivalGateIds: [...station.arrivalGateIds],
   })
 }
@@ -104,47 +110,65 @@ function cancelEditor(): void {
   setEditor(emptyEditor())
 }
 
-function commitEditor(): boolean {
+function validateStations(stations: readonly ShuttleStation[]) {
+  const { issues: baseIssues } = validateShuttleStations(stations)
+  const issues = baseIssues.map((issue) => issue.field === 'point'
+    ? { ...issue, message: issue.code === 'required' ? '请输入入场定位经纬度' : '入场定位：请输入合法的经度,纬度' }
+    : issue)
+  for (const station of stations) {
+    if (!station.outboundPoint) issues.push({ field: 'outboundPoint', stationId: station.id, code: 'required', message: '请输入离场定位经纬度' })
+    else if (!isValidGeoPoint(station.outboundPoint)) issues.push({ field: 'outboundPoint', stationId: station.id, code: 'invalid', message: '离场定位：请输入合法的经度,纬度' })
+  }
+  return { valid: issues.length === 0, issues }
+}
+
+function commitEditor(): ShuttleStation[] | null {
   editorError.value = ''
   editorErrorField.value = ''
   const name = editor.name.trim()
   if (!name) {
     editorError.value = '请输入站点名称'
     editorErrorField.value = 'name'
-    return false
+    return null
   }
-  if (!editor.coordinate.trim()) {
-    editorError.value = '请输入站点定位经纬度'
-    editorErrorField.value = 'coordinate'
-    return false
-  }
-  let point
-  try {
-    point = parseGeoPointInput(editor.coordinate)
-  }
-  catch (error) {
-    editorError.value = error instanceof Error ? error.message : '请输入合法的经度,纬度'
-    editorErrorField.value = 'coordinate'
-    return false
+  const points: Pick<ShuttleStation, 'point' | 'outboundPoint'> = { point: null, outboundPoint: null }
+  for (const [field, pointField, label] of [
+    ['inboundCoordinate', 'point', '入场'],
+    ['outboundCoordinate', 'outboundPoint', '离场'],
+  ] as const) {
+    if (!editor[field].trim()) {
+      editorError.value = `请输入${label}定位经纬度`
+      editorErrorField.value = field
+      return null
+    }
+    try {
+      points[pointField] = parseGeoPointInput(editor[field])
+    }
+    catch (error) {
+      editorError.value = `${label}定位：${error instanceof Error ? error.message : '请输入合法的经度,纬度'}`
+      editorErrorField.value = field
+      return null
+    }
   }
   const station: ShuttleStation = {
     id: editingId.value ?? createClientId(),
     name,
-    point,
-    navigationAddress: editor.navigationAddress.trim(),
+    ...points,
+    navigationAddress: editor.inboundNavigationAddress.trim(),
+    outboundNavigationAddress: editor.outboundNavigationAddress.trim(),
     arrivalGateIds: [...editor.arrivalGateIds],
   }
   const next = editorMode.value === 'edit'
     ? props.value.map((item) => item.id === editingId.value ? station : cloneStation(item))
     : [...props.value.map(cloneStation), station]
-  const validation = validateShuttleStations(next)
+  const validation = validateStations([station])
   if (!validation.valid) {
     editorError.value = validation.issues[0]!.message
-    return false
+    return null
   }
   emit('update:value', next)
   cancelEditor()
-  return true
+  return next
 }
 
 function move(index: number, offset: -1 | 1): void {
@@ -167,16 +191,21 @@ function remove(station: ShuttleStation): void {
 }
 
 function validateAndCommit(): boolean {
-  if (editorMode.value && editorDirty.value && !commitEditor()) return false
-  if (editorMode.value && !editorDirty.value) cancelEditor()
-  const result = validateShuttleStations(props.value)
+  let stations = props.value
+  if (editorMode.value && editorDirty.value) {
+    const committed = commitEditor()
+    if (!committed) return false
+    stations = committed
+  }
+  else if (editorMode.value) cancelEditor()
+  const result = validateStations(stations)
   if (!result.valid) {
     const issue = result.issues[0]!
-    const station = issue.stationId ? props.value.find((item) => item.id === issue.stationId) : null
+    const station = issue.stationId ? stations.find((item) => item.id === issue.stationId) : null
     if (station) {
       beginEdit(station)
       editorError.value = issue.message
-      editorErrorField.value = issue.field === 'point' ? 'coordinate' : 'name'
+      editorErrorField.value = issue.field === 'point' ? 'inboundCoordinate' : issue.field === 'outboundPoint' ? 'outboundCoordinate' : 'name'
     }
     else {
       editorError.value = issue.message
@@ -198,7 +227,7 @@ watch(() => props.routeId, cancelEditor)
       <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div class="flex items-center gap-2"><h3 id="station-list-heading" class="font-semibold">站点列表</h3><Badge variant="secondary">{{ value.length }}/20</Badge></div>
-          <p class="mt-1 text-xs text-muted-foreground">站点方向跟随线路；通过上移、下移调整地图连线顺序。</p>
+          <p class="mt-1 text-xs text-muted-foreground">通过上移、下移调整地图连线顺序，请按入场方向配置站点顺序。</p>
         </div>
         <Button type="button" variant="outline" class="h-11" :disabled="saving || value.length >= 20" @click="beginCreate"><Plus aria-hidden="true" />新增站点</Button>
       </div>
@@ -208,8 +237,9 @@ watch(() => props.routeId, cancelEditor)
         <article v-for="(station, index) in value" :key="station.id" :class="['flex flex-col gap-3 rounded-xl border p-3 transition-colors sm:flex-row sm:items-center', editingId === station.id ? 'border-primary/45 bg-primary/5' : 'bg-card/70 hover:bg-muted/25']">
           <span class="grid size-9 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-semibold tabular-nums text-primary">{{ index + 1 }}</span>
           <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-2"><p class="font-medium">{{ station.name }}</p><Badge v-if="station.point" variant="outline" class="text-success">已定位</Badge><Badge v-else variant="secondary">缺少坐标</Badge></div>
-            <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ station.point ? serializeGeoPoint(station.point) : '未配置坐标' }}<span v-if="station.navigationAddress" class="font-sans"> · {{ station.navigationAddress }}</span></p>
+            <div class="flex flex-wrap items-center gap-2"><p class="font-medium">{{ station.name }}</p><Badge v-if="station.point && station.outboundPoint" variant="outline" class="text-success">已定位</Badge><Badge v-else variant="secondary">缺少坐标</Badge></div>
+            <p class="mt-1 break-all text-xs text-muted-foreground">入场定位：{{ station.point ? serializeGeoPoint(station.point) : '未配置坐标' }} · 入场导航：{{ station.navigationAddress || '未配置' }}</p>
+            <p class="mt-1 break-all text-xs text-muted-foreground">离场定位：{{ station.outboundPoint ? serializeGeoPoint(station.outboundPoint) : '未配置坐标' }} · 离场导航：{{ station.outboundNavigationAddress || '未配置' }}</p>
             <p class="mt-1 truncate text-xs text-muted-foreground" :title="station.arrivalGateIds.map(gateLabel).join('、')">到达检票口：{{ station.arrivalGateIds.length ? station.arrivalGateIds.map(gateLabel).join('、') : '未绑定' }}</p>
           </div>
           <div class="flex shrink-0 items-center justify-end gap-1">
@@ -223,28 +253,30 @@ watch(() => props.routeId, cancelEditor)
 
       <div v-if="value.length" class="mt-3 flex items-center gap-2 rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
         <MapPin class="size-4 shrink-0" aria-hidden="true" />
-        {{ missingCoordinateCount ? `${missingCoordinateCount} 个站点未配置坐标，不参与地图点位和连线。` : '全部站点均已配置坐标。' }}
+        {{ missingCoordinateCount ? `${missingCoordinateCount} 个站点未完整配置入场、离场坐标，请补齐后保存。` : '全部站点均已配置坐标。' }}
       </div>
     </section>
 
     <section v-if="editorMode" class="rounded-xl border border-primary/25 bg-primary/4 p-4" aria-labelledby="station-editor-heading">
       <div class="mb-4 flex items-center justify-between gap-3">
-        <div><h3 id="station-editor-heading" class="font-semibold">{{ editorMode === 'create' ? '新增站点' : '编辑站点' }}</h3><p class="mt-1 text-xs text-muted-foreground">定位必填，使用“经度,纬度”格式。</p></div>
+        <div><h3 id="station-editor-heading" class="font-semibold">{{ editorMode === 'create' ? '新增站点' : '编辑站点' }}</h3><p class="mt-1 text-xs text-muted-foreground">入场、离场定位均为必填项，使用“经度,纬度”格式。</p></div>
         <Button type="button" variant="ghost" size="icon-lg" class="h-11 w-11" aria-label="关闭站点编辑区" @click="cancelEditor"><X aria-hidden="true" /></Button>
       </div>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div class="space-y-2 sm:col-span-2"><Label for="station-name">站点名称 <span class="text-destructive">*</span></Label><Input id="station-name" v-model="editor.name" class="h-11" placeholder="例如：体育中心东门站" :disabled="saving" :aria-invalid="editorErrorField === 'name'" /></div>
-        <div class="space-y-2 sm:col-span-2"><Label for="station-coordinate">定位（经度,纬度） <span class="text-destructive">*</span></Label><Input id="station-coordinate" v-model="editor.coordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'coordinate'" /><p class="text-xs text-muted-foreground">坐标系为 GCJ-02，用于地图点位、距离计算和导航。</p></div>
-        <div class="space-y-2 sm:col-span-2"><Label for="station-address">导航地址</Label><Input id="station-address" v-model="editor.navigationAddress" class="h-11" placeholder="选填导航位置说明" :disabled="saving" /></div>
+        <div class="space-y-2"><Label for="station-inbound-coordinate">入场定位（经度,纬度） <span class="text-destructive">*</span></Label><Input id="station-inbound-coordinate" v-model="editor.inboundCoordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'inboundCoordinate'" /></div>
+        <div class="space-y-2"><Label for="station-inbound-address">入场导航地址（选填）</Label><Input id="station-inbound-address" v-model="editor.inboundNavigationAddress" class="h-11" placeholder="请输入导航地址" :disabled="saving" /></div>
+        <div class="space-y-2"><Label for="station-outbound-coordinate">离场定位（经度,纬度） <span class="text-destructive">*</span></Label><Input id="station-outbound-coordinate" v-model="editor.outboundCoordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'outboundCoordinate'" /></div>
+        <div class="space-y-2"><Label for="station-outbound-address">离场导航地址（选填）</Label><Input id="station-outbound-address" v-model="editor.outboundNavigationAddress" class="h-11" placeholder="选填导航链接" :disabled="saving" /></div>
         <div class="space-y-2 sm:col-span-2">
-          <Label>到达检票口</Label>
+          <Label>可达检票口</Label>
           <p class="text-xs text-muted-foreground">可多选，作为 H5 从接驳站前往检票口的路线依据。</p>
           <div v-if="ticketGatesLoading" class="flex items-center gap-2 rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground"><LoaderCircle class="size-4 animate-spin" aria-hidden="true" />检票口加载中</div>
           <div v-else-if="ticketGatesError" class="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-3 text-sm text-destructive" role="alert">{{ ticketGatesError }}</div>
           <div v-else-if="!ticketGates.length" class="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">暂无可选检票口，可先保存站点。</div>
           <div v-else class="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-lg border bg-background/70 p-3 sm:grid-cols-2">
             <label v-for="gate in ticketGates" :key="gate.id" class="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 hover:bg-muted/40">
-              <Checkbox :model-value="editor.arrivalGateIds.includes(gate.id)" :disabled="saving" :aria-label="`选择到达检票口：${gate.code} ${gate.name}`" @update:model-value="toggleArrivalGate(gate.id, $event)" />
+              <Checkbox :model-value="editor.arrivalGateIds.includes(gate.id)" :disabled="saving" :aria-label="`选择可达检票口：${gate.code} ${gate.name}`" @update:model-value="toggleArrivalGate(gate.id, $event)" />
               <span class="min-w-0"><span class="block truncate text-sm font-medium">{{ gate.code }} · {{ gate.name }}</span><span class="block text-xs text-muted-foreground">{{ gate.floorName }} · {{ gate.status === 'open' ? '开放' : gate.status === 'restricted' ? '受限' : '关闭' }}</span></span>
             </label>
           </div>
