@@ -47,6 +47,7 @@ function input(overrides: Partial<TrafficControlWriteInput> = {}): TrafficContro
     areaName: '北门',
     startAt: '2026-08-20T12:00',
     endAt: '2026-08-20T13:00',
+    publishAt: null,
     detourInstructions: '',
     geometry: null,
     pinned: false,
@@ -84,7 +85,7 @@ class StubTrafficControlService implements TrafficControlService {
   }
 
   async create(value: TrafficControlWriteInput): Promise<TrafficControl> {
-    const next = record('GZ-' + String(this.records.length + 1).padStart(3, '0'), { ...value, publishStatus: 'draft', publishAt: null })
+    const next = record('GZ-' + String(this.records.length + 1).padStart(3, '0'), { ...value, publishStatus: 'draft' })
     this.records.push(next)
     return structuredClone(next)
   }
@@ -182,8 +183,8 @@ describe('traffic control store', () => {
     const store = createTrafficControlStore(service, () => currentTime, 'traffic-crud')()
     await store.load()
     await expect(store.get('GZ-001')).resolves.toMatchObject({ title: '接口最新标题' })
-    await expect(store.create(input())).resolves.toMatchObject({ publishStatus: 'draft' })
-    await expect(store.update('GZ-001', input({ title: '修改标题' }))).resolves.toMatchObject({ title: '修改标题' })
+    await expect(store.create(input({ publishAt: '2026-08-20T11:00' }))).resolves.toMatchObject({ publishStatus: 'draft', publishAt: '2026-08-20T11:00' })
+    await expect(store.update('GZ-001', input({ title: '修改标题' }))).resolves.toMatchObject({ title: '修改标题', publishAt: null })
     await expect(store.remove('GZ-001')).resolves.toBe(true)
     expect(service.detailReads).toEqual(['GZ-001'])
     expect(service.listQueries).toHaveLength(4)
@@ -191,12 +192,12 @@ describe('traffic control store', () => {
 
   it('reads the latest detail before toggling pinned and then refreshes', async () => {
     service.records = [record('GZ-001', { title: '列表旧标题', pinned: false })]
-    service.details.set('GZ-001', record('GZ-001', { title: '接口最新标题', pinned: false }))
+    service.details.set('GZ-001', record('GZ-001', { title: '接口最新标题', pinned: false, publishAt: '2026-08-18T09:20:35+08:00' }))
     const store = createTrafficControlStore(service, () => currentTime, 'traffic-pin')()
     await store.load()
     const updated = await store.togglePinned(service.records[0]!)
     expect(service.detailReads).toEqual(['GZ-001'])
-    expect(service.updateInputs[0]).toMatchObject({ id: 'GZ-001', input: { title: '接口最新标题', pinned: true } })
+    expect(service.updateInputs[0]).toMatchObject({ id: 'GZ-001', input: { title: '接口最新标题', pinned: true, publishAt: '2026-08-18T09:20:35+08:00' } })
     expect(updated?.pinned).toBe(true)
   })
 

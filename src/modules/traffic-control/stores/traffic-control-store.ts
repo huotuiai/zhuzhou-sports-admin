@@ -31,6 +31,7 @@ function writeInput(item: TrafficControl, patch: Partial<TrafficControlWriteInpu
     areaName: item.areaName,
     startAt: item.startAt,
     endAt: item.endAt,
+    publishAt: item.publishAt,
     detourInstructions: item.detourInstructions,
     geometry: item.geometry,
     pinned: item.pinned,

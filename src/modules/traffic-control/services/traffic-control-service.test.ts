@@ -56,6 +56,7 @@ function input(overrides: Partial<TrafficControlWriteInput> = {}): TrafficContro
     areaName: '体育中心东门',
     startAt: '2027-08-28T10:00',
     endAt: '2027-08-28T12:00',
+    publishAt: null,
     detourInstructions: '请绕行南门',
     geometry: null,
     pinned: false,
@@ -72,6 +73,7 @@ describe('traffic control API service', () => {
       type: 'road-closure',
       detourInstructions: '',
       publisherId: '9007199254740997',
+      publishAt: '2026-08-20T08:30:00+08:00',
       pinned: true,
       dataSource: 'sync',
       syncStatus: 'success',
@@ -125,6 +127,7 @@ describe('traffic control API service', () => {
   it('validates form values and formats local request times', () => {
     expect(validateTrafficControlInput(input()).valid).toBe(true)
     expect(validateTrafficControlInput(input({ title: 'A', areaName: '', sortOrder: -1 })).issues.map(item => item.field)).toEqual(['title', 'areaName', 'sortOrder'])
+    expect(validateTrafficControlInput(input({ publishAt: 'invalid-date' })).issues).toContainEqual({ field: 'publishAt', code: 'invalid', message: '请选择有效的发布时间' })
     expect(formatControlRequestDateTime('2027-08-28T10:20')).toBe('2027-08-28 10:20:00')
     expect(formatControlRequestDateTime('2027-08-28T10:20:30')).toBe('2027-08-28 10:20:30')
   })
@@ -150,7 +153,7 @@ describe('traffic control API service', () => {
     ])
   })
 
-  it('calls detail and mutation endpoints with documented bodies', async () => {
+  it('calls mutation endpoints with the proposed publish_at request field', async () => {
     const configs: SignedRequestConfig[] = []
     const responses = [
       apiControl({ id: 21 }),
@@ -166,8 +169,8 @@ describe('traffic control API service', () => {
     }
     const service = createTrafficControlService(requester)
     await service.get('21')
-    await service.create(input({ type: 'temporary' }))
-    await service.update('21', input({ title: '东门最新管制' }))
+    await service.create(input({ type: 'temporary', publishAt: '2027-08-27T09:30' }))
+    await service.update('21', input({ title: '东门最新管制', publishAt: '2027-08-27T10:20:35' }))
     await service.publish('21')
     await service.revoke('21')
     await service.remove('21')
@@ -179,24 +182,36 @@ describe('traffic control API service', () => {
       data: {
         title: '东门道路管制', control_type: 'temp', area_name: '体育中心东门',
         start_at: '2027-08-28 10:00:00', end_at: '2027-08-28 12:00:00',
+        publish_at: '2027-08-27 09:30:00',
         detour_desc: '请绕行南门', is_pinned: 0, sort_order: 10,
       },
     })
     expect(configs[1]?.data).not.toHaveProperty('code')
-    expect(configs[1]?.data).not.toHaveProperty('publish_at')
     expect(configs[1]?.data).not.toHaveProperty('geometry_json')
     expect(configs[2]).toMatchObject({
       method: 'PATCH',
       url: 'api/v1/admin/controls/21',
-      data: { title: '东门最新管制', control_type: 'roadblock', geometry_json: null },
+      data: { title: '东门最新管制', control_type: 'roadblock', geometry_json: null, publish_at: '2027-08-27 10:20:35' },
     })
     expect(configs[2]?.data).not.toHaveProperty('code')
-    expect(configs[2]?.data).not.toHaveProperty('publish_at')
     expect(configs.slice(3)).toMatchObject([
       { method: 'POST', url: 'api/v1/admin/controls/21/publish' },
       { method: 'POST', url: 'api/v1/admin/controls/21/revoke' },
       { method: 'DELETE', url: 'api/v1/admin/controls/21' },
     ])
+  })
+
+  it.each([null, '', '   '])('sends null for an unset or cleared publish time (%j)', async (publishAt) => {
+    const configs: SignedRequestConfig[] = []
+    const service = createTrafficControlService(async <T>(config: SignedRequestConfig): Promise<T> => {
+      configs.push(config)
+      return apiControl({ publish_at: null, publish_status: 'draft' }) as T
+    })
+    const created = await service.create(input({ publishAt }))
+    const updated = await service.update('21', input({ publishAt }))
+    for (const config of configs) expect(config.data).toHaveProperty('publish_at', null)
+    expect(created.publishAt).toBeNull()
+    expect(updated.publishAt).toBeNull()
   })
 
   it('downloads the server CSV with a safe response filename', async () => {

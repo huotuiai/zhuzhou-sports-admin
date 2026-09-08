@@ -110,7 +110,7 @@ function asset(overrides: Partial<RemoteFileAsset> = {}): RemoteFileAsset {
 function contentInput(overrides: Partial<ContentWriteInput> = {}): ContentWriteInput {
   return {
     type: 'news', title: '新的场馆资讯', bodyHtml: '<p>正文</p>', cover: null, attachments: [],
-    publishAt: null, pinned: false, priority: 50, enabled: true, validStartAt: null, validEndAt: null,
+    publishAt: null, pinned: false, priority: 50, enabled: true,
     activityStartAt: null, activityEndAt: null,
     activityLocation: '', navigationLocation: '', ...overrides,
   }
@@ -243,17 +243,20 @@ describe('content management API service', () => {
     expect(configs[0]).toMatchObject({ method: 'POST', url: 'api/v1/admin/contents', data: { title: '新的场馆资讯', content_type: 'news', attachments: [{ file_name: 'guide.pdf', file_url: 'https://cdn.example.com/guide.pdf' }] } })
     expect(configs[0]?.data).not.toHaveProperty('code')
     expect(configs[0]?.data).not.toHaveProperty('publish_at')
+    expect(configs[0]?.data).toMatchObject({ valid_start_at: null, valid_end_at: null })
     expect(configs[1]).toEqual({ method: 'POST', url: 'api/v1/admin/contents/21/publish', data: { publish_at: '2026-08-28 10:00:00' } })
-    expect(configs[2]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '新的场馆资讯', content_type: 'news' } })
+    expect(configs[2]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '新的场馆资讯', content_type: 'news', valid_start_at: null, valid_end_at: null } })
     expect(configs[3]).toEqual({ method: 'POST', url: 'api/v1/admin/contents/21/unpublish', data: {} })
   })
 
-  it('maps navigation input and reads latest detail before quick content toggles', async () => {
+  it('maps navigation input and clears legacy H5 display windows when saving or toggling content', async () => {
     const configs: SignedRequestConfig[] = []
     const responses = [
       apiContent({ id: 21, code: 'CT-021', content_type: 'activity', cover_url: 'https://cdn.example.com/activity.jpg' }),
-      apiContent({ id: 21, code: 'CT-021', content_type: 'activity' }),
+      apiContent({ id: 21, code: 'CT-021', content_type: 'activity', valid_start_at: '2026-08-28T08:00:00+08:00', valid_end_at: '2026-08-28T23:00:00+08:00' }),
       apiContent({ id: 21, code: 'CT-021', content_type: 'activity', status: 0 }),
+      apiContent({ id: 21, code: 'CT-021', content_type: 'activity', status: 0, valid_end_at: '2026-08-28T23:00:00+08:00' }),
+      apiContent({ id: 21, code: 'CT-021', content_type: 'activity', status: 1 }),
     ]
     const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
       configs.push(config as SignedRequestConfig)
@@ -263,15 +266,18 @@ describe('content management API service', () => {
     await service.createContent(contentInput({
       type: 'activity', cover: asset(), activityStartAt: '2026-08-28T10:00', activityEndAt: '2026-08-28T12:00',
       activityLocation: '体育场', navigationLocation: '113.1462, 27.8165', enabled: false,
-      validStartAt: '2026-08-28T08:00', validEndAt: '2026-08-28T23:00',
     }))
     await service.setContentEnabled('21', false)
+    await service.setContentEnabled('21', true)
     expect(configs[0]?.data).toMatchObject({
       cover_url: 'https://cdn.example.com/remote.jpg', nav_address: null, nav_lng: 113.1462, nav_lat: 27.8165,
-      status: 0, valid_start_at: '2026-08-28 08:00:00', valid_end_at: '2026-08-28 23:00:00',
+      activity_start_at: '2026-08-28 10:00:00', activity_end_at: '2026-08-28 12:00:00',
+      status: 0, valid_start_at: null, valid_end_at: null,
     })
     expect(configs[1]).toEqual({ method: 'GET', url: 'api/v1/admin/contents/21' })
-    expect(configs[2]).toEqual({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '体育中心开放通知', content_type: 'activity', status: 0 } })
+    expect(configs[2]).toEqual({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '体育中心开放通知', content_type: 'activity', status: 0, valid_start_at: null, valid_end_at: null } })
+    expect(configs[3]).toEqual({ method: 'GET', url: 'api/v1/admin/contents/21' })
+    expect(configs[4]).toEqual({ method: 'PATCH', url: 'api/v1/admin/contents/21', data: { title: '体育中心开放通知', content_type: 'activity', status: 1, valid_start_at: null, valid_end_at: null } })
   })
 
   it('keeps the original publication state when PATCH omits it and does not publish again', async () => {

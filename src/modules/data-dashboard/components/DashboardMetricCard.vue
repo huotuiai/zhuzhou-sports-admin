@@ -21,20 +21,20 @@ function formatNumber(value: number): string {
 
 <template>
   <article
-    class="group relative min-h-36 overflow-visible rounded-xl border bg-card/85 shadow-sm transition-[border-color,box-shadow,background-color] duration-200 motion-reduce:transition-none"
+    class="group relative min-h-36 min-w-0 overflow-visible rounded-xl border bg-card/85 shadow-sm transition-[border-color,box-shadow,background-color] duration-200 motion-reduce:transition-none"
     :class="selected ? 'border-primary bg-primary/6 shadow-[0_0_0_3px_color-mix(in_srgb,var(--primary)_12%,transparent)]' : 'border-border/80 hover:border-primary/45 hover:shadow-md'"
   >
     <button
       type="button"
-      class="flex size-full min-h-36 flex-col items-start rounded-xl px-4 py-3.5 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50"
+      class="flex size-full min-h-36 min-w-0 cursor-pointer flex-col items-start rounded-xl px-4 py-3.5 text-left focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/50 disabled:cursor-wait"
       :aria-pressed="selected"
       :aria-label="`查看${metric.name}详情`"
       :disabled="loading"
       @click="emit('select', props.metric.id)"
     >
       <span v-if="selected" class="absolute inset-y-3 left-0 w-0.5 rounded-r-full bg-primary" aria-hidden="true" />
-      <span class="flex w-full items-start gap-8">
-        <span class="line-clamp-2 text-xs font-medium leading-5 text-muted-foreground">{{ metric.name }}</span>
+      <span class="flex w-full min-w-0 items-start pr-7">
+        <span class="line-clamp-2 min-w-0 text-xs font-medium leading-5 text-muted-foreground">{{ metric.name }}</span>
       </span>
 
       <span class="mt-2 flex items-end gap-1.5">
@@ -44,7 +44,7 @@ function formatNumber(value: number): string {
         <span class="pb-0.5 text-[11px] text-muted-foreground">{{ metric.primaryLabel }}</span>
       </span>
 
-      <span class="mt-2 flex items-center gap-2 text-[11px]">
+      <span class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
         <span class="text-muted-foreground">{{ metric.primaryLabel }} 较上一周期</span>
         <span
           class="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 font-semibold"

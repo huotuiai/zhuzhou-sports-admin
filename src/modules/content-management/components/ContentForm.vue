@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, useId } from 'vue'
-import { AlertTriangle, CalendarClock, CalendarRange, MapPin, Navigation, Pin, Power, SlidersHorizontal } from '@lucide/vue'
+import { AlertTriangle, CalendarClock, MapPin, Navigation, Pin, Power, SlidersHorizontal } from '@lucide/vue'
 import type { ContentValidationField, ContentWriteInput, ValidationIssue } from '../types'
+import { ATTACHMENT_UPLOAD_MAX_BYTES } from '../services/file-upload-service'
 import FileMetadataPicker from './FileMetadataPicker.vue'
 import RichTextEditor from './RichTextEditor.vue'
 import { Input } from '@/components/ui/input'
@@ -126,10 +127,10 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
       <FileMetadataPicker
         :model-value="value.attachments"
         scene="attachment"
-        :max-file-size="5 * 1024 * 1024"
+        :max-file-size="ATTACHMENT_UPLOAD_MAX_BYTES"
         :max-files="10"
         multiple
-        hint="后端上传服务当前支持 JPG、PNG、WebP、GIF，单张 ≤5MB"
+        hint="支持图片、PDF、Word 等任意格式，单个文件 ≤10MB"
         :disabled="saving"
         @update:model-value="patch({ attachments: [...$event] })"
         @update:uploading="updateUploading('attachments', $event)"
@@ -250,42 +251,6 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
       <p v-else class="text-xs text-muted-foreground">填写后保存草稿并调用发布接口；留空保存为草稿，可在列表手动发布。</p>
     </div>
 
-    <div class="space-y-2">
-      <Label :for="fieldId('validStartAt')">H5 展示开始</Label>
-      <div class="relative">
-        <CalendarRange class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <Input
-          :id="fieldId('validStartAt')"
-          data-content-field="validStartAt"
-          type="datetime-local"
-          :model-value="value.validStartAt ?? ''"
-          class="h-11 pl-9"
-          :disabled="saving"
-          :aria-invalid="Boolean(errorFor('validStartAt'))"
-          @update:model-value="patch({ validStartAt: String($event) || null })"
-        />
-      </div>
-      <p v-if="errorFor('validStartAt')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('validStartAt') }}</p>
-    </div>
-
-    <div class="space-y-2">
-      <Label :for="fieldId('validEndAt')">H5 展示结束</Label>
-      <div class="relative">
-        <CalendarRange class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <Input
-          :id="fieldId('validEndAt')"
-          data-content-field="validEndAt"
-          type="datetime-local"
-          :model-value="value.validEndAt ?? ''"
-          class="h-11 pl-9"
-          :disabled="saving"
-          :aria-invalid="Boolean(errorFor('validEndAt'))"
-          @update:model-value="patch({ validEndAt: String($event) || null })"
-        />
-      </div>
-      <p v-if="errorFor('validEndAt')" class="field-error" role="alert"><AlertTriangle aria-hidden="true" />{{ errorFor('validEndAt') }}</p>
-    </div>
-
     <div class="flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/25 px-3 py-2.5">
       <div class="flex items-start gap-3">
         <Pin class="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
@@ -302,7 +267,7 @@ defineExpose<ContentFormHandle>({ validateAndFocus })
         <Power class="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
         <div>
           <Label :for="fieldId('enabled')" class="cursor-pointer">启用内容</Label>
-          <p class="mt-1 text-xs leading-5 text-muted-foreground">停用后已发布内容不在 H5 展示。</p>
+          <p class="mt-1 text-xs leading-5 text-muted-foreground">启用后已发布内容在 H5 展示，停用即结束展示。</p>
         </div>
       </div>
       <Switch :id="fieldId('enabled')" data-content-field="enabled" :model-value="value.enabled" :disabled="saving" @update:model-value="patch({ enabled: $event })" />

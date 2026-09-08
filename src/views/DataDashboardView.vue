@@ -210,7 +210,7 @@ onMounted(async () => {
 
 <template>
   <section class="tech-grid min-h-[calc(100svh-4rem)] min-w-0 overflow-x-hidden p-4 lg:p-6" aria-labelledby="data-dashboard-title">
-    <div class="mx-auto flex w-full max-w-[1680px] flex-col gap-6">
+    <div class="flex min-w-0 w-full flex-col gap-6">
       <header class="flex items-center gap-3">
         <div class="flex items-center gap-3">
           <span class="grid size-11 shrink-0 place-items-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
@@ -274,7 +274,7 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div v-if="store.snapshot" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div v-if="store.snapshot" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             <DashboardMetricCard
               v-for="metric in store.visibleMetrics"
               :key="metric.id"
@@ -284,8 +284,8 @@ onMounted(async () => {
               @select="selectMetric"
             />
           </div>
-          <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Skeleton v-for="index in 7" :key="index" class="h-36 rounded-xl" />
+          <div v-else class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <Skeleton v-for="index in 8" :key="index" class="h-36 rounded-xl" />
           </div>
         </section>
 
@@ -298,20 +298,20 @@ onMounted(async () => {
             <Badge variant="secondary">固定展示，不随筛选变更</Badge>
           </div>
 
-          <div v-if="store.snapshot" class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Card v-for="distribution in store.snapshot.distributions" :key="distribution.id" class="gap-2 py-0">
+          <div v-if="store.snapshot" class="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <Card v-for="distribution in store.snapshot.distributions" :key="distribution.id" class="min-w-0 gap-2 py-0">
               <div class="px-4 pt-4">
                 <h3 class="text-sm font-semibold">{{ distribution.title }}</h3>
                 <p class="mt-1 text-xs text-muted-foreground">{{ distribution.description }}</p>
               </div>
-              <div class="h-44 px-2">
+              <div class="h-44 min-w-0 px-2">
                 <DashboardChart
                   :option="distributionOption(distribution)"
                   :accessible-label="distribution.title"
                   @chart-click="selectDistributionChartSlice(distribution, $event)"
                 />
               </div>
-              <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3">
+              <div class="mt-auto flex flex-wrap gap-2 border-t border-border/60 px-4 py-3">
                 <button
                   v-for="slice in distribution.slices"
                   :key="slice.key"
@@ -326,7 +326,7 @@ onMounted(async () => {
               </div>
             </Card>
           </div>
-          <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <Skeleton v-for="index in 3" :key="index" class="h-72 rounded-xl" />
           </div>
 

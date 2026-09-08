@@ -18,10 +18,12 @@ export interface FileUploadRequester {
 }
 
 export interface FileUploadService {
-  uploadImage(file: File, scene: UploadScene): Promise<RemoteFileAsset>
+  uploadImage(file: File, scene: Exclude<UploadScene, 'attachment'>): Promise<RemoteFileAsset>
+  uploadAttachment(file: File): Promise<RemoteFileAsset>
 }
 
 export const UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+export const ATTACHMENT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
 const SUPPORTED_IMAGE_EXTENSION = /\.(?:gif|jpe?g|png|webp)$/i
 
@@ -62,12 +64,19 @@ export function validateUploadImage(file: Pick<File, 'name' | 'size' | 'type'>, 
   }
 }
 
-export function mapApiUpload(value: ApiUploadVO): RemoteFileAsset {
+export function validateUploadAttachment(file: Pick<File, 'size'>, maxFileSize = ATTACHMENT_UPLOAD_MAX_BYTES): void {
+  const limit = Math.min(maxFileSize > 0 ? maxFileSize : ATTACHMENT_UPLOAD_MAX_BYTES, ATTACHMENT_UPLOAD_MAX_BYTES)
+  if (file.size > limit) {
+    throw new FileUploadServiceError(`文件大小不能超过 ${(limit / 1024 / 1024).toFixed(limit % (1024 * 1024) === 0 ? 0 : 1)}MB`)
+  }
+}
+
+export function mapApiUpload(value: ApiUploadVO, scene: UploadScene = 'cover'): RemoteFileAsset {
   const url = requiredText(value.url, '上传 URL')
   const path = requiredText(value.path, '上传路径')
   const name = requiredText(value.name, '原始文件名')
   const mimeType = requiredText(value.mime, '文件类型')
-  if (!SUPPORTED_IMAGE_TYPES.has(mimeType.toLocaleLowerCase('en-US'))) {
+  if (scene !== 'attachment' && !SUPPORTED_IMAGE_TYPES.has(mimeType.toLocaleLowerCase('en-US'))) {
     throw new ApiError('服务器返回的文件类型不受支持', { kind: 'response' })
   }
   return {
@@ -81,19 +90,27 @@ export function mapApiUpload(value: ApiUploadVO): RemoteFileAsset {
 }
 
 export function createFileUploadService(request: FileUploadRequester = requestData): FileUploadService {
+  async function upload(file: File, scene: UploadScene): Promise<RemoteFileAsset> {
+    const data = new FormData()
+    data.append('file', file, file.name)
+    data.append('scene', scene)
+    const response = await request<ApiUploadVO, FormData>({
+      method: 'POST',
+      url: 'api/v1/admin/uploads',
+      data,
+      signParams: { scene },
+    })
+    return mapApiUpload(response, scene)
+  }
+
   return {
     async uploadImage(file, scene) {
       validateUploadImage(file)
-      const data = new FormData()
-      data.append('file', file, file.name)
-      data.append('scene', scene)
-      const response = await request<ApiUploadVO, FormData>({
-        method: 'POST',
-        url: 'api/v1/admin/uploads',
-        data,
-        signParams: { scene },
-      })
-      return mapApiUpload(response)
+      return upload(file, scene)
+    },
+    async uploadAttachment(file) {
+      validateUploadAttachment(file)
+      return upload(file, 'attachment')
     },
   }
 }

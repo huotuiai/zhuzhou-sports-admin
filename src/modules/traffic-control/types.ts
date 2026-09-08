@@ -39,7 +39,7 @@ export interface TrafficControl {
 }
 
 export type TrafficControlWriteInput = Pick<TrafficControl,
-  'title' | 'type' | 'areaName' | 'startAt' | 'endAt' | 'detourInstructions' | 'geometry' | 'pinned' | 'sortOrder'
+  'title' | 'type' | 'areaName' | 'startAt' | 'endAt' | 'detourInstructions' | 'geometry' | 'pinned' | 'sortOrder' | 'publishAt'
 >
 
 export interface TrafficControlQuery {

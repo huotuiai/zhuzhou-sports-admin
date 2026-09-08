@@ -50,7 +50,6 @@ const queryDraft = ref<TrafficControlQuery>({ ...store.query })
 const formOpen = ref(false)
 const formMode = ref<CrudDialogMode>('create')
 const editingId = ref<string | null>(null)
-const formPublishAt = ref<string | null>(null)
 const formValue = ref<TrafficControlWriteInput>(emptyForm())
 const initialValue = ref<TrafficControlWriteInput>(emptyForm())
 const issues = ref<readonly TrafficControlValidationIssue[]>([])
@@ -65,16 +64,16 @@ const loadError = ref('')
 const formDirty = computed(() => JSON.stringify(formValue.value) !== JSON.stringify(initialValue.value))
 const hasQuery = computed(() => Boolean(store.query.keyword || store.query.type !== 'all' || store.query.publishStatus !== 'all' || store.query.timeStatus !== 'all' || store.query.dateStart || store.query.dateEnd))
 
-function localDateTime(date: Date): string {
+function localDateTime(date: Date, includeSeconds = false): string {
   const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+  return new Date(date.getTime() - offset).toISOString().slice(0, includeSeconds ? 19 : 16)
 }
 
 function emptyForm(): TrafficControlWriteInput {
   const start = new Date(Date.now() + 60 * 60_000)
   start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0)
   const end = new Date(start.getTime() + 3 * 60 * 60_000)
-  return { title: '', type: 'road-closure', areaName: '', startAt: localDateTime(start), endAt: localDateTime(end), detourInstructions: '', geometry: null, pinned: false, sortOrder: 50 }
+  return { title: '', type: 'road-closure', areaName: '', startAt: localDateTime(start), endAt: localDateTime(end), publishAt: null, detourInstructions: '', geometry: null, pinned: false, sortOrder: 50 }
 }
 
 function toWriteInput(item: TrafficControl): TrafficControlWriteInput {
@@ -84,6 +83,7 @@ function toWriteInput(item: TrafficControl): TrafficControlWriteInput {
     areaName: item.areaName,
     startAt: localDateTime(new Date(item.startAt)),
     endAt: localDateTime(new Date(item.endAt)),
+    publishAt: item.publishAt ? localDateTime(new Date(item.publishAt), true) : null,
     detourInstructions: item.detourInstructions,
     geometry: item.geometry ? cloneGeometry(item.geometry) : null,
     pinned: item.pinned,
@@ -139,7 +139,6 @@ function openCreate(): void {
   store.resetError()
   formMode.value = 'create'
   editingId.value = null
-  formPublishAt.value = null
   const value = emptyForm()
   formValue.value = cloneWriteInput(value)
   initialValue.value = cloneWriteInput(value)
@@ -157,7 +156,6 @@ async function openEdit(item: TrafficControl): Promise<void> {
   }
   formMode.value = 'edit'
   editingId.value = detail.id
-  formPublishAt.value = detail.publishAt
   const value = toWriteInput(detail)
   formValue.value = cloneWriteInput(value)
   initialValue.value = cloneWriteInput(value)
@@ -174,7 +172,6 @@ function updateForm(value: TrafficControlWriteInput): void {
 function closeForm(): void {
   formOpen.value = false
   editingId.value = null
-  formPublishAt.value = null
   issues.value = []
   discardOpen.value = false
   historicalConfirmOpen.value = false
@@ -366,7 +363,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
     </div>
 
     <CrudSheet :open="formOpen" :mode="formMode" size="wide" :title="formMode === 'create' ? '新增交通管制' : `编辑交通管制 · ${store.records.find((item) => item.id === editingId)?.code ?? ''}`" description="维护核心信息；地图区域为选填项。" :saving="store.isSaving" :dirty="formDirty" @submit="save" @request-close="requestFormClose">
-      <TrafficControlForm :key="`${formMode}-${editingId ?? 'new'}`" ref="formRef" :mode="formMode" :value="formValue" :publish-at="formPublishAt" :issues="issues" :saving="store.isSaving" :theme="themeStore.mode" @update:value="updateForm" />
+      <TrafficControlForm :key="`${formMode}-${editingId ?? 'new'}`" ref="formRef" :mode="formMode" :value="formValue" :issues="issues" :saving="store.isSaving" :theme="themeStore.mode" @update:value="updateForm" />
     </CrudSheet>
 
     <AlertDialog :open="discardOpen" @update:open="discardOpen = $event"><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>放弃未保存的修改？</AlertDialogTitle><AlertDialogDescription>当前交通管制信息尚未保存，关闭后将无法恢复。</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel class="h-11">继续编辑</AlertDialogCancel><Button variant="destructive" class="h-11" @click="closeForm"><X />放弃修改</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>

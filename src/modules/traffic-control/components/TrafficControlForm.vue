@@ -16,15 +16,14 @@ import { TRAFFIC_CONTROL_TYPES, trafficControlTypeMeta } from '../types'
 const props = withDefaults(defineProps<{
   mode: CrudDialogMode
   value: TrafficControlWriteInput
-  publishAt?: string | null
   issues?: readonly TrafficControlValidationIssue[]
   saving?: boolean
   theme?: MapTheme
-}>(), { publishAt: null, issues: () => [], saving: false, theme: 'light' })
+}>(), { issues: () => [], saving: false, theme: 'light' })
 const emit = defineEmits<{ 'update:value': [value: TrafficControlWriteInput] }>()
 const id = useId()
 const container = ref<HTMLElement | null>(null)
-const fields: TrafficControlField[] = ['title', 'type', 'areaName', 'startAt', 'endAt', 'detourInstructions', 'geometry', 'pinned', 'sortOrder', 'dateRange']
+const fields: TrafficControlField[] = ['title', 'type', 'areaName', 'startAt', 'endAt', 'detourInstructions', 'geometry', 'pinned', 'sortOrder', 'publishAt', 'dateRange']
 const touched = reactive(Object.fromEntries(fields.map((field) => [field, false])) as Record<TrafficControlField, boolean>)
 const allIssues = computed(() => {
   const merged = new Map<TrafficControlField, TrafficControlValidationIssue>()
@@ -33,18 +32,11 @@ const allIssues = computed(() => {
   return [...merged.values()]
 })
 const mapColor = computed(() => trafficControlTypeMeta(props.value.type).color)
-const publishedAtValue = computed(() => {
-  if (!props.publishAt) return ''
-  const date = new Date(props.publishAt)
-  if (!Number.isFinite(date.getTime())) return props.publishAt
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
-})
 
 function patch(value: Partial<TrafficControlWriteInput>): void {
   emit('update:value', { ...props.value, ...value })
 }
-function inputId(field: TrafficControlField | 'publishAt'): string { return `traffic-control-${id}-${field}` }
+function inputId(field: TrafficControlField): string { return `traffic-control-${id}-${field}` }
 function issueFor(field: TrafficControlField): TrafficControlValidationIssue | undefined {
   if (field === 'startAt' || field === 'endAt') {
     return touched[field] || touched.dateRange
@@ -134,9 +126,10 @@ watch(() => props.mode, () => { for (const field of fields) touched[field] = fal
     </div>
 
     <div class="col-span-2 space-y-2">
-      <Label :for="inputId('publishAt')">实际发布时间 <span class="ml-1 text-xs font-normal text-muted-foreground">只读</span></Label>
-      <Input :id="inputId('publishAt')" type="datetime-local" :model-value="publishedAtValue" class="h-11 tabular-nums" disabled />
-      <p class="rounded-lg bg-muted/45 px-3 py-2 text-xs leading-5 text-muted-foreground">新增后固定保存为草稿；当前接口不支持定时发布，实际发布时间由发布操作生成。</p>
+      <Label :for="inputId('publishAt')">发布时间</Label>
+      <Input :id="inputId('publishAt')" data-field="publishAt" type="datetime-local" step="1" :model-value="value.publishAt ?? ''" class="h-11 tabular-nums" :disabled="saving" :aria-invalid="Boolean(issueFor('publishAt'))" @update:model-value="patch({ publishAt: String($event) || null })" @blur="touched.publishAt = true" />
+      <p v-if="issueFor('publishAt')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('publishAt')?.message }}</p>
+      <p class="rounded-lg bg-muted/45 px-3 py-2 text-xs leading-5 text-muted-foreground">选填，设置发布时间可控制发布时点；未设置时可通过列表手动发布。</p>
     </div>
   </div>
 </template>

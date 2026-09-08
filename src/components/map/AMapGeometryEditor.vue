@@ -51,6 +51,11 @@ function startDrawing(type = selectedType.value): void {
   if (!controller.value?.startDrawing(type)) coordinateError.value = '地图尚未就绪，可继续使用手动坐标导入。'
 }
 
+function handleDrawingChange(type: MapGeometry['type'] | null): void {
+  drawingType.value = type
+  if (type) coordinateError.value = ''
+}
+
 function clearGeometry(): void {
   if (!props.modelValue) return
   pushHistory(props.modelValue)
@@ -102,7 +107,7 @@ useEventListener(window, 'keydown', handleEscape, { capture: true })
 
     <div class="relative overflow-hidden rounded-xl border bg-muted/20" :style="{ height }">
       <AMapCanvas :theme="theme" :controls="false" min-height="100%" :plugins="['AMap.MouseTool', 'AMap.PolygonEditor', 'AMap.RectangleEditor', 'AMap.CircleEditor']" aria-label="交通管制区域编辑地图">
-        <AMapGeometryController ref="controller" :geometry="modelValue" :color="color" @update:geometry="updateGeometry" @history-snapshot="pushHistory" @drawing-change="drawingType = $event" />
+        <AMapGeometryController ref="controller" :geometry="modelValue" :color="color" :initial-drawing-type="disabled ? null : selectedType" @update:geometry="updateGeometry" @history-snapshot="pushHistory" @drawing-change="handleDrawingChange" />
         <div v-if="drawingType" class="pointer-events-none absolute inset-x-3 top-3 z-10 rounded-lg border border-primary/25 bg-background/92 px-3 py-2 text-xs text-foreground shadow-sm backdrop-blur">
           正在绘制{{ drawingType === 'polygon' ? '多边形，单击加点、双击完成' : drawingType === 'rectangle' ? '矩形，拖动完成' : '圆形，拖动完成' }}；按 Esc 取消并保留原区域。
         </div>

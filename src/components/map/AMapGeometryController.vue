@@ -9,6 +9,7 @@ import { useAmapContext } from './map-context'
 const props = defineProps<{
   geometry: MapGeometry | null
   color: string
+  initialDrawingType?: MapGeometry['type'] | null
 }>()
 const emit = defineEmits<{
   'update:geometry': [geometry: MapGeometry | null]
@@ -187,8 +188,12 @@ watch(ready, (isReady) => {
   mouseTool = new runtime.value.MouseTool(map.value)
   mouseTool.on('draw', handleDraw)
   renderGeometry()
+  if (!props.geometry && props.initialDrawingType) startDrawing(props.initialDrawingType)
 }, { immediate: true })
-watch(() => props.geometry, renderGeometry, { deep: true })
+watch(() => props.geometry, () => {
+  if (drawingType) cancelDrawing()
+  else renderGeometry()
+}, { deep: true })
 watch(() => props.color, () => overlay?.setOptions({ strokeColor: props.color, fillColor: props.color }))
 
 onBeforeUnmount(() => {

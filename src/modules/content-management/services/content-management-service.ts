@@ -142,8 +142,8 @@ interface ApiContentWriteRequest {
   nav_lat?: number | null
   is_pinned: 0 | 1
   priority: number
-  valid_start_at: string | null
-  valid_end_at: string | null
+  valid_start_at: null
+  valid_end_at: null
   status: 0 | 1
   attachments: ApiAttachmentRequest[]
 }
@@ -553,11 +553,6 @@ export function validateContentInput(input: ContentWriteInput): ValidationIssue<
       issues.push({ field: 'navigationLocation', code: 'invalid', message: '经纬度格式应为“经度, 纬度”，且数值需在有效范围内' })
     }
   }
-  const validStart = dateValue(value.validStartAt)
-  const validEnd = dateValue(value.validEndAt)
-  if (validStart !== null && validEnd !== null && validStart >= validEnd) {
-    issues.push({ field: 'validEndAt', code: 'invalid', message: 'H5 展示结束时间必须晚于开始时间' })
-  }
   if (value.cover?.url.startsWith('blob:') || value.attachments.some(item => item.url.startsWith('blob:'))) {
     issues.push({ field: 'cover', code: 'invalid', message: '不能提交浏览器临时文件地址，请重新上传' })
   }
@@ -616,8 +611,9 @@ function contentBody(input: ContentWriteInput): ApiContentWriteRequest {
     cover_url: value.cover?.url ?? null,
     is_pinned: value.pinned ? 1 : 0,
     priority: value.priority,
-    valid_start_at: value.validStartAt ? formatContentRequestDateTime(value.validStartAt) : null,
-    valid_end_at: value.validEndAt ? formatContentRequestDateTime(value.validEndAt) : null,
+    // Content visibility is controlled by publication and enabled status; clear legacy display windows.
+    valid_start_at: null,
+    valid_end_at: null,
     status: value.enabled ? 1 : 0,
     attachments: attachmentBody(value.attachments),
   }
@@ -823,7 +819,7 @@ export function createContentManagementService(
       const latest = await service.getContent(id)
       return mapApiContent(await request<ApiContentVO>({
         method: 'PATCH', url: endpoint('api/v1/admin/contents', id),
-        data: { title: latest.title, content_type: latest.type, status: enabled ? 1 : 0 },
+        data: { title: latest.title, content_type: latest.type, status: enabled ? 1 : 0, valid_start_at: null, valid_end_at: null },
       }))
     },
 

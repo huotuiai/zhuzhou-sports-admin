@@ -53,7 +53,7 @@ function hint(id: string, overrides: Partial<PriorityHintRecord> = {}): Priority
 function input(overrides: Partial<ContentWriteInput> = {}): ContentWriteInput {
   return {
     type: 'news', title: '新增资讯', bodyHtml: '<p>正文</p>', cover: null, attachments: [], publishAt: null,
-    pinned: false, priority: 50, enabled: true, validStartAt: null, validEndAt: null,
+    pinned: false, priority: 50, enabled: true,
     activityStartAt: null, activityEndAt: null, activityLocation: '', navigationLocation: '', ...overrides,
   }
 }

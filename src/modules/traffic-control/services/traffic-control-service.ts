@@ -72,6 +72,7 @@ interface ApiControlCreateRequest {
   start_at: string
   end_at: string
   detour_desc: string
+  publish_at: string | null
   is_pinned: 0 | 1
   sort_order: number
 }
@@ -275,6 +276,7 @@ export function sanitizeTrafficControlInput(input: TrafficControlWriteInput): Tr
     areaName: normalizeText(input.areaName),
     startAt: input.startAt.trim(),
     endAt: input.endAt.trim(),
+    publishAt: input.publishAt?.trim() || null,
     detourInstructions: normalizeText(input.detourInstructions),
     geometry: input.geometry ? cloneGeometry(input.geometry) : null,
     pinned: Boolean(input.pinned),
@@ -303,6 +305,9 @@ export function validateTrafficControlInput(
   if ((options.mode ?? 'create') === 'create' && Number.isFinite(end) && end <= (options.now ?? new Date()).getTime()) {
     issues.push({ field: 'endAt', code: 'range', message: '新增管制的结束时间必须晚于当前时间' })
   }
+  if (value.publishAt && !Number.isFinite(Date.parse(value.publishAt))) {
+    issues.push({ field: 'publishAt', code: 'invalid', message: '请选择有效的发布时间' })
+  }
   if (!Number.isInteger(value.sortOrder) || value.sortOrder < 0) issues.push({ field: 'sortOrder', code: 'invalid', message: '排序号必须是非负整数' })
   if (value.geometry) {
     const result = validateGeometry(value.geometry)
@@ -327,6 +332,7 @@ function requestBody(input: TrafficControlWriteInput): Omit<ApiControlCreateRequ
     area_name: value.areaName,
     start_at: formatControlRequestDateTime(value.startAt),
     end_at: formatControlRequestDateTime(value.endAt),
+    publish_at: value.publishAt ? formatControlRequestDateTime(value.publishAt) : null,
     detour_desc: value.detourInstructions,
     is_pinned: value.pinned ? 1 : 0,
     sort_order: value.sortOrder,
