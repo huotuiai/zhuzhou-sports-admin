@@ -50,6 +50,7 @@ export interface ApiControlVO {
   last_sync_at: string | null
   external_id: string | null
   publisher_id: number | string | null
+  publisher_name: string | null
   publish_at: string | null
   is_pinned: number | boolean
   sort_order: number
@@ -239,6 +240,7 @@ export function mapApiControl(value: ApiControlVO): TrafficControl {
     areaSquareMeters: geometry ? calculateGeometryAreaSquareMeters(geometry) : null,
     publishStatus: mapPublishStatus(value.publish_status),
     publisherId: nullableId(value.publisher_id),
+    publisherName: nullableText(value.publisher_name),
     publishAt: nullableText(value.publish_at),
     pinned: flag(value.is_pinned),
     sortOrder: nonNegativeInteger(value.sort_order),

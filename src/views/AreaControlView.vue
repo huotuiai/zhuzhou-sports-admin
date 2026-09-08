@@ -348,7 +348,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-publishStatus="{ row }"><Badge variant="outline" :class="publishStatusClass(row.publishStatus)">{{ TRAFFIC_PUBLISH_STATUS_LABELS[row.publishStatus] }}</Badge></template>
           <template #cell-pinned="{ row }"><Pin v-if="row.pinned" class="mx-auto size-4 fill-primary text-primary" aria-label="已置顶" /><span v-else class="text-muted-foreground">—</span></template>
           <template #cell-publishAt="{ row }"><time v-if="row.publishAt" class="whitespace-nowrap text-xs tabular-nums text-muted-foreground" :datetime="row.publishAt">{{ formatDateTime(row.publishAt) }}</time><span v-else class="text-muted-foreground">—</span></template>
-          <template #cell-publisher="{ row }"><span class="whitespace-nowrap text-sm">{{ row.publisherId ? `用户 #${row.publisherId}` : '—' }}</span></template>
+          <template #cell-publisher="{ row }"><span class="whitespace-nowrap text-sm">{{ row.publisherName ? `${row.publisherName}` : '—' }}</span></template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button variant="ghost" class="h-11 px-3" :disabled="store.detailLoadingId === row.id" @click="openEdit(row)"><LoaderCircle v-if="store.detailLoadingId === row.id" class="animate-spin" aria-hidden="true" /><PencilLine v-else aria-hidden="true" />编辑</Button>

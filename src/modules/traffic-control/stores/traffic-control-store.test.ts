@@ -24,6 +24,7 @@ function record(id: string, overrides: Partial<TrafficControl> = {}): TrafficCon
     areaSquareMeters: null,
     publishStatus: 'published',
     publisherId: '9',
+    publisherName: '张三',
     publishAt: '2026-08-18T08:00:00+08:00',
     pinned: false,
     sortOrder: 10,

@@ -24,6 +24,7 @@ export interface TrafficControl {
   areaSquareMeters: number | null
   publishStatus: TrafficControlPublishStatus
   publisherId: string | null
+  publisherName: string | null
   publishAt: string | null
   pinned: boolean
   sortOrder: number

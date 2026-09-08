@@ -36,6 +36,7 @@ function apiControl(overrides: Partial<ApiControlVO> = {}): ApiControlVO {
     last_sync_at: '2026-08-20T09:00:00+08:00',
     external_id: 'external-1',
     publisher_id: '9007199254740997',
+    publisher_name: '张三',
     publish_at: '2026-08-20T08:30:00+08:00',
     is_pinned: 1,
     sort_order: 10,
