@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type {
   BannerPage,
@@ -7,6 +7,7 @@ import type {
   BannerWriteInput,
   ContentExportFile,
   ContentManagementService,
+  ContentManagementTab,
   ContentPage,
   ContentRecord,
   ContentServerQuery,
@@ -19,7 +20,7 @@ import type {
   RemoteFileAsset,
   SelectableReference,
 } from '../types'
-import { CONTENT_MANAGEMENT_PAGE_SIZE, createContentManagementStore } from './content-management-store'
+import { CONTENT_MANAGEMENT_PAGE_SIZE, createContentManagementStore, DEFAULT_ACTIVITY_QUERY, DEFAULT_NEWS_QUERY, DEFAULT_BANNER_QUERY, DEFAULT_HINT_QUERY } from './content-management-store'
 
 function content(id: string, overrides: Partial<ContentRecord> = {}): ContentRecord {
   return {
@@ -69,16 +70,18 @@ class StubContentManagementService implements ContentManagementService {
   detailReads: string[] = []
   referenceReads: ReferenceType[] = []
   failDelete: Error | null = null
-
-  async listContents(query: ContentServerQuery): Promise<ContentRecord[]> {
-    this.contentQueries.push({ ...query })
-    const types = Array.isArray(query.contentType) ? query.contentType : [query.contentType]
-    return structuredClone(this.contents.filter(item => types.includes(item.type)))
-  }
+  pageCalls: Array<[ContentManagementTab, number, number]> = []
 
   async listContentPage(page: number, pageSize: number, query: ContentServerQuery): Promise<ContentPage> {
-    const records = await this.listContents(query)
-    return { records: records.slice((page - 1) * pageSize, page * pageSize), total: records.length, page, pageSize }
+    this.contentQueries.push({ ...query })
+    const types = Array.isArray(query.contentType) ? query.contentType : [query.contentType]
+    this.pageCalls.push([types.includes('activity') ? 'activity' : 'news', page, pageSize])
+    const records = this.contents.filter(item => types.includes(item.type)
+      && (!query.keyword || item.title.includes(query.keyword) || item.code.includes(query.keyword))
+      && (query.publishStatus === 'all' || item.publishStatus === query.publishStatus)
+      && (!query.enabled || query.enabled === 'all' || item.enabled === (query.enabled === 'enabled'))
+      && (!query.pinned || query.pinned === 'all' || item.pinned === (query.pinned === 'pinned')))
+    return { records: structuredClone(records.slice((page - 1) * pageSize, page * pageSize)), total: records.length, page, pageSize }
   }
 
   async getContent(id: string): Promise<ContentRecord> {
@@ -141,14 +144,13 @@ class StubContentManagementService implements ContentManagementService {
     this.contents = this.contents.filter(item => item.id !== id)
   }
 
-  async listBanners(query: BannerServerQuery): Promise<BannerRecord[]> {
-    this.bannerQueries.push({ ...query })
-    return structuredClone(this.banners)
-  }
-
   async listBannerPage(page: number, pageSize: number, query: BannerServerQuery): Promise<BannerPage> {
-    const records = await this.listBanners(query)
-    return { records, total: records.length, page, pageSize }
+    this.bannerQueries.push({ ...query })
+    this.pageCalls.push(['banner', page, pageSize])
+    const records = this.banners.filter(item => (!query.keyword || item.title.includes(query.keyword))
+      && (query.jumpType === 'all' || item.jumpType === query.jumpType)
+      && (query.enabled === 'all' || item.displayEnabled === (query.enabled === 'enabled')))
+    return { records: structuredClone(records.slice((page - 1) * pageSize, page * pageSize)), total: records.length, page, pageSize }
   }
 
   async getBanner(id: string): Promise<BannerRecord> {
@@ -176,14 +178,13 @@ class StubContentManagementService implements ContentManagementService {
 
   async removeBanner(id: string): Promise<void> { this.banners = this.banners.filter(item => item.id !== id) }
 
-  async listPriorityHints(query: PriorityHintServerQuery): Promise<PriorityHintRecord[]> {
-    this.hintQueries.push({ ...query })
-    return structuredClone(this.hints)
-  }
-
   async listPriorityHintPage(page: number, pageSize: number, query: PriorityHintServerQuery): Promise<PriorityHintPage> {
-    const records = await this.listPriorityHints(query)
-    return { records, total: records.length, page, pageSize }
+    this.hintQueries.push({ ...query })
+    this.pageCalls.push(['hint', page, pageSize])
+    const records = this.hints.filter(item => (!query.keyword || item.title.includes(query.keyword))
+      && (query.referenceType === 'all' || item.referenceType === query.referenceType)
+      && (query.enabled === 'all' || item.displayEnabled === (query.enabled === 'enabled')))
+    return { records: structuredClone(records.slice((page - 1) * pageSize, page * pageSize)), total: records.length, page, pageSize }
   }
 
   async getPriorityHint(id: string): Promise<PriorityHintRecord> {
@@ -228,7 +229,7 @@ describe('content management store', () => {
     service = new StubContentManagementService()
   })
 
-  it('loads four API-backed tabs and combines server/client filters', async () => {
+  it('loads tabs on demand and forwards content queries to the server', async () => {
     service.contents = [
       content('1', { type: 'activity', title: '夜间比赛', activityStartAt: '2026-08-29T18:00:00+08:00', activityEndAt: '2026-08-29T20:00:00+08:00' }),
       content('2', { type: 'news', title: '场馆资讯' }),
@@ -238,7 +239,9 @@ describe('content management store', () => {
     service.hints = [hint('1')]
     const store = createContentManagementStore(service, 'content-filter')()
 
-    expect(await store.load()).toBe(true)
+    expect(await store.load('activity')).toBe(true)
+    expect(service.pageCalls).toEqual([['activity', 1, 20]])
+    expect(await store.loadTab('news')).toBe(true)
     expect(store.activityRecords.map(item => item.id)).toEqual(['1'])
     expect(store.newsRecords.map(item => item.id)).toEqual(['2', '3'])
     expect(store.selectableReferences.some(item => item.id === '99')).toBe(true)
@@ -268,21 +271,23 @@ describe('content management store', () => {
     expect(service.referenceReads).toEqual(['activity', 'news', 'notice', 'traffic-control'])
   })
 
-  it('keeps prototype twenty-row paging after automatically loaded API results', async () => {
+  it('requests server pages and resets all tab pages when the shared page size changes', async () => {
     service.contents = Array.from({ length: 21 }, (_, index) => content(String(index + 1), {
       type: 'news', priority: index === 20 ? 0 : index + 1,
     }))
     const store = createContentManagementStore(service, 'content-pages')()
-    await store.load()
-    expect(store.paginatedNews).toHaveLength(CONTENT_MANAGEMENT_PAGE_SIZE)
-    expect(store.newsRecords[0]?.id).toBe('20')
-    store.setPage('news', 2)
-    expect(store.paginatedNews).toHaveLength(1)
+    await store.load('news')
+    expect(store.newsRecords).toHaveLength(CONTENT_MANAGEMENT_PAGE_SIZE)
+    expect(store.newsRecords[0]?.id).toBe('1')
+    expect(store.totals.news).toBe(21)
+    expect(service.pageCalls).toEqual([['news', 1, 20]])
+    await store.setPage('news', 2)
+    expect(store.newsRecords).toHaveLength(1)
 
-    store.setPageSize(50)
+    await store.setPageSize(50, 'news')
     expect(store.pageSize).toBe(50)
     expect(store.pages.news).toBe(1)
-    expect(store.paginatedNews).toHaveLength(21)
+    expect(store.newsRecords).toHaveLength(21)
   })
 
   it('reads latest details and refreshes lists/references after CRUD and quick actions', async () => {
@@ -290,7 +295,7 @@ describe('content management store', () => {
     service.banners = [banner('1')]
     service.hints = [hint('1')]
     const store = createContentManagementStore(service, 'content-crud')()
-    await store.load()
+    await store.load('news')
 
     await expect(store.getContent('1')).resolves.toMatchObject({ title: '接口最新标题' })
     await expect(store.getBanner('1')).resolves.toMatchObject({ title: 'Banner 1' })
@@ -328,11 +333,179 @@ describe('content management store', () => {
     service.contents = [content('1', { publishStatus: 'draft' })]
     service.banners = [banner('1', { jumpType: 'news', targetId: '1', targetTitle: '内容 1' })]
     const store = createContentManagementStore(service, 'content-delete')()
-    await store.load()
+    await store.load('news')
     service.failDelete = new Error('内容仍被 1 个 Banner 引用')
 
     expect(await store.removeContent('1', 'news')).toBe(false)
     expect(store.error).toBe('内容仍被 1 个 Banner 引用')
-    expect(store.snapshot.contents.some(item => item.id === '1')).toBe(true)
+    expect(store.newsRecords.some(item => item.id === '1')).toBe(true)
   })
+
+  it('uses backend records, order and totals for all four tabs without local filtering', async () => {
+    const store = createContentManagementStore(service, 'content-authority')()
+    const contentPage = { records: [content('2'), content('1', { pinned: true })], total: 47, page: 1, pageSize: 20 }
+    const readContents = vi.spyOn(service, 'listContentPage').mockResolvedValue(contentPage)
+    await store.setActivityQuery({ ...DEFAULT_ACTIVITY_QUERY, title: '比赛', activityStatus: 'not-started', enabled: 'disabled', pinned: 'not-pinned' })
+    expect(readContents).toHaveBeenLastCalledWith(1, 20, { keyword: '比赛', contentType: 'activity', publishStatus: 'all', activityStatus: 'not-started', enabled: 'disabled', pinned: 'not-pinned' })
+    expect(store.activityRecords).toEqual(contentPage.records)
+    expect(store.totals.activity).toBe(47)
+    await store.setNewsQuery({ ...DEFAULT_NEWS_QUERY, title: '公告', type: 'notice', enabled: 'disabled' })
+    expect(store.newsRecords).toEqual(contentPage.records)
+    expect(store.totals.news).toBe(47)
+    const bannerPage = { records: [banner('2', { priority: 99 }), banner('1', { priority: 1 })], total: 42, page: 1, pageSize: 20 }
+    const readBanners = vi.spyOn(service, 'listBannerPage').mockResolvedValue(bannerPage)
+    await store.setBannerQuery({ title: '赛事', jumpType: 'activity', enabled: 'disabled' })
+    expect(readBanners).toHaveBeenLastCalledWith(1, 20, { keyword: '赛事', jumpType: 'activity', enabled: 'disabled' })
+    expect(store.bannerRecords).toEqual(bannerPage.records)
+    expect(store.totals.banner).toBe(42)
+    const hintPage = { records: [hint('2', { priority: 99 }), hint('1', { priority: 1 })], total: 31, page: 1, pageSize: 20 }
+    const readHints = vi.spyOn(service, 'listPriorityHintPage').mockResolvedValue(hintPage)
+    await store.setHintQuery({ title: '入场', referenceType: 'activity', enabled: 'disabled' })
+    expect(readHints).toHaveBeenLastCalledWith(1, 20, { keyword: '入场', referenceType: 'activity', enabled: 'disabled' })
+    expect(store.priorityHintRecords).toEqual(hintPage.records)
+    expect(store.totals.hint).toBe(31)
+    expect(store).not.toHaveProperty('activePriorityHintIds')
+  })
+
+  it('keeps tab filters and pages independent and fetches only the visible tab on timed refresh', async () => {
+    service.contents = Array.from({ length: 45 }, (_, index) => content(String(index + 1)))
+    service.banners = Array.from({ length: 25 }, (_, index) => banner(String(index + 1)))
+    const store = createContentManagementStore(service, 'content-tab-state')()
+    await store.load('news')
+    await store.setNewsQuery({ ...DEFAULT_NEWS_QUERY, title: '内容', enabled: 'enabled' })
+    await store.setPage('news', 2)
+    await store.loadTab('banner')
+    await store.setPage('banner', 2)
+    await store.loadTab('news')
+    expect(service.pageCalls.at(-1)).toEqual(['news', 2, 20])
+    expect(store.pages.banner).toBe(2)
+    expect(store.newsRecords[0]?.id).toBe('21')
+    expect(service.contentQueries.at(-1)?.keyword).toBe('内容')
+    const beforeRefresh = service.pageCalls.length
+    await store.refreshTemporalState('news')
+    expect(service.pageCalls.slice(beforeRefresh)).toEqual([['news', 2, 20]])
+    await store.loadTab('banner')
+    const beforeBannerTick = service.pageCalls.length
+    await store.refreshTemporalState('banner')
+    expect(service.pageCalls).toHaveLength(beforeBannerTick)
+    await store.setPageSize(50, 'banner')
+    expect(store.pages.news).toBe(1)
+    expect(store.newsRecords).toEqual([])
+    await store.loadTab('news')
+    expect(service.pageCalls.at(-1)).toEqual(['news', 1, 50])
+    expect(store.newsRecords).toHaveLength(45)
+    expect(service.referenceReads).toHaveLength(4)
+  })
+
+  it('retains applied conditions, data and page size on failed queries, pages, resets and size changes', async () => {
+    service.banners = Array.from({ length: 45 }, (_, index) => banner(String(index + 1)))
+    const store = createContentManagementStore(service, 'content-query-failure')()
+    const filters = { ...DEFAULT_BANNER_QUERY, title: 'Banner' }
+    await store.setBannerQuery(filters)
+    await store.setPage('banner', 2)
+    const previous = structuredClone(service.banners.slice(20, 40))
+    vi.spyOn(service, 'listBannerPage').mockRejectedValue(new Error('列表请求失败'))
+    for (const request of [
+      () => store.setBannerQuery({ ...filters, enabled: 'disabled' }),
+      () => store.setPage('banner', 3),
+      () => store.resetQuery('banner'),
+      () => store.setPageSize(50, 'banner'),
+    ]) {
+      expect(await request()).toBe(false)
+      expect(store.bannerRecords).toEqual(previous)
+      expect(store.bannerQuery).toEqual(filters)
+      expect(store.pages.banner).toBe(2)
+      expect(store.pageSize).toBe(20)
+      expect(store.totals.banner).toBe(45)
+      expect(store.error).toBe('列表请求失败')
+      expect(store.isLoading).toBe(false)
+    }
+  })
+
+  it('ignores older searches and requests made before a shared page-size change', async () => {
+    service.contents = [content('1')]
+    service.banners = [banner('1')]
+    const store = createContentManagementStore(service, 'content-race')()
+    let finishOlder!: (page: ContentPage) => void
+    vi.spyOn(service, 'listContentPage').mockImplementationOnce(() => new Promise(resolve => { finishOlder = resolve }))
+    const older = store.setNewsQuery({ ...DEFAULT_NEWS_QUERY, title: '旧查询' })
+    await store.setNewsQuery(DEFAULT_NEWS_QUERY)
+    finishOlder({ records: [content('old')], total: 100, page: 1, pageSize: 20 })
+    await older
+    expect(store.newsQuery.title).toBe('')
+    expect(store.newsRecords.map(item => item.id)).toEqual(['1'])
+    let finishOldSize!: (page: ContentPage) => void
+    vi.spyOn(service, 'listContentPage').mockImplementationOnce(() => new Promise(resolve => { finishOldSize = resolve }))
+    const oldSize = store.loadTab('news')
+    await store.setPageSize(50, 'banner')
+    finishOldSize({ records: [content('stale')], total: 100, page: 3, pageSize: 20 })
+    await oldSize
+    expect(store.pageSize).toBe(50)
+    expect(store.pages.news).toBe(1)
+    expect(store.newsRecords).toEqual([])
+    expect(store.bannerRecords.map(item => item.id)).toEqual(['1'])
+    expect(store.isLoading).toBe(false)
+  })
+
+  it('refreshes filtered results after mutations and backs up when the last page disappears', async () => {
+    service.hints = Array.from({ length: 21 }, (_, index) => hint(String(index + 1)))
+    const store = createContentManagementStore(service, 'content-last-page')()
+    await store.setHintQuery({ ...DEFAULT_HINT_QUERY, enabled: 'enabled' })
+    await store.setPage('hint', 2)
+    expect(store.priorityHintRecords.map(item => item.id)).toEqual(['21'])
+    expect(await store.setPriorityHintEnabled('21', false)).toBe(true)
+    expect(service.pageCalls.slice(-2)).toEqual([['hint', 2, 20], ['hint', 1, 20]])
+    expect(store.pages.hint).toBe(1)
+    expect(store.totals.hint).toBe(20)
+    expect(store.priorityHintRecords).toHaveLength(20)
+    expect(service.hintQueries.at(-1)?.enabled).toBe('enabled')
+    await store.resetQuery('hint')
+    await store.setPage('hint', 2)
+    expect(await store.removePriorityHint('21')).toBe(true)
+    expect(store.totals.hint).toBe(20)
+    expect(store.pages.hint).toBe(1)
+    expect(service.pageCalls.slice(-2)).toEqual([['hint', 2, 20], ['hint', 1, 20]])
+  })
+
+  it('returns success with a warning if a write succeeds but the list or references cannot refresh', async () => {
+    service.contents = Array.from({ length: 21 }, (_, index) => content(String(index + 1)))
+    const store = createContentManagementStore(service, 'content-write-warning')()
+    await store.load('news')
+    await store.setPage('news', 2)
+    const before = store.newsRecords.map(item => item.id)
+    const read = vi.spyOn(service, 'listContentPage').mockRejectedValueOnce(new Error('列表不可用'))
+    expect(await store.createContent(input())).toBe(true)
+    expect(read).toHaveBeenLastCalledWith(1, 20, expect.any(Object))
+    expect(store.newsRecords.map(item => item.id)).toEqual(before)
+    expect(store.pages.news).toBe(2)
+    expect(store.error).toBe('操作已成功，但最新数据刷新失败：列表不可用')
+    vi.spyOn(service, 'listReferenceOptions').mockRejectedValue(new Error('引用不可用'))
+    expect(await store.setContentEnabled('1', false, 'news')).toBe(true)
+    expect(store.error).toBe('操作已成功，但最新数据刷新失败：引用不可用')
+    expect(store.isSaving).toBe(false)
+  })
+
+
+  it('uses the pending shared page size when switching tabs before the size request finishes', async () => {
+    service.contents = Array.from({ length: 45 }, (_, index) => content(String(index + 1)))
+    service.banners = Array.from({ length: 45 }, (_, index) => banner(String(index + 1)))
+    const store = createContentManagementStore(service, 'content-size-switch-race')()
+    await store.load('news')
+    await store.setPage('news', 2)
+    let finishSize!: (page: ContentPage) => void
+    vi.spyOn(service, 'listContentPage').mockImplementationOnce(() => new Promise(resolve => { finishSize = resolve }))
+    const changingSize = store.setPageSize(50, 'news')
+    await store.loadTab('banner')
+    expect(service.pageCalls.at(-1)).toEqual(['banner', 1, 50])
+    expect(store.bannerRecords).toHaveLength(45)
+    finishSize({ records: structuredClone(service.contents), total: 45, page: 1, pageSize: 50 })
+    await changingSize
+    expect(store.pageSize).toBe(50)
+    expect(store.bannerRecords).toHaveLength(45)
+    expect(store.newsRecords).toHaveLength(45)
+    expect(store.pages.news).toBe(1)
+    expect(store.pages.banner).toBe(1)
+    expect(store.isLoading).toBe(false)
+  })
+
 })

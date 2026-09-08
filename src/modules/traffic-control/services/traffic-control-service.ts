@@ -216,14 +216,6 @@ function mapOverlap(value: unknown): TrafficControlOverlap[] {
   })
 }
 
-function cloneRecord(record: TrafficControl): TrafficControl {
-  return {
-    ...record,
-    geometry: record.geometry ? cloneGeometry(record.geometry) : null,
-    overlaps: record.overlaps.map(item => ({ ...item })),
-  }
-}
-
 export function mapApiControl(value: ApiControlVO): TrafficControl {
   if (value.id === undefined || value.id === null) throw responseError('服务器返回的交通管制 ID 不完整')
   const geometry = parseControlGeometry(value.geometry_json)
@@ -263,12 +255,6 @@ export function mapApiControlPage(value: ApiControlPage): TrafficControlPage {
     page: Math.max(1, integer(value.page, 1)),
     pageSize: Math.max(1, integer(value.page_size, 20)),
   }
-}
-
-export function sortTrafficControls(records: readonly TrafficControl[]): TrafficControl[] {
-  return [...records]
-    .sort((first, second) => Number(second.pinned) - Number(first.pinned) || first.sortOrder - second.sortOrder || second.startAt.localeCompare(first.startAt))
-    .map(cloneRecord)
 }
 
 export function sanitizeTrafficControlInput(input: TrafficControlWriteInput): TrafficControlWriteInput {
@@ -429,7 +415,7 @@ export function createTrafficControlService(
       for (let page = 2; page <= pageCount; page += 1) {
         records.push(...(await service.listPage(page, requestPageSize, query)).records)
       }
-      return sortTrafficControls([...new Map(records.map(record => [record.id, record])).values()])
+      return records
     },
 
     async get(id) {

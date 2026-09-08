@@ -339,8 +339,8 @@ async function saveSheet(): Promise<void> {
       : editingId.value ? await store.updateContent(editingId.value, contentForm.value, editingPublication.value ?? undefined) : false
     if (!success) return showStoreError('内容保存失败')
     closeSheet()
+    showMutationResult(sheetMode.value === 'create' ? '内容已新增。' : '内容已更新。')
     await todoStore.refresh()
-    toast.success(sheetMode.value === 'create' ? '内容已新增。' : '内容已更新。')
     return
   }
   if (sheetKind.value === 'banner') {
@@ -352,7 +352,7 @@ async function saveSheet(): Promise<void> {
       : editingId.value ? await store.updateBanner(editingId.value, bannerForm.value) : false
     if (!success) return showStoreError('Banner 保存失败')
     closeSheet()
-    toast.success(sheetMode.value === 'create' ? 'Banner 已新增。' : 'Banner 已更新。')
+    showMutationResult(sheetMode.value === 'create' ? 'Banner 已新增。' : 'Banner 已更新。')
     return
   }
   if (sheetKind.value === 'hint') {
@@ -364,8 +364,24 @@ async function saveSheet(): Promise<void> {
       : editingId.value ? await store.updatePriorityHint(editingId.value, hintForm.value) : false
     if (!success) return showStoreError('高优提示保存失败')
     closeSheet()
-    toast.success(sheetMode.value === 'create' ? '高优提示已新增。' : '高优提示已更新。')
+    showMutationResult(sheetMode.value === 'create' ? '高优提示已新增。' : '高优提示已更新。')
   }
+}
+
+function showMutationResult(successMessage: string): void {
+  if (store.error) {
+    toast.warning(store.error)
+    store.resetError()
+  }
+  else toast.success(successMessage)
+}
+
+async function changePage(value: number): Promise<void> {
+  if (!await store.setPage(activeTab.value, value)) showStoreError('分页加载失败')
+}
+
+async function changePageSize(value: number): Promise<void> {
+  if (!await store.setPageSize(value, activeTab.value)) showStoreError('分页加载失败')
 }
 
 function showStoreError(fallback: string): void {
@@ -376,8 +392,8 @@ function showStoreError(fallback: string): void {
 async function runAction(operation: () => Promise<boolean>, successMessage: string, refreshTodos = false): Promise<void> {
   if (!canOperate.value) return
   if (!await operation()) return showStoreError('操作失败')
+  showMutationResult(successMessage)
   if (refreshTodos) await todoStore.refresh()
-  toast.success(successMessage)
 }
 
 function requestContentDelete(record: ContentRecord): void {
@@ -396,8 +412,8 @@ async function confirmDelete(): Promise<void> {
       : await store.removePriorityHint(target.record.id)
   if (!success) return showStoreError('删除失败')
   deleteTarget.value = null
+  showMutationResult('记录已删除。')
   if (target.kind === 'content') await todoStore.refresh()
-  toast.success('记录已删除。')
 }
 
 function selectTab(tab: ContentManagementTab): void {
@@ -416,11 +432,12 @@ async function applyQuery(): Promise<void> {
 }
 
 async function resetQuery(): Promise<void> {
-  if (activeTab.value === 'activity') activityQueryDraft.value = { ...DEFAULT_ACTIVITY_QUERY }
-  if (activeTab.value === 'news') newsQueryDraft.value = { ...DEFAULT_NEWS_QUERY }
-  if (activeTab.value === 'banner') bannerQueryDraft.value = { ...DEFAULT_BANNER_QUERY }
-  if (activeTab.value === 'hint') hintQueryDraft.value = { ...DEFAULT_HINT_QUERY }
-  if (!await store.resetQuery(activeTab.value)) showStoreError('重置筛选失败')
+  const tab = activeTab.value
+  if (!await store.resetQuery(tab)) return showStoreError('重置筛选失败')
+  if (tab === 'activity') activityQueryDraft.value = { ...store.activityQuery }
+  if (tab === 'news') newsQueryDraft.value = { ...store.newsQuery }
+  if (tab === 'banner') bannerQueryDraft.value = { ...store.bannerQuery }
+  if (tab === 'hint') hintQueryDraft.value = { ...store.hintQuery }
 }
 
 function formatDateTime(value: string | null): string {
@@ -495,10 +512,11 @@ async function load(): Promise<void> {
   if (String(route.query.status ?? '') === 'draft') {
     activityQueryDraft.value.publishStatus = 'draft'
     newsQueryDraft.value.publishStatus = 'draft'
-    Object.assign(store.activityQuery, activityQueryDraft.value)
-    Object.assign(store.newsQuery, newsQueryDraft.value)
   }
-  if (!await store.load(activeTab.value)) {
+  const draftQuery = String(route.query.status ?? '') === 'draft'
+    ? activeTab.value === 'activity' ? { ...activityQueryDraft.value } : activeTab.value === 'news' ? { ...newsQueryDraft.value } : undefined
+    : undefined
+  if (!await store.load(activeTab.value, draftQuery)) {
     loadError.value = store.error ?? '内容管理数据加载失败'
     showStoreError(loadError.value)
   }
@@ -513,20 +531,32 @@ watch(() => route.query.tab, (value) => {
 
 watch(activeTab, async (tab, previous) => {
   if (!pageReady.value || tab === previous) return
-  if (!await store.loadTab(tab)) showStoreError('当前页签加载失败')
+  let loaded: boolean
+  if (route.query.status === 'draft' && tab === 'activity' && activityQueryDraft.value.publishStatus === 'draft' && store.activityQuery.publishStatus !== 'draft') {
+    loaded = await store.setActivityQuery({ ...activityQueryDraft.value })
+  }
+  else if (route.query.status === 'draft' && tab === 'news' && newsQueryDraft.value.publishStatus === 'draft' && store.newsQuery.publishStatus !== 'draft') {
+    loaded = await store.setNewsQuery({ ...newsQueryDraft.value })
+  }
+  else loaded = await store.loadTab(tab)
+  if (!loaded) showStoreError('当前页签加载失败')
 })
 
 watch(() => route.query.status, async (status) => {
   if (!pageReady.value || status !== 'draft') return
   activityQueryDraft.value.publishStatus = 'draft'
   newsQueryDraft.value.publishStatus = 'draft'
-  Object.assign(store.activityQuery, activityQueryDraft.value)
-  Object.assign(store.newsQuery, newsQueryDraft.value)
-  if (!await store.loadTab(activeTab.value === 'news' ? 'news' : 'activity')) showStoreError('草稿数据加载失败')
+  if (activeTab.value !== 'activity' && activeTab.value !== 'news') return
+  const loaded = activeTab.value === 'news'
+    ? await store.setNewsQuery({ ...newsQueryDraft.value })
+    : await store.setActivityQuery({ ...activityQueryDraft.value })
+  if (!loaded) showStoreError('草稿数据加载失败')
 })
 
 onMounted(load)
-useIntervalFn(store.refreshTemporalState, 60_000)
+useIntervalFn(async () => {
+  if (pageReady.value && !await store.refreshTemporalState(activeTab.value)) showStoreError('内容状态刷新失败')
+}, 60_000)
 useEventListener(window, 'beforeunload', handleBeforeUnload)
 onBeforeRouteLeave(() => confirmLeave())
 </script>
@@ -617,7 +647,7 @@ onBeforeRouteLeave(() => confirmLeave())
       </div>
 
       <template v-if="activeTab === 'activity' || activeTab === 'news'">
-        <DataTable :columns="permittedColumns(activeTab === 'activity' ? activityColumns : newsColumns)" :rows="activeTab === 'activity' ? store.paginatedActivities : store.paginatedNews" row-key="id" :loading="store.isLoading" :empty-text="activeTab === 'activity' ? '暂无活动内容' : '暂无资讯通知'" :caption="`${tabLabels[activeTab]}列表`">
+        <DataTable :columns="permittedColumns(activeTab === 'activity' ? activityColumns : newsColumns)" :rows="activeTab === 'activity' ? store.activityRecords : store.newsRecords" row-key="id" :loading="store.isLoading" :empty-text="activeTab === 'activity' ? '暂无活动内容' : '暂无资讯通知'" :caption="`${tabLabels[activeTab]}列表`">
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs">{{ row.code }}</span></template>
           <template #cell-title="{ row }"><p class="max-w-72 truncate font-medium" :title="row.title">{{ row.title }}</p></template>
           <template #cell-publishStatus="{ row }"><Badge :variant="row.publishStatus === 'published' ? 'outline' : 'secondary'" :class="row.publishStatus === 'published' ? 'border-success/30 bg-success/10 text-success' : 'border-warning/30 bg-warning/10 text-warning'">{{ row.publishStatus === 'published' ? '已发布' : '草稿' }}</Badge></template>
@@ -642,11 +672,11 @@ onBeforeRouteLeave(() => confirmLeave())
             </div>
           </template>
         </DataTable>
-        <PaginationBar :page="store.pages[activeTab]" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="activeTab === 'activity' ? store.activityRecords.length : store.newsRecords.length" :disabled="store.isLoading" @update:page="store.setPage(activeTab, $event)" @update:page-size="store.setPageSize" />
+        <PaginationBar :page="store.pages[activeTab]" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.totals[activeTab]" :disabled="store.isLoading" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
 
       <template v-else-if="activeTab === 'banner'">
-        <DataTable :columns="permittedColumns(bannerColumns)" :rows="store.paginatedBanners" row-key="id" :loading="store.isLoading" empty-text="暂无 Banner" caption="Banner 图窗列表">
+        <DataTable :columns="permittedColumns(bannerColumns)" :rows="store.bannerRecords" row-key="id" :loading="store.isLoading" empty-text="暂无 Banner" caption="Banner 图窗列表">
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs">{{ row.code }}</span></template>
           <template #cell-title="{ row }"><p class="max-w-64 truncate font-medium" :title="row.title">{{ row.title }}</p></template>
           <template #cell-image="{ row }"><img v-if="row.image.url" :src="row.image.url" :alt="`${row.title}图片`" class="h-10 w-20 rounded-lg border object-cover"><span v-else class="inline-flex h-10 w-20 items-center justify-center rounded-lg border bg-muted/45 text-xs text-muted-foreground" :title="row.image.name"><ImageIcon class="mr-1 size-4" aria-hidden="true" />图片</span></template>
@@ -658,13 +688,13 @@ onBeforeRouteLeave(() => confirmLeave())
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openBannerEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(() => store.setBannerEnabled(row.id, !row.displayEnabled), row.displayEnabled ? 'Banner 已停用。' : 'Banner 已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'banner', record: row }">删除</Button></div></template>
         </DataTable>
-        <PaginationBar :page="store.pages.banner" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.bannerRecords.length" :disabled="store.isLoading" @update:page="store.setPage('banner', $event)" @update:page-size="store.setPageSize" />
+        <PaginationBar :page="store.pages.banner" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.totals.banner" :disabled="store.isLoading" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
 
       <template v-else>
-        <DataTable :columns="permittedColumns(hintColumns)" :rows="store.paginatedPriorityHints" row-key="id" :loading="store.isLoading" empty-text="暂无高优提示" caption="高优提示列表">
+        <DataTable :columns="permittedColumns(hintColumns)" :rows="store.priorityHintRecords" row-key="id" :loading="store.isLoading" empty-text="暂无高优提示" caption="高优提示列表">
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs">{{ row.code }}</span></template>
-          <template #cell-title="{ row }"><div class="max-w-64"><p class="truncate font-medium" :title="row.title">{{ row.title }}</p><p v-if="store.activePriorityHintIds.includes(row.id)" class="mt-1 text-[11px] font-medium text-primary">当前展示位</p></div></template>
+          <template #cell-title="{ row }"><div class="max-w-64"><p class="truncate font-medium" :title="row.title">{{ row.title }}</p></div></template>
           <template #cell-referenceType="{ row }"><Badge variant="outline">{{ contentTypeLabel(row.referenceType) }}</Badge></template>
           <template #cell-targetId="{ row }"><div class="max-w-72"><span class="block truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId, row.targetTitle)">{{ targetLabel(row.targetId, row.targetTitle) }}</span><span v-if="!store.targetIsValid(row.targetId)" class="mt-1 block text-[10px] text-destructive">引用目标已失效</span></div></template>
           <template #cell-priority="{ row }"><span class="font-semibold tabular-nums">{{ row.priority }}</span></template>
@@ -673,7 +703,7 @@ onBeforeRouteLeave(() => confirmLeave())
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openHintEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(() => store.setPriorityHintEnabled(row.id, !row.displayEnabled), row.displayEnabled ? '高优提示已停用。' : '高优提示已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'hint', record: row }">删除</Button></div></template>
         </DataTable>
-        <PaginationBar :page="store.pages.hint" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.priorityHintRecords.length" :disabled="store.isLoading" @update:page="store.setPage('hint', $event)" @update:page-size="store.setPageSize" />
+        <PaginationBar :page="store.pages.hint" :page-size="store.pageSize" :page-sizes="[20, 50, 100]" :total="store.totals.hint" :disabled="store.isLoading" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
     </div>
 

@@ -11,7 +11,6 @@ import {
   mapApiBanner,
   mapApiContent,
   mapApiPriorityHint,
-  sortContents,
   validateBannerInput,
   validateContentInput,
   validatePriorityHintInput,
@@ -154,7 +153,7 @@ describe('content management API service', () => {
     })
   })
 
-  it('validates unavailable media, activity fields, references and prototype priority sorting', () => {
+  it('validates unavailable media, activity fields, references ', () => {
     const activityIssues = validateContentInput(contentInput({
       type: 'activity', title: 'A', priority: 10_000, activityStartAt: '2026-08-22T20:00',
       activityEndAt: '2026-08-22T19:00', navigationLocation: '300, 120',
@@ -166,10 +165,6 @@ describe('content management API service', () => {
       .toEqual(expect.arrayContaining(['image', 'targetId', 'validTo']))
     expect(validatePriorityHintInput(hintInput({ targetId: '' })).map(item => item.field)).toContain('targetId')
 
-    const first = mapApiContent(apiContent({ id: 1, code: 'CT-001', priority: 20, is_pinned: 0 }))
-    const second = mapApiContent(apiContent({ id: 2, code: 'CT-002', priority: 5, is_pinned: 0 }))
-    const pinned = mapApiContent(apiContent({ id: 3, code: 'CT-003', priority: 99, is_pinned: 1 }))
-    expect(sortContents([first, second, pinned]).map(item => item.id)).toEqual(['3', '1', '2'])
   })
 
   it('derives activity/effective state and formats supported local times', () => {
@@ -181,40 +176,37 @@ describe('content management API service', () => {
     expect(formatContentRequestDateTime('2026-08-22T10:20')).toBe('2026-08-22 10:20:00')
   })
 
-  it('sends supported list filters and automatically reads all matching pages', async () => {
+  it('requests a single content page with all supported filters and preserves its order', async () => {
     const configs: SignedRequestConfig[] = []
     const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
       configs.push(config as SignedRequestConfig)
-      const requestedPage = Number((config.params as Record<string, unknown>).page)
-      return { list: [apiContent({ id: requestedPage, code: `CT-00${requestedPage}` })], total: 101, page: requestedPage, page_size: 100 } as T
+      return { list: [apiContent({ id: 2, priority: 99 }), apiContent({ id: 1, is_pinned: 1 })], total: 101, page: 2, page_size: 20 } as T
     }
     const service = createContentManagementService(requester)
-    const records = await service.listContents({ keyword: ' 通知 ', contentType: ['news', 'notice'], publishStatus: 'draft' })
-    expect(records.map(item => item.id)).toEqual(['1', '2'])
+    const result = await service.listContentPage(2, 20, {
+      keyword: ' 通知 ', contentType: ['news', 'notice'], publishStatus: 'draft', enabled: 'disabled', pinned: 'not-pinned',
+    })
+    expect(result.records.map(item => item.id)).toEqual(['2', '1'])
+    expect(result).toMatchObject({ total: 101, page: 2, pageSize: 20 })
     expect(configs).toEqual([
-      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 1, page_size: 100, content_type: 'news,notice', keyword: '通知', publish_status: 'draft' } },
-      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 2, page_size: 100, content_type: 'news,notice', keyword: '通知', publish_status: 'draft' } },
+      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 2, page_size: 20, content_type: 'news,notice', keyword: '通知', publish_status: 'draft', status: 0, is_pinned: 0 } },
     ])
   })
 
-  it('maps Banner and high-priority list filters and automatically reads every page', async () => {
+  it.each(['all', 'enabled', 'disabled'] as const)('sends Banner and highlight status %s and requests only the selected page', async (enabled) => {
     const configs: SignedRequestConfig[] = []
     const requester = async <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T> => {
       configs.push(config as SignedRequestConfig)
-      const requestedPage = Number((config.params as Record<string, unknown>).page)
-      const record = config.url === 'api/v1/admin/banners'
-        ? apiBanner({ id: requestedPage, code: `BN-00${requestedPage}` })
-        : apiHint({ id: requestedPage, code: `HI-00${requestedPage}` })
-      return { list: [record], total: 101, page: requestedPage, page_size: 100 } as T
+      const record = config.url === 'api/v1/admin/banners' ? apiBanner() : apiHint()
+      return { list: [record], total: 101, page: 2, page_size: 20 } as T
     }
     const service = createContentManagementService(requester)
-    await expect(service.listBanners({ keyword: ' 赛事 ', jumpType: 'traffic-control' })).resolves.toHaveLength(2)
-    await expect(service.listPriorityHints({ keyword: ' 入场 ', referenceType: 'traffic-control' })).resolves.toHaveLength(2)
+    await expect(service.listBannerPage(2, 20, { keyword: ' 赛事 ', jumpType: 'traffic-control', enabled })).resolves.toMatchObject({ total: 101, page: 2, pageSize: 20 })
+    await expect(service.listPriorityHintPage(2, 20, { keyword: ' 入场 ', referenceType: 'traffic-control', enabled })).resolves.toMatchObject({ total: 101, page: 2, pageSize: 20 })
+    const status = enabled === 'all' ? {} : { status: enabled === 'enabled' ? 1 : 0 }
     expect(configs).toEqual([
-      { method: 'GET', url: 'api/v1/admin/banners', params: { page: 1, page_size: 100, keyword: '赛事', jump_type: 'control' } },
-      { method: 'GET', url: 'api/v1/admin/banners', params: { page: 2, page_size: 100, keyword: '赛事', jump_type: 'control' } },
-      { method: 'GET', url: 'api/v1/admin/highlights', params: { page: 1, page_size: 100, keyword: '入场', ref_type: 'control' } },
-      { method: 'GET', url: 'api/v1/admin/highlights', params: { page: 2, page_size: 100, keyword: '入场', ref_type: 'control' } },
+      { method: 'GET', url: 'api/v1/admin/banners', params: { page: 2, page_size: 20, keyword: '赛事', jump_type: 'control', ...status } },
+      { method: 'GET', url: 'api/v1/admin/highlights', params: { page: 2, page_size: 20, keyword: '入场', ref_type: 'control', ...status } },
     ])
   })
 

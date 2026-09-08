@@ -125,12 +125,6 @@ export interface PriorityHintWriteInput {
   validTo: string | null
 }
 
-export interface ContentManagementSnapshot {
-  contents: ContentRecord[]
-  banners: BannerRecord[]
-  priorityHints: PriorityHintRecord[]
-}
-
 export interface SelectableReference {
   id: string
   code: string
@@ -178,11 +172,13 @@ export interface ContentServerQuery {
 export interface BannerServerQuery {
   keyword: string
   jumpType: BannerJumpType | 'all'
+  enabled: BannerQuery['enabled']
 }
 
 export interface PriorityHintServerQuery {
   keyword: string
   referenceType: ReferenceType | 'all'
+  enabled: PriorityHintQuery['enabled']
 }
 
 export type ContentValidationField = keyof ContentWriteInput
@@ -224,7 +220,6 @@ export interface PriorityHintQuery {
 }
 
 export interface ContentManagementService {
-  listContents(query: ContentServerQuery): Promise<ContentRecord[]>
   listContentPage(page: number, pageSize: number, query: ContentServerQuery): Promise<ContentPage>
   getContent(id: string): Promise<ContentRecord>
   createContent(input: ContentWriteInput): Promise<ContentRecord>
@@ -235,14 +230,12 @@ export interface ContentManagementService {
   setContentEnabled(id: string, enabled: boolean): Promise<ContentRecord>
   replaceAttachments(id: string, attachments: readonly RemoteFileAsset[]): Promise<ContentRecord>
   removeContent(id: string): Promise<void>
-  listBanners(query: BannerServerQuery): Promise<BannerRecord[]>
   listBannerPage(page: number, pageSize: number, query: BannerServerQuery): Promise<BannerPage>
   getBanner(id: string): Promise<BannerRecord>
   createBanner(input: BannerWriteInput): Promise<BannerRecord>
   updateBanner(id: string, input: BannerWriteInput): Promise<BannerRecord>
   setBannerEnabled(id: string, enabled: boolean): Promise<BannerRecord>
   removeBanner(id: string): Promise<void>
-  listPriorityHints(query: PriorityHintServerQuery): Promise<PriorityHintRecord[]>
   listPriorityHintPage(page: number, pageSize: number, query: PriorityHintServerQuery): Promise<PriorityHintPage>
   getPriorityHint(id: string): Promise<PriorityHintRecord>
   createPriorityHint(input: PriorityHintWriteInput): Promise<PriorityHintRecord>

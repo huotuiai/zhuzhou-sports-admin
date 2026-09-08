@@ -133,7 +133,7 @@ describe('traffic control API service', () => {
     expect(formatControlRequestDateTime('2027-08-28T10:20:30')).toBe('2027-08-28 10:20:30')
   })
 
-  it('sends supported filters and automatically reads all pages', async () => {
+  it('reads all server-filtered map pages and preserves their returned order', async () => {
     const configs: SignedRequestConfig[] = []
     const requester = async <T>(config: SignedRequestConfig): Promise<T> => {
       configs.push(config)
@@ -141,16 +141,16 @@ describe('traffic control API service', () => {
       const requestedPage = Number(params.page)
       const requestedPageSize = Number(params.page_size)
       return page(
-        [apiControl({ id: requestedPage, code: `GZ-00${requestedPage}`, control_type: 'limit' })],
-        { total: 21, page: requestedPage, page_size: requestedPageSize },
+        [apiControl({ id: requestedPage, code: `GZ-00${requestedPage}`, control_type: 'limit', is_pinned: requestedPage === 2 ? 1 : 0 })],
+        { total: 101, page: requestedPage, page_size: requestedPageSize },
       ) as T
     }
     const service = createTrafficControlService(requester)
-    const records = await service.list({ keyword: ' 东门 ', type: 'restriction', publishStatus: 'draft' }, 20)
+    const records = await service.list({ keyword: ' 东门 ', type: 'restriction', publishStatus: 'draft' }, 100)
     expect(records.map(record => record.id)).toEqual(['1', '2'])
     expect(configs).toEqual([
-      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 1, page_size: 20, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
-      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 2, page_size: 20, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
+      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 1, page_size: 100, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
+      { method: 'GET', url: 'api/v1/admin/controls', params: { page: 2, page_size: 100, keyword: '东门', publish_status: 'draft', control_type: 'limit' } },
     ])
   })
 

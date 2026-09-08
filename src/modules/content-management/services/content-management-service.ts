@@ -415,34 +415,6 @@ function cloneAsset(asset: RemoteFileAsset): RemoteFileAsset {
   return { ...asset }
 }
 
-function cloneContent(record: ContentRecord): ContentRecord {
-  return { ...record, cover: record.cover ? cloneAsset(record.cover) : null, attachments: record.attachments.map(cloneAsset), metrics: { ...record.metrics } }
-}
-
-function cloneBanner(record: BannerRecord): BannerRecord {
-  return { ...record, image: cloneAsset(record.image), metrics: { ...record.metrics } }
-}
-
-function cloneHint(record: PriorityHintRecord): PriorityHintRecord {
-  return { ...record, metrics: { ...record.metrics } }
-}
-
-export function sortContents(records: readonly ContentRecord[]): ContentRecord[] {
-  return [...records]
-    .sort((first, second) => Number(second.pinned) - Number(first.pinned)
-      || second.priority - first.priority
-      || (second.publishAt ?? second.updatedAt).localeCompare(first.publishAt ?? first.updatedAt))
-    .map(cloneContent)
-}
-
-export function sortBanners(records: readonly BannerRecord[]): BannerRecord[] {
-  return [...records].sort((first, second) => first.priority - second.priority || second.updatedAt.localeCompare(first.updatedAt)).map(cloneBanner)
-}
-
-export function sortPriorityHints(records: readonly PriorityHintRecord[]): PriorityHintRecord[] {
-  return [...records].sort((first, second) => first.priority - second.priority || second.updatedAt.localeCompare(first.updatedAt)).map(cloneHint)
-}
-
 function dateValue(value: string | null): number | null {
   if (!value) return null
   const result = Date.parse(value)
@@ -695,6 +667,7 @@ function bannerQuery(page: number, pageSize: number, query: BannerServerQuery): 
   const keyword = normalizeText(query.keyword)
   if (keyword) params.keyword = keyword
   if (query.jumpType !== 'all') params.jump_type = apiBannerJumpType(query.jumpType)
+  if (query.enabled !== 'all') params.status = query.enabled === 'enabled' ? 1 : 0
   return params
 }
 
@@ -703,6 +676,7 @@ function hintQuery(page: number, pageSize: number, query: PriorityHintServerQuer
   const keyword = normalizeText(query.keyword)
   if (keyword) params.keyword = keyword
   if (query.referenceType !== 'all') params.ref_type = apiReferenceType(query.referenceType)
+  if (query.enabled !== 'all') params.status = query.enabled === 'enabled' ? 1 : 0
   return params
 }
 
@@ -761,15 +735,6 @@ export function createContentManagementService(
       return mapApiContentPage(await request<ApiPage<ApiContentVO>>({
         method: 'GET', url: 'api/v1/admin/contents', params: contentQuery(page, pageSize, query),
       }))
-    },
-
-    async listContents(query) {
-      const first = await service.listContentPage(1, MAX_PAGE_SIZE, query)
-      const records = [...first.records]
-      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
-        records.push(...(await service.listContentPage(page, MAX_PAGE_SIZE, query)).records)
-      }
-      return sortContents([...new Map(records.map(record => [record.id, record])).values()])
     },
 
     async getContent(id) {
@@ -845,15 +810,6 @@ export function createContentManagementService(
       }))
     },
 
-    async listBanners(query) {
-      const first = await service.listBannerPage(1, MAX_PAGE_SIZE, query)
-      const records = [...first.records]
-      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
-        records.push(...(await service.listBannerPage(page, MAX_PAGE_SIZE, query)).records)
-      }
-      return sortBanners([...new Map(records.map(record => [record.id, record])).values()])
-    },
-
     async getBanner(id) {
       return mapApiBanner(await request<ApiBannerVO>({ method: 'GET', url: endpoint('api/v1/admin/banners', id) }))
     },
@@ -890,15 +846,6 @@ export function createContentManagementService(
       return mapApiPriorityHintPage(await request<ApiPage<ApiHighlightVO>>({
         method: 'GET', url: 'api/v1/admin/highlights', params: hintQuery(page, pageSize, query),
       }))
-    },
-
-    async listPriorityHints(query) {
-      const first = await service.listPriorityHintPage(1, MAX_PAGE_SIZE, query)
-      const records = [...first.records]
-      for (let page = 2; page <= Math.ceil(first.total / Math.max(1, first.pageSize)); page += 1) {
-        records.push(...(await service.listPriorityHintPage(page, MAX_PAGE_SIZE, query)).records)
-      }
-      return sortPriorityHints([...new Map(records.map(record => [record.id, record])).values()])
     },
 
     async getPriorityHint(id) {

@@ -6,7 +6,7 @@ import type {
   TrafficControlService,
   TrafficControlWriteInput,
 } from '../types'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { createTrafficControlStore, deriveTrafficControlTimeStatus } from './traffic-control-store'
 
@@ -67,16 +67,18 @@ class StubTrafficControlService implements TrafficControlService {
   failDelete: Error | null = null
   exportFile: TrafficControlExportFile = { content: new Blob(['csv']), filename: 'control_zones.csv' }
 
-  listPageSizes: number[] = []
+  listCalls: Array<[number, number]> = []
+  mapQueries: TrafficControlServerQuery[] = []
 
-  async list(query: TrafficControlServerQuery = { keyword: '', type: 'all', publishStatus: 'all' }, pageSize = 20): Promise<TrafficControl[]> {
-    this.listQueries.push({ ...query })
-    this.listPageSizes.push(pageSize)
+  async list(query: TrafficControlServerQuery): Promise<TrafficControl[]> {
+    this.mapQueries.push({ ...query })
     return structuredClone(this.records)
   }
 
-  async listPage(): Promise<TrafficControlPage> {
-    return { records: structuredClone(this.records), total: this.records.length, page: 1, pageSize: 100 }
+  async listPage(page: number, pageSize: number, query: TrafficControlServerQuery): Promise<TrafficControlPage> {
+    this.listQueries.push({ ...query })
+    this.listCalls.push([page, pageSize])
+    return { records: structuredClone(this.records.slice((page - 1) * pageSize, page * pageSize)), total: this.records.length, page, pageSize }
   }
 
   async get(id: string): Promise<TrafficControl> {
@@ -139,7 +141,7 @@ describe('traffic control store', () => {
     expect(deriveTrafficControlTimeStatus(record('A'), new Date('2026-08-18T13:00:00+08:00'))).toBe('ended')
   })
 
-  it('loads with server-supported filters and applies time/date filters to the complete result', async () => {
+  it('forwards every filter and trusts backend records without filtering or sorting again', async () => {
     service.records = [
       record('GZ-001', { title: '东门封路', areaName: '东环路' }),
       record('GZ-002', { title: '南门绕行', type: 'detour', startAt: '2026-08-20T10:00:00+08:00', endAt: '2026-08-21T12:00:00+08:00' }),
@@ -149,34 +151,37 @@ describe('traffic control store', () => {
     await store.load()
     await store.setQuery({ keyword: '南门', type: 'detour', publishStatus: 'published', timeStatus: 'upcoming', dateStart: '2026-08-21', dateEnd: '2026-08-22' })
     expect(service.listQueries.at(-1)).toEqual({ keyword: '南门', type: 'detour', publishStatus: 'published', timeStatus: 'upcoming', dateStart: '2026-08-21', dateEnd: '2026-08-22' })
-    expect(store.filteredRecords.map(item => item.id)).toEqual(['GZ-002'])
+    expect(store.records.map(item => item.id)).toEqual(['GZ-001', 'GZ-002', 'GZ-003'])
     await store.setQuery({ keyword: '', type: 'all', timeStatus: 'ended', dateStart: '', dateEnd: '' })
-    expect(store.filteredRecords.map(item => item.id)).toEqual(['GZ-003'])
+    expect(store.records).toHaveLength(3)
+    expect(store.total).toBe(3)
   })
 
-  it('keeps front-end paging and full filtered map data', async () => {
+  it('loads a single server page and keeps the full map response separately', async () => {
     service.records = Array.from({ length: 22 }, (_, index) => record('GZ-' + String(index + 1).padStart(3, '0'), {
       pinned: index === 5,
       sortOrder: index === 5 ? 99 : index,
     }))
     const store = createTrafficControlStore(service, () => currentTime, 'traffic-pages')()
     await store.load()
-    expect(store.filteredRecords).toHaveLength(22)
-    expect(store.filteredRecords[0]?.id).toBe('GZ-006')
-    expect(store.paginatedRecords).toHaveLength(20)
-    store.setPage(2)
-    expect(store.paginatedRecords).toHaveLength(2)
-    expect(service.listPageSizes).toEqual([20])
+    expect(store.records).toHaveLength(20)
+    expect(store.total).toBe(22)
+    expect(store.records[0]?.id).toBe('GZ-001')
+    expect(store.records).toHaveLength(20)
+    await store.setPage(2)
+    expect(store.records).toHaveLength(2)
+    expect(service.listCalls).toEqual([[1, 20], [2, 20]])
 
     expect(await store.setPageSize(50)).toBe(true)
     expect(store.pageSize).toBe(50)
     expect(store.currentPage).toBe(1)
-    expect(store.paginatedRecords).toHaveLength(22)
-    expect(service.listPageSizes.at(-1)).toBe(50)
+    expect(store.records).toHaveLength(22)
+    expect(service.listCalls.at(-1)).toEqual([1, 50])
 
     expect(await store.loadMap()).toBe(true)
     expect(store.mapRecords).toHaveLength(22)
-    expect(service.listPageSizes.at(-1)).toBe(100)
+    expect(service.mapQueries).toEqual([service.listQueries.at(-1)])
+    expect(service.listCalls).toHaveLength(3)
   })
 
   it('reads detail before editing and refreshes after CRUD mutations', async () => {
@@ -224,4 +229,106 @@ describe('traffic control store', () => {
     await expect(store.exportCurrent()).resolves.toBeNull()
     expect(store.error).toBe('导出接口不可用')
   })
+
+  it('preserves the applied query, records and pagination when requests fail', async () => {
+    service.records = Array.from({ length: 45 }, (_, index) => record(String(index + 1)))
+    const store = createTrafficControlStore(service, () => currentTime, 'traffic-failure')()
+    await store.setQuery({ keyword: '管制', publishStatus: 'published' })
+    await store.setPage(2)
+    const previous = store.records.map(item => item.id)
+    const filters = { ...store.query }
+    vi.spyOn(service, 'listPage').mockRejectedValue(new Error('列表请求失败'))
+    for (const request of [
+      () => store.setQuery({ keyword: '其他' }),
+      () => store.setPage(3),
+      () => store.setPageSize(50),
+      () => store.resetQuery(),
+    ]) {
+      expect(await request()).toBe(false)
+      expect(store.query).toEqual(filters)
+      expect(store.records.map(item => item.id)).toEqual(previous)
+      expect(store.page).toBe(2)
+      expect(store.pageSize).toBe(20)
+      expect(store.total).toBe(45)
+      expect(store.isLoading).toBe(false)
+    }
+  })
+
+  it('does not allow an older list or map response to overwrite a newer query', async () => {
+    const store = createTrafficControlStore(service, () => currentTime, 'traffic-race')()
+    let finishList!: (page: TrafficControlPage) => void
+    vi.spyOn(service, 'listPage').mockImplementationOnce(() => new Promise(resolve => { finishList = resolve }))
+    const older = store.setQuery({ keyword: '旧查询' })
+    service.records = [record('new')]
+    await store.setQuery({ keyword: '新查询' })
+    finishList({ records: [record('old')], total: 100, page: 1, pageSize: 20 })
+    await older
+    expect(store.query.keyword).toBe('新查询')
+    expect(store.records.map(item => item.id)).toEqual(['new'])
+    expect(store.total).toBe(1)
+    let finishMap!: (records: TrafficControl[]) => void
+    vi.spyOn(service, 'list').mockImplementationOnce(() => new Promise(resolve => { finishMap = resolve }))
+    const olderMap = store.setQuery({ keyword: '旧地图' }, 'map')
+    await store.setQuery({ keyword: '新地图' }, 'map')
+    finishMap([record('stale-map')])
+    await olderMap
+    expect(store.query.keyword).toBe('新地图')
+    expect(store.mapRecords.map(item => item.id)).toEqual(['new'])
+    expect(store.isLoading).toBe(false)
+  })
+
+  it('queries the map independently, keeps its previous data on failure and refreshes the list on return', async () => {
+    service.records = Array.from({ length: 125 }, (_, index) => record(String(index + 1)))
+    const store = createTrafficControlStore(service, () => currentTime, 'traffic-map')()
+    await store.load()
+    const filters = { keyword: '后端匹配', timeStatus: 'ended' as const, dateStart: '2026-08-01', dateEnd: '2026-08-30' }
+    expect(await store.setQuery(filters, 'map')).toBe(true)
+    expect(service.listCalls).toEqual([[1, 20]])
+    expect(service.mapQueries.at(-1)).toMatchObject(filters)
+    expect(store.mapRecords).toHaveLength(125)
+    expect(store.mapRecords[0]?.id).toBe('1')
+    expect(store.records).toHaveLength(20)
+    vi.spyOn(service, 'list').mockRejectedValueOnce(new Error('地图不可用'))
+    expect(await store.setQuery({ keyword: '失败' }, 'map')).toBe(false)
+    expect(store.query.keyword).toBe('后端匹配')
+    expect(store.mapRecords).toHaveLength(125)
+    expect(await store.load()).toBe(true)
+    expect(service.listQueries.at(-1)).toMatchObject(filters)
+    expect(store.total).toBe(125)
+  })
+
+  it('refreshes only the current view for an active time filter and does not filter rows locally', async () => {
+    service.records = [record('1')]
+    const store = createTrafficControlStore(service, () => currentTime, 'traffic-time-refresh')()
+    await store.load()
+    await store.refreshTime('list')
+    expect(service.listCalls).toHaveLength(1)
+    await store.setQuery({ timeStatus: 'active' })
+    currentTime = new Date('2026-08-18T13:00:00+08:00')
+    await store.refreshTime('list')
+    expect(service.listCalls).toHaveLength(3)
+    expect(store.records).toHaveLength(1)
+    expect(store.total).toBe(1)
+    await store.refreshTime('map')
+    expect(service.listCalls).toHaveLength(3)
+    expect(service.mapQueries.at(-1)?.timeStatus).toBe('active')
+  })
+
+  it('backs up to the last valid page after deletion and reports post-write refresh failures as warnings', async () => {
+    service.records = Array.from({ length: 21 }, (_, index) => record(String(index + 1)))
+    const store = createTrafficControlStore(service, () => currentTime, 'traffic-delete-page')()
+    await store.load()
+    await store.setPage(2)
+    expect(await store.remove('21')).toBe(true)
+    expect(service.listCalls.slice(-2)).toEqual([[2, 20], [1, 20]])
+    expect(store.page).toBe(1)
+    expect(store.total).toBe(20)
+    expect(store.records).toHaveLength(20)
+    vi.spyOn(service, 'listPage').mockRejectedValueOnce(new Error('列表不可用'))
+    expect(await store.create(input())).not.toBeNull()
+    expect(store.total).toBe(20)
+    expect(store.error).toBe('操作已成功，但最新数据刷新失败：列表不可用')
+    expect(store.isSaving).toBe(false)
+  })
+
 })

@@ -182,32 +182,37 @@ function requestFormClose(request: CrudDialogCloseRequest): void {
   else closeForm()
 }
 
-async function refreshMapIfNeeded(): Promise<void> {
-  if (viewMode.value !== 'map') return
-  if (!await store.loadMap()) toast.error(store.error ?? '交通管制地图数据加载失败。')
-}
-
 async function applyQuery(): Promise<void> {
   if (queryDraft.value.dateStart && queryDraft.value.dateEnd && queryDraft.value.dateStart > queryDraft.value.dateEnd) {
     toast.error('查询开始日期不能晚于结束日期。')
     return
   }
-  if (!await store.setQuery({ ...queryDraft.value })) {
+  if (!await store.setQuery({ ...queryDraft.value }, viewMode.value)) {
     toast.error(store.error ?? '交通管制查询失败。')
     return
   }
   loadError.value = ''
-  await refreshMapIfNeeded()
 }
 
 async function resetQuery(): Promise<void> {
-  if (!await store.resetQuery()) {
+  if (!await store.resetQuery(viewMode.value)) {
     toast.error(store.error ?? '交通管制查询重置失败。')
     return
   }
   loadError.value = ''
   queryDraft.value = { ...store.query }
-  await refreshMapIfNeeded()
+}
+
+async function changePage(value: number): Promise<void> {
+  if (!await store.setPage(value)) toast.error(store.error ?? '交通管制分页加载失败。')
+}
+
+function showMutationResult(successMessage: string): void {
+  if (store.error) {
+    toast.warning(store.error)
+    store.resetError()
+  }
+  else toast.success(successMessage)
 }
 
 async function changePageSize(value: number): Promise<void> {
@@ -225,7 +230,7 @@ async function persistSave(): Promise<void> {
     return
   }
   closeForm()
-  toast.success(created ? '交通管制已新增。' : '交通管制已更新。')
+  showMutationResult(created ? '交通管制已新增。' : '交通管制已更新。')
 }
 
 async function save(): Promise<void> {
@@ -247,7 +252,7 @@ async function confirmHistoricalSave(): Promise<void> {
 async function togglePinned(item: TrafficControl): Promise<void> {
   if (!canOperate.value) return
   const updated = await store.togglePinned(item)
-  if (updated) toast.success(updated.pinned ? '已置顶该管制。' : '已取消置顶。')
+  if (updated) showMutationResult(updated.pinned ? '已置顶该管制。' : '已取消置顶。')
   else toast.error(store.error ?? '置顶状态更新失败。')
 }
 
@@ -264,14 +269,14 @@ async function confirmStatusChange(): Promise<void> {
   }
   statusTarget.value = null
   if (target.action === 'publish' && updated.overlaps.length) overlapResult.value = updated
-  else toast.success(target.action === 'publish' ? '管制已发布。' : '管制已撤销。')
+  showMutationResult(target.action === 'publish' ? '管制已发布。' : '管制已撤销。')
 }
 
 async function remove(): Promise<void> {
   if (!canOperate.value || !deleteTarget.value) return
   if (await store.remove(deleteTarget.value.id)) {
     deleteTarget.value = null
-    toast.success('交通管制已删除。')
+    showMutationResult('交通管制已删除。')
   }
   else toast.error(store.error ?? '删除失败，请稍后重试。')
 }
@@ -288,16 +293,19 @@ function beforeUnload(event: BeforeUnloadEvent): void {
 
 async function load(): Promise<void> {
   loadError.value = ''
-  if (!await store.load()) {
+  const loaded = viewMode.value === 'map' ? await store.loadMap() : await store.load()
+  if (!loaded) {
     loadError.value = store.error ?? '交通管制数据加载失败'
     toast.error(loadError.value)
   }
 }
 
-watch(now, () => store.refreshTime())
+watch(now, async () => {
+  if (!await store.refreshTime(viewMode.value)) toast.error(store.error ?? '交通管制状态刷新失败。')
+})
 watch(viewMode, async (mode) => {
-  if (mode !== 'map') return
-  if (!await store.loadMap()) toast.error(store.error ?? '交通管制地图数据加载失败。')
+  const loaded = mode === 'map' ? await store.loadMap() : await store.load()
+  if (!loaded) toast.error(store.error ?? '交通管制数据加载失败。')
 })
 onMounted(load)
 onBeforeRouteLeave(() => confirmLeave())
@@ -338,7 +346,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert"><AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button></div>
 
       <template v-if="viewMode === 'list'">
-        <DataTable :columns="columns" :rows="store.paginatedRecords" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '当前查询条件下暂无交通管制' : '暂无交通管制，请新增'" caption="交通管制列表">
+        <DataTable :columns="columns" :rows="store.records" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '当前查询条件下暂无交通管制' : '暂无交通管制，请新增'" caption="交通管制列表">
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs font-semibold">{{ row.code }}</span></template>
           <template #cell-title="{ row }"><p class="max-w-64 truncate font-medium" :title="row.title">{{ row.title }}</p><p v-if="!row.geometry" class="mt-1 text-xs text-warning">未配置地图区域</p></template>
           <template #cell-type="{ row }"><Badge variant="outline" :style="{ borderColor: `${trafficControlTypeMeta(row.type).color}66`, color: trafficControlTypeMeta(row.type).color }">{{ trafficControlTypeMeta(row.type).label }}</Badge></template>
@@ -356,7 +364,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
             </div>
           </template>
         </DataTable>
-        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="store.setPage" @update:page-size="changePageSize" />
+        <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
 
       <TrafficControlMapView v-else-if="!formOpen" :records="store.mapRecords" :theme="themeStore.mode" />

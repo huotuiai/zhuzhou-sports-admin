@@ -7,7 +7,6 @@ import type {
   BannerWriteInput,
   ContentExportFile,
   ContentManagementService,
-  ContentManagementSnapshot,
   ContentManagementTab,
   ContentRecord,
   ContentServerQuery,
@@ -21,12 +20,8 @@ import type {
 } from '../types'
 import {
   contentManagementService,
-  getActivityStatus,
   isBannerEffective,
   isPriorityHintEffective,
-  sortBanners,
-  sortContents,
-  sortPriorityHints,
 } from '../services/content-management-service'
 
 export const CONTENT_MANAGEMENT_PAGE_SIZE = 20
@@ -44,16 +39,15 @@ export const DEFAULT_HINT_QUERY: PriorityHintQuery = { referenceType: 'all', ena
 
 const REFERENCE_TYPES: readonly ReferenceType[] = ['activity', 'news', 'notice', 'traffic-control']
 
-function normalizedIncludes(source: string, keyword: string): boolean {
-  return source.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN'))
+type TabQueries = {
+  activity: ActivityQuery
+  news: NewsQuery
+  banner: BannerQuery
+  hint: PriorityHintQuery
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : '操作失败，请稍后重试'
-}
-
-function emptySnapshot(): ContentManagementSnapshot {
-  return { contents: [], banners: [], priorityHints: [] }
 }
 
 function contentServerQuery(type: ContentServerQuery['contentType'], query: Pick<ActivityQuery, 'title' | 'publishStatus' | 'enabled' | 'pinned'> & Partial<Pick<ActivityQuery, 'activityStatus'>>): ContentServerQuery {
@@ -72,7 +66,10 @@ export function createContentManagementStore(
   storeId = 'content-management',
 ) {
   return defineStore(storeId, () => {
-    const snapshot = ref<ContentManagementSnapshot>(emptySnapshot())
+    const activityRecords = ref<ContentRecord[]>([])
+    const newsRecords = ref<ContentRecord[]>([])
+    const bannerRecords = ref<BannerRecord[]>([])
+    const priorityHintRecords = ref<PriorityHintRecord[]>([])
     const referencesByType = reactive<Record<ReferenceType, SelectableReference[]>>({
       activity: [], news: [], notice: [], 'traffic-control': [],
     })
@@ -80,64 +77,25 @@ export function createContentManagementStore(
     const newsQuery = reactive<NewsQuery>({ ...DEFAULT_NEWS_QUERY })
     const bannerQuery = reactive<BannerQuery>({ ...DEFAULT_BANNER_QUERY })
     const hintQuery = reactive<PriorityHintQuery>({ ...DEFAULT_HINT_QUERY })
+    const queries: TabQueries = { activity: activityQuery, news: newsQuery, banner: bannerQuery, hint: hintQuery }
+    const defaults: TabQueries = { activity: DEFAULT_ACTIVITY_QUERY, news: DEFAULT_NEWS_QUERY, banner: DEFAULT_BANNER_QUERY, hint: DEFAULT_HINT_QUERY }
     const pages = reactive<Record<ContentManagementTab, number>>({ activity: 1, news: 1, banner: 1, hint: 1 })
+    const totals = reactive<Record<ContentManagementTab, number>>({ activity: 0, news: 0, banner: 0, hint: 0 })
+    const loadingTabs = reactive<Record<ContentManagementTab, boolean>>({ activity: false, news: false, banner: false, hint: false })
+    const activeTab = ref<ContentManagementTab>('activity')
     const pageSize = ref(CONTENT_MANAGEMENT_PAGE_SIZE)
     const now = ref(Date.now())
-    const isLoading = ref(false)
+    const isLoadingReferences = ref(false)
+    const isLoading = computed(() => loadingTabs[activeTab.value] || isLoadingReferences.value)
     const isSaving = ref(false)
     const isExporting = ref(false)
     const detailLoadingId = ref<string | null>(null)
     const error = ref<string | null>(null)
-
-    const activityRecords = computed(() => sortContents(snapshot.value.contents.filter((record) => {
-      if (record.type !== 'activity') return false
-      if (activityQuery.publishStatus !== 'all' && record.publishStatus !== activityQuery.publishStatus) return false
-      if (activityQuery.activityStatus !== 'all' && getActivityStatus(record, new Date(now.value)) !== activityQuery.activityStatus) return false
-      if (activityQuery.pinned === 'pinned' && !record.pinned) return false
-      if (activityQuery.pinned === 'not-pinned' && record.pinned) return false
-      if (activityQuery.enabled === 'enabled' && !record.enabled) return false
-      if (activityQuery.enabled === 'disabled' && record.enabled) return false
-      return !activityQuery.title.trim() || normalizedIncludes(record.title, activityQuery.title) || normalizedIncludes(record.code, activityQuery.title)
-    })))
-
-    const newsRecords = computed(() => sortContents(snapshot.value.contents.filter((record) => {
-      if (record.type === 'activity') return false
-      if (newsQuery.type !== 'all' && record.type !== newsQuery.type) return false
-      if (newsQuery.publishStatus !== 'all' && record.publishStatus !== newsQuery.publishStatus) return false
-      if (newsQuery.pinned === 'pinned' && !record.pinned) return false
-      if (newsQuery.pinned === 'not-pinned' && record.pinned) return false
-      if (newsQuery.enabled === 'enabled' && !record.enabled) return false
-      if (newsQuery.enabled === 'disabled' && record.enabled) return false
-      return !newsQuery.title.trim() || normalizedIncludes(record.title, newsQuery.title) || normalizedIncludes(record.code, newsQuery.title)
-    })))
-
-    const bannerRecords = computed(() => sortBanners(snapshot.value.banners.filter((record) => {
-      if (bannerQuery.jumpType !== 'all' && record.jumpType !== bannerQuery.jumpType) return false
-      if (bannerQuery.enabled === 'enabled' && !record.displayEnabled) return false
-      if (bannerQuery.enabled === 'disabled' && record.displayEnabled) return false
-      return !bannerQuery.title.trim() || normalizedIncludes(record.title, bannerQuery.title) || normalizedIncludes(record.code, bannerQuery.title)
-    })))
-
-    const priorityHintRecords = computed(() => sortPriorityHints(snapshot.value.priorityHints.filter((record) => {
-      if (hintQuery.referenceType !== 'all' && record.referenceType !== hintQuery.referenceType) return false
-      if (hintQuery.enabled === 'enabled' && !record.displayEnabled) return false
-      if (hintQuery.enabled === 'disabled' && record.displayEnabled) return false
-      return !hintQuery.title.trim() || normalizedIncludes(record.title, hintQuery.title) || normalizedIncludes(record.code, hintQuery.title)
-    })))
-
-    function paginated<T>(records: readonly T[], tab: ContentManagementTab): T[] {
-      const size = Math.max(1, pageSize.value)
-      const maxPage = Math.max(1, Math.ceil(records.length / size))
-      const page = Math.min(Math.max(pages[tab], 1), maxPage)
-      return records.slice((page - 1) * size, page * size)
-    }
-
-    const paginatedActivities = computed(() => paginated(activityRecords.value, 'activity'))
-    const paginatedNews = computed(() => paginated(newsRecords.value, 'news'))
-    const paginatedBanners = computed(() => paginated(bannerRecords.value, 'banner'))
-    const paginatedPriorityHints = computed(() => paginated(priorityHintRecords.value, 'hint'))
-    const bannerTotal = computed(() => snapshot.value.banners.length)
-    const priorityHintTotal = computed(() => snapshot.value.priorityHints.length)
+    const requestSequences: Record<ContentManagementTab, number> = { activity: 0, news: 0, banner: 0, hint: 0 }
+    const tabErrors: Record<ContentManagementTab, string | null> = { activity: null, news: null, banner: null, hint: null }
+    let pageSizeEpoch = 0
+    let pendingPageSize: { value: number, epoch: number } | null = null
+    let referencePromise: Promise<void> | null = null
     const selectableReferences = computed(() => REFERENCE_TYPES.flatMap(type => referencesByType[type]))
 
     function targetIsValid(targetId: string | null): boolean {
@@ -152,150 +110,127 @@ export function createContentManagementStore(
       return isPriorityHintEffective(record, new Date(now.value)) && targetIsValid(record.targetId)
     }
 
-    const activePriorityHintIds = computed(() => sortPriorityHints(snapshot.value.priorityHints)
-      .filter(priorityHintIsEffective).slice(0, 2).map(record => record.id))
-
-    function queryForContentTab(tab: 'activity' | 'news'): ContentServerQuery {
-      if (tab === 'activity') return contentServerQuery('activity', activityQuery)
-      const types = newsQuery.type === 'all' ? (['news', 'notice'] as const) : newsQuery.type
-      return contentServerQuery(types, newsQuery)
+    function queryForContentTab(tab: 'activity' | 'news', filters: ActivityQuery | NewsQuery = queries[tab]): ContentServerQuery {
+      if (tab === 'activity') return contentServerQuery('activity', filters as ActivityQuery)
+      const type = (filters as NewsQuery).type
+      return contentServerQuery(type === 'all' ? ['news', 'notice'] : type, filters)
     }
 
-    async function fetchActivities(): Promise<ContentRecord[]> {
-      return service.listContents(queryForContentTab('activity'))
-    }
-
-    async function fetchNews(): Promise<ContentRecord[]> {
-      return service.listContents(queryForContentTab('news'))
-    }
-
-    async function fetchBanners(): Promise<BannerRecord[]> {
-      return service.listBanners({ keyword: bannerQuery.title, jumpType: bannerQuery.jumpType })
-    }
-
-    async function fetchHints(): Promise<PriorityHintRecord[]> {
-      return service.listPriorityHints({ keyword: hintQuery.title, referenceType: hintQuery.referenceType })
-    }
-
-    async function fetchReferences(): Promise<void> {
-      const groups = await Promise.all(REFERENCE_TYPES.map(type => service.listReferenceOptions(type)))
-      groups.forEach((records, index) => { referencesByType[REFERENCE_TYPES[index]!] = records })
-    }
-
-    async function applyTab(tab: ContentManagementTab): Promise<void> {
-      if (tab === 'activity') {
-        const records = await fetchActivities()
-        snapshot.value.contents = [...records, ...snapshot.value.contents.filter(item => item.type !== 'activity')]
+    function requestPage<T extends ContentManagementTab>(tab: T, filters: TabQueries[T], page: number, size: number) {
+      if (tab === 'activity' || tab === 'news') {
+        return service.listContentPage(page, size, queryForContentTab(tab, filters as ActivityQuery | NewsQuery))
       }
-      if (tab === 'news') {
-        const records = await fetchNews()
-        snapshot.value.contents = [...snapshot.value.contents.filter(item => item.type === 'activity'), ...records]
+      if (tab === 'banner') {
+        const value = filters as BannerQuery
+        return service.listBannerPage(page, size, { keyword: value.title, jumpType: value.jumpType, enabled: value.enabled })
       }
-      if (tab === 'banner') snapshot.value.banners = await fetchBanners()
-      if (tab === 'hint') snapshot.value.priorityHints = await fetchHints()
-      pages[tab] = Math.min(pages[tab], Math.max(1, Math.ceil(recordsForTab(tab).length / Math.max(1, pageSize.value))))
+      const value = filters as PriorityHintQuery
+      return service.listPriorityHintPage(page, size, { keyword: value.title, referenceType: value.referenceType, enabled: value.enabled })
     }
 
-    async function load(tab?: ContentManagementTab): Promise<boolean> {
-      isLoading.value = true
-      error.value = null
+    async function loadPage<T extends ContentManagementTab>(tab: T, nextQuery: TabQueries[T], nextPage: number, nextSize = pendingPageSize?.value ?? pageSize.value): Promise<boolean> {
+      const requestId = ++requestSequences[tab]
+      const sizeEpoch = pageSizeEpoch
+      const filters = { ...nextQuery, title: nextQuery.title.trim().normalize('NFKC') }
+      const isCurrent = () => requestId === requestSequences[tab] && sizeEpoch === pageSizeEpoch
+      loadingTabs[tab] = true
+      tabErrors[tab] = null
+      if (activeTab.value === tab) error.value = null
       try {
-        if (tab) {
-          await Promise.all([applyTab(tab), fetchReferences()])
+        let result = await requestPage(tab, filters, pendingPageSize ? 1 : nextPage, nextSize)
+        if (!isCurrent()) return true
+        const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize))
+        if (result.page > lastPage) result = await requestPage(tab, filters, lastPage, nextSize)
+        if (!isCurrent()) return true
+        if (result.pageSize !== pageSize.value) {
+          pageSize.value = result.pageSize
+          // 共用每页条数改变后，其他页签在切入时重新请求第一页。
+          for (const other of Object.keys(pages) as ContentManagementTab[]) {
+            if (other !== tab) pages[other] = 1
+          }
+          activityRecords.value = []
+          newsRecords.value = []
+          bannerRecords.value = []
+          priorityHintRecords.value = []
         }
-        else {
-          const [activities, news, banners, hints] = await Promise.all([
-            fetchActivities(), fetchNews(), fetchBanners(), fetchHints(), fetchReferences(),
-          ])
-          snapshot.value = { contents: [...activities, ...news], banners, priorityHints: hints }
-        }
+        if (tab === 'activity') activityRecords.value = result.records as ContentRecord[]
+        else if (tab === 'news') newsRecords.value = result.records as ContentRecord[]
+        else if (tab === 'banner') bannerRecords.value = result.records as BannerRecord[]
+        else priorityHintRecords.value = result.records as PriorityHintRecord[]
+        totals[tab] = result.total
+        pages[tab] = result.page
+        Object.assign(queries[tab], filters)
         now.value = Date.now()
         return true
       }
       catch (cause) {
-        error.value = errorMessage(cause)
+        if (!isCurrent()) return true
+        tabErrors[tab] = errorMessage(cause)
+        if (activeTab.value !== tab) return true
+        error.value = tabErrors[tab]
         return false
       }
-      finally { isLoading.value = false }
+      finally {
+        if (requestId === requestSequences[tab]) loadingTabs[tab] = false
+      }
     }
 
-    let inflightTab: ContentManagementTab | null = null
-    let inflightLoad: Promise<boolean> | null = null
+    async function fetchReferences(): Promise<void> {
+      if (referencePromise) return referencePromise
+      isLoadingReferences.value = true
+      referencePromise = Promise.all(REFERENCE_TYPES.map(type => service.listReferenceOptions(type)))
+        .then(groups => { groups.forEach((records, index) => { referencesByType[REFERENCE_TYPES[index]!] = records }) })
+        .finally(() => { isLoadingReferences.value = false; referencePromise = null })
+      return referencePromise
+    }
 
     async function loadTab(tab: ContentManagementTab): Promise<boolean> {
-      if (inflightLoad && inflightTab === tab) return inflightLoad
-      inflightTab = tab
-      inflightLoad = (async () => {
-        isLoading.value = true
-        error.value = null
-        try {
-          await applyTab(tab)
-          now.value = Date.now()
-          return true
-        }
-        catch (cause) {
-          error.value = errorMessage(cause)
-          return false
-        }
-        finally {
-          isLoading.value = false
-          inflightTab = null
-          inflightLoad = null
-        }
-      })()
-      return inflightLoad
+      activeTab.value = tab
+      return loadPage(tab, queries[tab], pages[tab])
     }
 
-    function recordsForTab(tab: ContentManagementTab): readonly unknown[] {
-      if (tab === 'activity') return activityRecords.value
-      if (tab === 'news') return newsRecords.value
-      if (tab === 'banner') return bannerRecords.value
-      return priorityHintRecords.value
+    async function load(tab: ContentManagementTab = activeTab.value, filters?: TabQueries[ContentManagementTab]): Promise<boolean> {
+      activeTab.value = tab
+      const [listResult, referencesResult] = await Promise.allSettled([
+        loadPage(tab, filters ?? queries[tab], filters ? 1 : pages[tab]),
+        fetchReferences(),
+      ])
+      if (referencesResult.status === 'rejected') {
+        error.value = errorMessage(referencesResult.reason)
+        return false
+      }
+      return listResult.status === 'fulfilled' && listResult.value
     }
 
-    async function setActivityQuery(query: ActivityQuery): Promise<boolean> {
-      Object.assign(activityQuery, query)
-      pages.activity = 1
-      return loadTab('activity')
+    async function setQuery<T extends ContentManagementTab>(tab: T, filters: TabQueries[T]): Promise<boolean> {
+      activeTab.value = tab
+      return loadPage(tab, filters, 1)
     }
 
-    async function setNewsQuery(query: NewsQuery): Promise<boolean> {
-      Object.assign(newsQuery, query)
-      pages.news = 1
-      return loadTab('news')
-    }
-
-    async function setBannerQuery(query: BannerQuery): Promise<boolean> {
-      Object.assign(bannerQuery, query)
-      pages.banner = 1
-      return loadTab('banner')
-    }
-
-    async function setHintQuery(query: PriorityHintQuery): Promise<boolean> {
-      Object.assign(hintQuery, query)
-      pages.hint = 1
-      return loadTab('hint')
-    }
+    const setActivityQuery = (filters: ActivityQuery) => setQuery('activity', filters)
+    const setNewsQuery = (filters: NewsQuery) => setQuery('news', filters)
+    const setBannerQuery = (filters: BannerQuery) => setQuery('banner', filters)
+    const setHintQuery = (filters: PriorityHintQuery) => setQuery('hint', filters)
 
     async function resetQuery(tab: ContentManagementTab): Promise<boolean> {
-      if (tab === 'activity') Object.assign(activityQuery, DEFAULT_ACTIVITY_QUERY)
-      if (tab === 'news') Object.assign(newsQuery, DEFAULT_NEWS_QUERY)
-      if (tab === 'banner') Object.assign(bannerQuery, DEFAULT_BANNER_QUERY)
-      if (tab === 'hint') Object.assign(hintQuery, DEFAULT_HINT_QUERY)
-      pages[tab] = 1
-      return loadTab(tab)
+      return setQuery(tab, defaults[tab])
     }
 
-    function setPage(tab: ContentManagementTab, page: number): void {
-      if (!Number.isFinite(page)) return
-      const maxPage = Math.max(1, Math.ceil(recordsForTab(tab).length / Math.max(1, pageSize.value)))
-      pages[tab] = Math.min(Math.max(1, Math.trunc(page)), maxPage)
+    async function setPage(tab: ContentManagementTab, value: number): Promise<boolean> {
+      if (!Number.isFinite(value)) return false
+      activeTab.value = tab
+      const lastPage = Math.max(1, Math.ceil(totals[tab] / pageSize.value))
+      return loadPage(tab, queries[tab], Math.min(Math.max(1, Math.trunc(value)), lastPage))
     }
 
-    function setPageSize(value: number): void {
-      if (!Number.isInteger(value) || value <= 0) return
-      pageSize.value = value
-      for (const tab of Object.keys(pages) as ContentManagementTab[]) pages[tab] = 1
+    async function setPageSize(value: number, tab: ContentManagementTab = activeTab.value): Promise<boolean> {
+      if (!Number.isInteger(value) || value <= 0 || value > 100) return false
+      activeTab.value = tab
+      pageSizeEpoch += 1
+      const pending = { value, epoch: pageSizeEpoch }
+      pendingPageSize = pending
+      try { return await loadPage(tab, queries[tab], 1, value) }
+      finally { if (pendingPageSize === pending) pendingPageSize = null }
     }
 
     async function getDetail<T>(id: string, getter: () => Promise<T>): Promise<T | null> {
@@ -313,25 +248,35 @@ export function createContentManagementStore(
     const getBanner = (id: string) => getDetail(id, () => service.getBanner(id))
     const getPriorityHint = (id: string) => getDetail(id, () => service.getPriorityHint(id))
 
-    async function mutate(operation: () => Promise<unknown>, tabs: readonly ContentManagementTab[], refreshReferences = false): Promise<boolean> {
+    async function mutate(operation: () => Promise<unknown>, tabs: readonly ContentManagementTab[], refreshReferences = false, firstPage = false): Promise<boolean> {
       isSaving.value = true
       error.value = null
+      async function refreshData(): Promise<string | null> {
+        const results = await Promise.allSettled([
+          ...tabs.map(tab => loadPage(tab, queries[tab], firstPage ? 1 : pages[tab])),
+          ...(refreshReferences ? [fetchReferences()] : []),
+        ])
+        for (const [index, result] of results.entries()) {
+          if (result.status === 'rejected') return errorMessage(result.reason)
+          if (result.value === false) return tabErrors[tabs[index]!] ?? '列表加载失败'
+        }
+        return null
+      }
       try {
         await operation()
-        await Promise.all([...tabs.map(loadTab), ...(refreshReferences ? [fetchReferences()] : [])])
+        const refreshError = await refreshData()
+        if (refreshError) error.value = `操作已成功，但最新数据刷新失败：${refreshError}`
         return true
       }
       catch (cause) {
-        const operationError = errorMessage(cause)
-        await Promise.all(tabs.map(tab => loadTab(tab))).catch(() => undefined)
-        if (refreshReferences) await fetchReferences().catch(() => undefined)
-        error.value = operationError
+        await refreshData()
+        error.value = errorMessage(cause)
         return false
       }
       finally { isSaving.value = false }
     }
 
-    const createContent = (input: ContentWriteInput) => mutate(() => service.createContent(input), [input.type === 'activity' ? 'activity' : 'news'], true)
+    const createContent = (input: ContentWriteInput) => mutate(() => service.createContent(input), [input.type === 'activity' ? 'activity' : 'news'], true, true)
     const updateContent = (id: string, input: ContentWriteInput, previousPublication?: Pick<ContentRecord, 'publishStatus' | 'publishAt'>) => mutate(
       () => service.updateContent(id, input, previousPublication),
       [input.type === 'activity' ? 'activity' : 'news'],
@@ -342,11 +287,11 @@ export function createContentManagementStore(
     const setContentPinned = (id: string, pinned: boolean, type: ContentRecord['type']) => mutate(() => service.setContentPinned(id, pinned), [type === 'activity' ? 'activity' : 'news'])
     const setContentEnabled = (id: string, enabled: boolean, type: ContentRecord['type']) => mutate(() => service.setContentEnabled(id, enabled), [type === 'activity' ? 'activity' : 'news'], true)
     const removeContent = (id: string, type: ContentRecord['type']) => mutate(() => service.removeContent(id), [type === 'activity' ? 'activity' : 'news'], true)
-    const createBanner = (input: BannerWriteInput) => mutate(() => service.createBanner(input), ['banner'])
+    const createBanner = (input: BannerWriteInput) => mutate(() => service.createBanner(input), ['banner'], false, true)
     const updateBanner = (id: string, input: BannerWriteInput) => mutate(() => service.updateBanner(id, input), ['banner'])
     const setBannerEnabled = (id: string, enabled: boolean) => mutate(() => service.setBannerEnabled(id, enabled), ['banner'])
     const removeBanner = (id: string) => mutate(() => service.removeBanner(id), ['banner'])
-    const createPriorityHint = (input: PriorityHintWriteInput) => mutate(() => service.createPriorityHint(input), ['hint'])
+    const createPriorityHint = (input: PriorityHintWriteInput) => mutate(() => service.createPriorityHint(input), ['hint'], false, true)
     const updatePriorityHint = (id: string, input: PriorityHintWriteInput) => mutate(() => service.updatePriorityHint(id, input), ['hint'])
     const setPriorityHintEnabled = (id: string, enabled: boolean) => mutate(() => service.setPriorityHintEnabled(id, enabled), ['hint'])
     const removePriorityHint = (id: string) => mutate(() => service.removePriorityHint(id), ['hint'])
@@ -362,26 +307,24 @@ export function createContentManagementStore(
       finally { isExporting.value = false }
     }
 
-    async function refreshTemporalState(): Promise<void> {
+    async function refreshTemporalState(tab: ContentManagementTab = activeTab.value): Promise<boolean> {
       now.value = Date.now()
-      await loadTab('activity')
-      await loadTab('news')
+      if ((tab !== 'activity' && tab !== 'news') || isLoading.value || isSaving.value) return true
+      return loadTab(tab)
     }
 
     function resetError(): void { error.value = null }
 
     return {
-      snapshot,
       referencesByType,
       activityQuery,
       newsQuery,
       bannerQuery,
       hintQuery,
       pages,
+      totals,
       pageSize,
       now,
-      bannerTotal,
-      priorityHintTotal,
       isLoading,
       isSaving,
       isExporting,
@@ -391,12 +334,7 @@ export function createContentManagementStore(
       newsRecords,
       bannerRecords,
       priorityHintRecords,
-      paginatedActivities,
-      paginatedNews,
-      paginatedBanners,
-      paginatedPriorityHints,
       selectableReferences,
-      activePriorityHintIds,
       targetIsValid,
       isBannerEffective: bannerIsEffective,
       isPriorityHintEffective: priorityHintIsEffective,
