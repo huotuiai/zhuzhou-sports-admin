@@ -118,9 +118,9 @@ function publishStatusClass(status: TrafficControlPublishStatus): string {
   return 'border-border bg-muted/50 text-muted-foreground line-through'
 }
 
-async function exportAll(): Promise<void> {
+async function exportCurrent(): Promise<void> {
   if (!canExport.value) return
-  const file = await store.exportAll()
+  const file = await store.exportCurrent()
   if (!file) {
     toast.error(store.error ?? '交通管制导出失败。')
     return
@@ -131,7 +131,7 @@ async function exportAll(): Promise<void> {
   anchor.download = file.filename
   anchor.click()
   URL.revokeObjectURL(url)
-  toast.success('已导出全部交通管制数据。')
+  toast.success('交通管制 CSV 已导出。')
 }
 
 function openCreate(): void {
@@ -322,7 +322,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
             </Button>
           </div>
           <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增管制</Button>
-          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportAll"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="store.isExporting" @click="exportCurrent"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
         </div>
       </header>
 

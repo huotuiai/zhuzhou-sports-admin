@@ -77,7 +77,7 @@ export type ShuttleRouteValidationField = keyof ShuttleRouteBaseInput | 'code' |
 
 export interface ShuttleRouteValidationIssue {
   field: ShuttleRouteValidationField
-  code: 'required' | 'duplicate' | 'invalid' | 'range'
+  code: 'required' | 'invalid' | 'range'
   message: string
 }
 

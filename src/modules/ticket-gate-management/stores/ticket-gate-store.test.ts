@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { BackendCsvExportFile } from '@/lib/http'
 import type {
@@ -169,6 +169,44 @@ describe('ticket gate store', () => {
     expect(await store.update('G-1', input({ code: 'G-1', name: '东门主入口' }))).toMatchObject({ name: '东门主入口' })
     expect(await store.updateStatus('G-1', { status: 'restricted', statusRemark: '临时管制' }))
       .toMatchObject({ status: 'restricted', statusRemark: '临时管制' })
+  })
+
+  it.each(['create', 'update'] as const)('submits %s regardless of which page or filter contains a matching gate', async (operation) => {
+    service.records = Array.from({ length: 21 }, (_, index) => gate(`G-${index + 1}`))
+    const store = createTicketGateStore(service, `ticket-gate-${operation}-pagination`)()
+    const value = input({ code: 'G-1', name: '检票口 G-1' })
+    const write = vi.spyOn(service, operation).mockResolvedValue(gate('G-2'))
+    const list = vi.spyOn(service, 'list')
+    await store.load()
+
+    const submit = () => operation === 'create' ? store.create(value) : store.update('G-2', value)
+    expect(store.records.some(record => record.id === 'G-1')).toBe(true)
+    expect(await submit()).not.toBeNull()
+
+    await store.setPage(2)
+    expect(store.records.some(record => record.id === 'G-1')).toBe(false)
+    expect(await submit()).not.toBeNull()
+
+    await store.setQuery({ keyword: '不存在' })
+    expect(store.records).toEqual([])
+    expect(await submit()).not.toBeNull()
+    expect(write).toHaveBeenCalledTimes(3)
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  it.each(['create', 'update'] as const)('surfaces the backend conflict error from %s', async (operation) => {
+    service.records = [gate('G-1'), gate('G-2')]
+    const store = createTicketGateStore(service, `ticket-gate-${operation}-conflict`)()
+    const value = input({ code: 'G-1', name: '检票口 G-1' })
+    const write = vi.spyOn(service, operation).mockRejectedValue(new Error('接口返回：检票口编号已存在'))
+    await store.load()
+
+    const saved = operation === 'create' ? await store.create(value) : await store.update('G-2', value)
+    expect(saved).toBeNull()
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(store.error).toBe('接口返回：检票口编号已存在')
+    expect(store.isSaving).toBe(false)
+    expect(store.records).toHaveLength(2)
   })
 
   it('delegates delete validation to the backend and surfaces its error unchanged', async () => {

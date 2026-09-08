@@ -94,7 +94,7 @@ export interface ParkingLotService {
   updateEnabled(id: string, enabled: boolean): Promise<ParkingLot>
   updateAvailability(id: string, availableSpaces: number): Promise<ParkingLot>
   remove(id: string): Promise<void>
-  exportCsv(): Promise<BackendCsvExportFile>
+  exportCsv(query: ParkingLotQuery): Promise<BackendCsvExportFile>
   importCsv(csv: string): Promise<ParkingLotImportResult>
 }
 
@@ -109,7 +109,7 @@ export type ParkingLotValidationField = keyof ParkingLotCreateInput
 
 export interface ParkingLotValidationIssue {
   field: ParkingLotValidationField
-  code: 'required' | 'duplicate' | 'invalid' | 'range' | 'too_long'
+  code: 'required' | 'invalid' | 'range' | 'too_long'
   message: string
 }
 

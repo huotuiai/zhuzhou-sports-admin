@@ -119,10 +119,6 @@ function normalizeText(value: string): string {
   return value.trim().normalize('NFKC')
 }
 
-function normalizedIdentity(value: string): string {
-  return normalizeText(value).toLocaleLowerCase('zh-CN')
-}
-
 function requiredText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
   return value
@@ -260,15 +256,11 @@ function validateBase(input: ShuttleRouteUpdateInput): ShuttleRouteValidationIss
 
 export function validateShuttleRouteCreateInput(
   input: ShuttleRouteCreateInput,
-  records: readonly ShuttleRoute[] = [],
 ): ValidationResult<ShuttleRouteValidationIssue> {
   const value = sanitizeShuttleRouteCreateInput(input)
   const issues = validateBase(value)
   if (!value.code) issues.unshift({ field: 'code', code: 'required', message: '请输入线路编号' })
   else if (!/^[A-Z0-9]{2,10}$/.test(value.code)) issues.unshift({ field: 'code', code: 'invalid', message: '线路编号须为 2–10 位字母或数字' })
-  else if (records.some(item => normalizedIdentity(item.code) === normalizedIdentity(value.code))) {
-    issues.unshift({ field: 'code', code: 'duplicate', message: '线路编号不能重复' })
-  }
   return { valid: issues.length === 0, issues }
 }
 

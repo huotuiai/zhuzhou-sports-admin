@@ -363,16 +363,22 @@ describe('content management API service', () => {
     const configs: SignedRequestConfig[] = []
     const blob = new Blob(['csv'], { type: 'text/csv' })
     const service = createContentManagementService(
-      async () => { throw new Error('unexpected data request') },
+      async config => { configs.push(config as SignedRequestConfig); return { list: [], total: 0, page: 2, page_size: 20 } as never },
       async config => {
         configs.push(config)
         return { data: blob, headers: { 'content-disposition': "attachment; filename*=UTF-8''content%20all.csv" } } as unknown as AxiosResponse<Blob>
       },
     )
-    await expect(service.exportContents()).resolves.toEqual({ content: blob, filename: 'content all.csv' })
+    const query = { keyword: ' 赛事 ', contentType: 'activity' as const, publishStatus: 'published' as const, enabled: 'disabled' as const, pinned: 'not-pinned' as const, activityStatus: 'not-started' as const }
+    const params = { keyword: '赛事', content_type: 'activity', publish_status: 'published', status: 0, is_pinned: 0, activity_status: 'upcoming' }
+    await service.listContentPage(2, 20, query)
+    await expect(service.exportContents(query)).resolves.toEqual({ content: blob, filename: 'content all.csv' })
     expect(configs).toEqual([
-      { method: 'GET', url: 'api/v1/admin/contents/export', responseType: 'blob', headers: { Accept: 'text/csv' } },
+      { method: 'GET', url: 'api/v1/admin/contents', params: { page: 2, page_size: 20, ...params } },
+      { method: 'GET', url: 'api/v1/admin/contents/export', params, responseType: 'blob', headers: { Accept: 'text/csv' } },
     ])
+    await service.exportContents({ keyword: ' ', contentType: ['news', 'notice'], publishStatus: 'all', enabled: 'all', pinned: 'all', activityStatus: 'all' })
+    expect(configs.at(-1)?.params).toEqual({ content_type: 'news,notice' })
     expect(contentExportFilename('attachment; filename="../../bad.csv"')).toBe('.._.._bad.csv')
   })
 })

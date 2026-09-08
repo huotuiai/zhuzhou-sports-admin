@@ -260,10 +260,12 @@ describe('parking lot API service', () => {
         headers: { 'content-disposition': "attachment; filename*=UTF-8''parkings.csv" },
       } as unknown as AxiosResponse<Blob>
     }
-    const { configs, request } = queuedRequester([{ imported: '3' }])
+    const { configs, request } = queuedRequester([{ list: [], total: 0, page: 2, page_size: 20 }, { imported: '3' }])
     const service = createParkingLotService(request, requestFile)
+    const query = { keyword: ' 东区 ', feeType: 'paid' as const, openStatus: 'closed' as const, availabilityUpdateMethod: 'integrated' as const }
+    await service.listPage(2, 20, query)
 
-    await expect(service.exportCsv()).resolves.toMatchObject({
+    await expect(service.exportCsv(query)).resolves.toMatchObject({
       content: blob,
       filename: 'parkings.csv',
     })
@@ -271,10 +273,12 @@ describe('parking lot API service', () => {
     expect(fileConfig).toEqual({
       method: 'GET',
       url: 'api/v1/admin/parkings/export',
+      params: { keyword: '东区', is_free: 0, open_status: 0, update_mode: 'sync' },
       responseType: 'blob',
       headers: { Accept: 'text/csv' },
     })
-    expect(configs[0]).toMatchObject({
+    expect(configs[0]?.params).toEqual({ page: 2, page_size: 20, ...fileConfig!.params })
+    expect(configs[1]).toMatchObject({
       method: 'POST',
       url: 'api/v1/admin/parkings/import',
       data: { csv: '\uFEFF编号,名称\nP-01,中心停车场' },

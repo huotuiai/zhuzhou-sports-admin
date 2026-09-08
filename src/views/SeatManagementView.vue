@@ -105,6 +105,10 @@ async function resetQuery(): Promise<void> {
   queryDraft.value = cloneQuery(store.query)
 }
 
+async function changePage(value: number): Promise<void> {
+  if (!await store.setPage(value)) toast.error(store.error ?? '座位分区分页加载失败')
+}
+
 async function changePageSize(value: number): Promise<void> {
   if (!await store.setPageSize(value)) toast.error(store.error ?? '座位分区分页加载失败')
 }
@@ -133,7 +137,7 @@ async function exportAll(): Promise<void> {
     return
   }
   downloadCsv(file.content, file.filename)
-  toast.success('已导出全部座位分区。')
+  toast.success('座位分区 CSV 已导出。')
 }
 
 function resetImportSelection(): void {
@@ -215,7 +219,7 @@ function openCreateZone(floorId?: string): void {
   }
   zoneMode.value = 'create'
   editingId.value = null
-  zoneValue.value = { ...EMPTY_ZONE, floorId: selectedFloor.id, gateIds: [], sortOrder: store.nextSortOrder(selectedFloor.id) }
+  zoneValue.value = { ...EMPTY_ZONE, floorId: selectedFloor.id, gateIds: [] }
   initialZoneValue.value = { ...zoneValue.value, gateIds: [] }
   zoneIssues.value = []
   zoneOpen.value = true
@@ -261,7 +265,7 @@ function requestZoneClose(request: CrudDialogCloseRequest): void {
 
 async function saveZone(): Promise<void> {
   if (!canOperate.value) return
-  zoneIssues.value = store.validateZone(zoneValue.value, editingId.value ?? undefined).issues
+  zoneIssues.value = store.validateZone(zoneValue.value).issues
   await nextTick()
   if (!zoneFormRef.value?.validateAndFocus() || zoneIssues.value.length) return
   const creating = zoneMode.value === 'create'
@@ -442,7 +446,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         <AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" size="lg" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button>
       </div>
 
-      <DataTable :columns="columns" :rows="store.paginatedZones" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '无匹配结果' : '暂无座位分区，请新增分区'" caption="座位分区信息表">
+      <DataTable :columns="columns" :rows="store.zones" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '无匹配结果' : '暂无座位分区，请新增分区'" caption="座位分区信息表">
         <template #cell-code="{ row }"><code class="rounded-md border bg-muted/35 px-2 py-1 text-xs font-semibold">{{ row.code }}</code></template>
         <template #cell-name="{ row }"><span class="font-medium" :title="row.name">{{ row.name }}</span></template>
         <template #cell-floor="{ row }"><span>{{ floorById.get(row.floorId)?.name ?? '未知楼层' }}</span></template>
@@ -471,11 +475,11 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </template>
       </DataTable>
 
-      <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :page-sizes="[20, 50, 100]" :disabled="store.isLoading" @update:page="store.setPage" @update:page-size="changePageSize" />
+      <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :page-sizes="[20, 50, 100]" :disabled="store.isLoading" @update:page="changePage" @update:page-size="changePageSize" />
     </div>
 
     <CrudSheet :open="zoneOpen" :mode="zoneMode" :title="zoneMode === 'create' ? '新增座位分区' : `编辑座位分区 · ${zoneValue.code}`" description="维护分区范围、排序及其对应检票口。" :saving="store.isSaving" :dirty="zoneDirty" @submit="saveZone" @request-close="requestZoneClose">
-      <VenueSeatForm :key="`${zoneMode}-${editingId ?? 'new'}`" ref="zoneFormRef" :mode="zoneMode" :value="zoneValue" :floors="store.floors" :zones="store.zones" :ticket-gates="store.ticketGates" :editing-id="editingId ?? undefined" :issues="zoneIssues" :saving="store.isSaving" @update:value="updateZoneValue" />
+      <VenueSeatForm :key="`${zoneMode}-${editingId ?? 'new'}`" ref="zoneFormRef" :mode="zoneMode" :value="zoneValue" :floors="store.floors" :ticket-gates="store.ticketGates" :editing-id="editingId ?? undefined" :issues="zoneIssues" :saving="store.isSaving" @update:value="updateZoneValue" />
     </CrudSheet>
 
     <CrudDialog :open="floorOpen" mode="create" title="新增楼层" description="楼层用于座位分区归属与列表排序。" submit-label="确认新增" :saving="store.isSaving" :dirty="floorDirty" @submit="saveFloor" @request-close="requestFloorClose">

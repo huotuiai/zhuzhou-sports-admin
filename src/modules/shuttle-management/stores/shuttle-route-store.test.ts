@@ -1,5 +1,5 @@
 import type { ShuttleRoute, ShuttleRouteCreateInput, ShuttleRoutePage, ShuttleRouteQuery, ShuttleRouteService, ShuttleRouteUpdateInput, ShuttleStation } from '../types'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { BackendCsvExportFile } from '@/lib/http'
 import { createShuttleRouteStore } from './shuttle-route-store'
@@ -122,6 +122,29 @@ describe('shuttle route store', () => {
     const station: ShuttleStation = { id: 'S1', name: '体育中心', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', arrivalGateIds: ['gate-1'] }
     expect((await store.replaceStations('L1', [station]))?.stations).toHaveLength(1)
     expect(await store.remove('L1')).toBe(true)
+  })
+
+  it('shows the backend conflict regardless of which page or filter contains the matching code', async () => {
+    service.records = Array.from({ length: 21 }, (_, index) => route(`L${index + 1}`))
+    const write = vi.spyOn(service, 'create').mockRejectedValue(new Error('接口返回：线路编号冲突'))
+    const store = createShuttleRouteStore(service, 'shuttle-code-conflict')()
+    await store.load()
+    const input: ShuttleRouteCreateInput = {
+      code: 'L1', name: '新线路', direction: 'inbound', description: '', firstDeparture: '08:00', lastDeparture: '22:00',
+      departureIntervalMinutes: 10, durationMinutes: 40, operatingStatus: 'operating', sortOrder: 2, enabled: true,
+    }
+    const submit = async () => {
+      expect(store.validateCreate(input).valid).toBe(true)
+      expect(await store.create(input)).toBeNull()
+      expect(store.error).toBe('接口返回：线路编号冲突')
+      expect(store.isSaving).toBe(false)
+    }
+    await submit()
+    await store.setPage(2)
+    await submit()
+    await store.setQuery({ keyword: '不存在' })
+    await submit()
+    expect(write).toHaveBeenCalledTimes(3)
   })
 
   it('exports the active filters and resets the exporting state', async () => {

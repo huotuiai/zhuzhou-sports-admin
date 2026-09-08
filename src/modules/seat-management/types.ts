@@ -77,12 +77,12 @@ export interface SeatPlanningService {
   listFloors(): Promise<SeatFloor[]>
   createFloor(input: SeatFloorCreateInput): Promise<SeatFloor>
   deleteFloor(id: string): Promise<void>
-  listZones(page: number, pageSize: number): Promise<SeatZonePage>
+  listZones(page: number, pageSize: number, query?: SeatPlanningQuery): Promise<SeatZonePage>
   getZone(id: string): Promise<SeatZone>
   createZone(input: SeatZoneWriteInput): Promise<SeatZone>
   updateZone(id: string, input: SeatZoneWriteInput): Promise<SeatZone>
   deleteZone(id: string): Promise<void>
-  exportCsv(): Promise<BackendCsvExportFile>
+  exportCsv(query: SeatPlanningQuery): Promise<BackendCsvExportFile>
   importCsv(csv: string): Promise<SeatZoneImportResult>
   listGateOptions(): Promise<SeatGateOption[]>
 }
@@ -99,13 +99,13 @@ export type SeatZoneValidationField = keyof SeatZoneWriteInput
 
 export interface SeatFloorValidationIssue {
   field: SeatFloorValidationField
-  code: 'required' | 'duplicate' | 'too_long'
+  code: 'required' | 'too_long'
   message: string
 }
 
 export interface SeatZoneValidationIssue {
   field: SeatZoneValidationField
-  code: 'required' | 'duplicate' | 'invalid' | 'not_found' | 'too_long' | 'positive_integer'
+  code: 'required' | 'invalid' | 'not_found' | 'too_long' | 'positive_integer'
   message: string
 }
 

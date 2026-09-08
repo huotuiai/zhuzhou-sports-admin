@@ -293,16 +293,12 @@ export function validateParkingLotBaseInput(input: ParkingLotBaseInput): Parking
 
 export function validateParkingLotCreateInput(
   input: ParkingLotCreateInput,
-  records: readonly ParkingLot[] = [],
 ): ParkingLotValidationResult {
   const value = sanitizeParkingLotCreateInput(input)
   const issues = [...validateParkingLotBaseInput(value).issues]
   if (!value.code) issues.unshift({ field: 'code', code: 'required', message: '请输入停车场编号' })
   else if (!/^[A-Z0-9-]{2,10}$/.test(value.code)) {
     issues.unshift({ field: 'code', code: 'invalid', message: '编号须为 2–10 位字母、数字或连字符' })
-  }
-  else if (records.some((record) => codeIdentity(record.code) === value.code)) {
-    issues.unshift({ field: 'code', code: 'duplicate', message: '停车场编号不能重复' })
   }
   return { valid: issues.length === 0, issues }
 }
@@ -376,10 +372,7 @@ export function mapApiParkingDetail(value: ApiParkingVO): ParkingLotDetail {
 }
 
 function directGateBody(bindings: readonly ParkingLotGateBindingValue[]): Array<{ gate_id: number, walk_minutes: number }> {
-  const gateIds = new Set<string>()
   return bindings.map((binding) => {
-    if (gateIds.has(binding.gateId)) throw new ParkingLotServiceError('同一检票口不能重复绑定')
-    gateIds.add(binding.gateId)
     const walkingMinutes = Number(binding.walkingMinutes)
     if (!Number.isInteger(walkingMinutes) || walkingMinutes <= 0) {
       throw new ParkingLotServiceError('步行时间必须是大于 0 的整数')
@@ -548,10 +541,11 @@ export function createParkingLotService(
       await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint(id) })
     },
 
-    async exportCsv() {
+    async exportCsv(query) {
       const response = await requestFile({
         method: 'GET',
         url: 'api/v1/admin/parkings/export',
+        params: filterParameters(query),
         responseType: 'blob',
         headers: { Accept: 'text/csv' },
       })

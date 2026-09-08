@@ -202,7 +202,6 @@ export class LocalTicketGateRelationService implements TicketGateRelationService
     const gateIds = new Set<string>()
     for (const binding of bindings) {
       if (!binding.gateId.trim()) throw new TicketGateRelationServiceError('请选择检票口')
-      if (gateIds.has(binding.gateId)) throw new TicketGateRelationServiceError('同一检票口不能重复绑定')
       if (!Number.isInteger(binding.walkingMinutes) || binding.walkingMinutes <= 0) {
         throw new TicketGateRelationServiceError('步行时间必须是大于 0 的整数')
       }
@@ -248,9 +247,6 @@ export class LocalTicketGateRelationService implements TicketGateRelationService
   async bindParking(input: GateParkingRelationInput): Promise<GateParkingRelation> {
     validateWalkingMinutes(input.walkingMinutes)
     const envelope = this.read()
-    if (envelope.parkingRelations.some((item) => item.gateId === input.gateId && item.parkingLotId === input.parkingLotId)) {
-      throw new TicketGateRelationServiceError('该停车场已绑定到当前检票口')
-    }
     const timestamp = this.now().toISOString()
     const relation: GateParkingRelation = { ...input, id: this.createId(), createdAt: timestamp, updatedAt: timestamp }
     envelope.parkingRelations.push(relation)
@@ -271,10 +267,6 @@ export class LocalTicketGateRelationService implements TicketGateRelationService
   async bindShuttle(input: GateShuttleRelationInput): Promise<GateShuttleRelation> {
     validateWalkingMinutes(input.walkingMinutes)
     const envelope = this.read()
-    if (envelope.shuttleRelations.some((item) => item.gateId === input.gateId && item.shuttlePointId === input.shuttlePointId &&
-      item.stationId === input.stationId && item.direction === input.direction)) {
-      throw new TicketGateRelationServiceError('该接驳站及方向已绑定到当前检票口')
-    }
     const timestamp = this.now().toISOString()
     const relation: GateShuttleRelation = { ...input, id: this.createId(), createdAt: timestamp, updatedAt: timestamp }
     envelope.shuttleRelations.push(relation)

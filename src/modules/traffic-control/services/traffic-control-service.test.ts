@@ -218,15 +218,22 @@ describe('traffic control API service', () => {
   it('downloads the server CSV with a safe response filename', async () => {
     const blob = new Blob(['csv'], { type: 'text/csv' })
     let fileConfig: SignedRequestConfig | null = null
+    let listConfig: SignedRequestConfig | null = null
     const service = createTrafficControlService(
-      async () => page([]) as never,
+      async (config) => { listConfig = config; return page([]) as never },
       async (config) => {
         fileConfig = config
         return { data: blob, headers: { 'content-disposition': "attachment; filename*=UTF-8''control%20zones.csv" } } as unknown as AxiosResponse<Blob>
       },
     )
-    await expect(service.export()).resolves.toEqual({ content: blob, filename: 'control zones.csv' })
-    expect(fileConfig).toEqual({ method: 'GET', url: 'api/v1/admin/controls/export', responseType: 'blob', headers: { Accept: 'text/csv' } })
+    const query = { keyword: ' 东门 ', type: 'restriction' as const, publishStatus: 'published' as const, timeStatus: 'ended' as const, dateStart: '2026-08-01', dateEnd: '2026-08-31' }
+    await service.listPage(2, 20, query)
+    await expect(service.export(query)).resolves.toEqual({ content: blob, filename: 'control zones.csv' })
+    expect(fileConfig).toEqual({
+      method: 'GET', url: 'api/v1/admin/controls/export', responseType: 'blob', headers: { Accept: 'text/csv' },
+      params: { keyword: '东门', control_type: 'limit', publish_status: 'published', time_status: 'expired', start_from: '2026-08-01', end_to: '2026-08-31' },
+    })
+    expect(listConfig!.params).toEqual({ page: 2, page_size: 20, ...fileConfig!.params })
     expect(trafficControlExportFilename('../../bad.csv')).toBe('control_zones.csv')
   })
 

@@ -48,8 +48,6 @@ import BannerForm from '@/modules/content-management/components/BannerForm.vue'
 import PriorityHintForm from '@/modules/content-management/components/PriorityHintForm.vue'
 import {
   DEFAULT_PRIORITY,
-  MAX_BANNERS,
-  MAX_PRIORITY_HINTS,
   getActivityStatus,
   validateBannerInput,
   validateContentInput,
@@ -475,8 +473,8 @@ function downloadFile(filename: string, content: Blob): void {
 }
 
 async function exportCurrent(): Promise<void> {
-  if (!canExport.value) return
-  const file = await store.exportContents()
+  if (!canExport.value || (activeTab.value !== 'activity' && activeTab.value !== 'news')) return
+  const file = await store.exportContents(activeTab.value)
   if (!file) return showStoreError('内容导出失败')
   downloadFile(file.filename, file.content)
   toast.success('内容 CSV 已导出。')
@@ -548,7 +546,7 @@ onBeforeRouteLeave(() => confirmLeave())
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <Button v-if="canOperate" size="lg" class="h-11 px-4" :disabled="activeTab === 'banner' && store.bannerTotal >= MAX_BANNERS || activeTab === 'hint' && store.priorityHintTotal >= MAX_PRIORITY_HINTS" @click="openCreate">
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate">
             <Plus aria-hidden="true" />
             {{ activeTab === 'activity' ? '新增活动' : activeTab === 'news' ? '新增内容' : activeTab === 'banner' ? '新增 Banner' : '新增高优提示' }}
           </Button>
@@ -582,8 +580,8 @@ onBeforeRouteLeave(() => confirmLeave())
       <div v-if="activeTab === 'banner' || activeTab === 'hint'" class="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/6 px-4 py-3 text-sm">
         <Megaphone class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
         <p class="text-muted-foreground">
-          <template v-if="activeTab === 'banner'">按优先级升序展示，上限 {{ MAX_BANNERS }} 张</template>
-          <template v-else>按优先级升序取前 2 条展示；最多 {{ MAX_PRIORITY_HINTS }} 条</template>
+          <template v-if="activeTab === 'banner'">按优先级升序展示</template>
+          <template v-else>按优先级升序取前 2 条展示</template>
         </p>
       </div>
 

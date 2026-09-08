@@ -209,7 +209,7 @@ async function changePageSize(value: number): Promise<void> {
 
 async function save(): Promise<void> {
   if (!canOperate.value) return
-  issues.value = store.validate(formValue.value, editingId.value ?? undefined).issues
+  issues.value = store.validate(formValue.value).issues
   await nextTick()
   if (!formRef.value?.validateAndFocus() || issues.value.length) return
   const created = formMode.value === 'create'

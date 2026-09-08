@@ -7,7 +7,7 @@ import type {
   UserPasswordResetInput,
   ValidationIssue,
 } from '../types'
-import { getDepartmentDescendantIds, normalizeIdentity } from '../lib/rbac'
+import { getDepartmentDescendantIds } from '../lib/rbac'
 
 function sanitizeUserCreate(input: UserCreateInput): UserCreateInput {
   return {
@@ -16,6 +16,7 @@ function sanitizeUserCreate(input: UserCreateInput): UserCreateInput {
     phone: input.phone.trim(),
     departmentIds: [...new Set(input.departmentIds)],
     roleIds: [...new Set(input.roleIds)],
+    status: input.status,
     password: input.password,
     confirmPassword: input.confirmPassword,
   }
@@ -73,13 +74,11 @@ export function validateUserCreateInput(
   else if (!/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/.test(value.username)) {
     issues.push({ field: 'username', code: 'invalid', message: '用户名仅支持字母开头的 4–32 位字母、数字或下划线' })
   }
-  else if (context.users.some(user => normalizeIdentity(user.username) === normalizeIdentity(value.username))) {
-    issues.push({ field: 'username', code: 'duplicate', message: '用户名不能重复' })
-  }
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入姓名' })
   else if (Array.from(value.name).length > 50) issues.push({ field: 'name', code: 'too_long', message: '姓名不能超过 50 个字符' })
   if (value.phone && !/^1\d{10}$/.test(value.phone)) issues.push({ field: 'phone', code: 'invalid', message: '请输入正确的 11 位手机号' })
   issues.push(...validateUserRelations(value.departmentIds, value.roleIds, context))
+  if (!['enabled', 'disabled', 'locked'].includes(value.status)) issues.push({ field: 'status', code: 'invalid', message: '请选择有效的账号状态' })
   issues.push(...validatePassword(value))
   return issues
 }
@@ -96,7 +95,6 @@ export function validateUserBasicInfoInput(
   if (value.phone && !/^1\d{10}$/.test(value.phone)) issues.push({ field: 'phone', code: 'invalid', message: '请输入正确的 11 位手机号' })
   issues.push(...validateUserRelations(value.departmentIds, value.roleIds, context, new Set(user.departmentIds)))
   if (!['enabled', 'disabled', 'locked'].includes(value.status)) issues.push({ field: 'status', code: 'invalid', message: '请选择有效的账号状态' })
-  else if (value.status === 'locked' && user.status !== 'locked') issues.push({ field: 'status', code: 'invalid', message: '锁定状态只能由登录风控产生' })
   return issues
 }
 
@@ -125,9 +123,6 @@ export function validateDepartmentInput(
   const issues: ValidationIssue<keyof DepartmentWriteInput>[] = []
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入部门名称' })
   else if (Array.from(value.name).length > 50) issues.push({ field: 'name', code: 'too_long', message: '部门名称不能超过 50 个字符' })
-  else if (context.departments.some(item => item.id !== excludedId && item.parentId === value.parentId && normalizeIdentity(item.name) === normalizeIdentity(value.name))) {
-    issues.push({ field: 'name', code: 'duplicate', message: '同级部门名称不能重复' })
-  }
   if (value.parentId && !context.departments.some(item => item.id === value.parentId)) {
     issues.push({ field: 'parentId', code: 'not_found', message: '所选上级部门不存在' })
   }

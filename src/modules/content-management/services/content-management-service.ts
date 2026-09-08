@@ -184,8 +184,6 @@ export class ContentManagementServiceError extends Error {
   }
 }
 
-export const MAX_BANNERS = 8
-export const MAX_PRIORITY_HINTS = 3
 export const DEFAULT_PRIORITY = 50
 const MAX_PAGE_SIZE = 100
 
@@ -676,13 +674,20 @@ function hintBody(input: PriorityHintWriteInput): ApiHighlightWriteRequest {
   }
 }
 
-function contentQuery(page: number, pageSize: number, query: ContentServerQuery): Record<string, string | number> {
+function contentFilterParameters(query: ContentServerQuery): Record<string, string | number> {
   const contentType = typeof query.contentType === 'string' ? query.contentType : query.contentType.join(',')
-  const params: Record<string, string | number> = { page, page_size: pageSize, content_type: contentType }
+  const params: Record<string, string | number> = { content_type: contentType }
   const keyword = normalizeText(query.keyword)
   if (keyword) params.keyword = keyword
   if (query.publishStatus !== 'all') params.publish_status = query.publishStatus
+  if (query.enabled && query.enabled !== 'all') params.status = query.enabled === 'enabled' ? 1 : 0
+  if (query.pinned && query.pinned !== 'all') params.is_pinned = query.pinned === 'pinned' ? 1 : 0
+  if (query.activityStatus && query.activityStatus !== 'all') params.activity_status = query.activityStatus === 'not-started' ? 'upcoming' : query.activityStatus
   return params
+}
+
+function contentQuery(page: number, pageSize: number, query: ContentServerQuery): Record<string, string | number> {
+  return { page, page_size: pageSize, ...contentFilterParameters(query) }
 }
 
 function bannerQuery(page: number, pageSize: number, query: BannerServerQuery): Record<string, string | number> {
@@ -947,9 +952,10 @@ export function createContentManagementService(
       return [...new Map(records.map(record => [record.id, record])).values()]
     },
 
-    async exportContents(): Promise<ContentExportFile> {
+    async exportContents(query): Promise<ContentExportFile> {
       const response = await requestFile({
         method: 'GET', url: 'api/v1/admin/contents/export', responseType: 'blob', headers: { Accept: 'text/csv' },
+        params: contentFilterParameters(query),
       })
       return { content: response.data, filename: contentExportFilename(headerValue(response, 'content-disposition')) }
     },

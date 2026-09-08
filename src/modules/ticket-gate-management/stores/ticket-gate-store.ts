@@ -131,8 +131,9 @@ export function createTicketGateStore(service: TicketGateService, storeId = 'tic
       return loadPage(1)
     }
 
-    function validate(input: TicketGateWriteInput, excludedId?: string): TicketGateValidationResult {
-      return validateTicketGateInput(input, floors.value, records.value, excludedId)
+    function validate(input: TicketGateWriteInput): TicketGateValidationResult {
+      // 列表是服务端分页，编号和名称是否重复由后端判断。
+      return validateTicketGateInput(input, floors.value)
     }
 
     async function get(id: string): Promise<TicketGate | null> {
@@ -183,7 +184,7 @@ export function createTicketGateStore(service: TicketGateService, storeId = 'tic
     }
 
     async function update(id: string, input: TicketGateWriteInput): Promise<TicketGate | null> {
-      const result = validate(input, id)
+      const result = validate(input)
       if (!result.valid) {
         error.value = result.issues[0]!.message
         return null

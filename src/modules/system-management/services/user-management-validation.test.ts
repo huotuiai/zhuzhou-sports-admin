@@ -2,6 +2,7 @@ import type {
   SystemDepartment,
   SystemRole,
   SystemUser,
+  UserStatus,
   UserManagementValidationContext,
 } from '../types'
 import { describe, expect, it } from 'vitest'
@@ -47,12 +48,13 @@ function context(): UserManagementValidationContext {
 describe('user management validation', () => {
   it('validates API-aligned username, password, phone and real relations', () => {
     const issues = validateUserCreateInput({
-      username: 'venue_user', name: '新用户', phone: '123', departmentIds: ['404'], roleIds: ['404'],
+      username: '1bad', name: '新用户', phone: '123', departmentIds: ['404'], roleIds: ['404'],
+      status: 'enabled',
       password: '12345678', confirmPassword: 'different',
     }, context())
 
     expect(issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({ field: 'username', code: 'duplicate' }),
+      expect.objectContaining({ field: 'username', code: 'invalid' }),
       expect.objectContaining({ field: 'phone', code: 'invalid' }),
       expect.objectContaining({ field: 'departmentIds', code: 'not_found' }),
       expect.objectContaining({ field: 'roleIds', code: 'not_found' }),
@@ -70,6 +72,7 @@ describe('user management validation', () => {
     expect(validateUserBasicInfoInput(input, validationContext, current)).toEqual([])
     expect(validateUserCreateInput({
       username: 'new_user', name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'],
+      status: 'enabled',
       password: 'Admin1234', confirmPassword: 'Admin1234',
     }, validationContext)).toEqual(expect.arrayContaining([
       expect.objectContaining({ field: 'departmentIds', code: 'invalid' }),
@@ -81,7 +84,28 @@ describe('user management validation', () => {
     expect(validateUserPasswordResetInput({ password: 'short', confirmPassword: '' })).toHaveLength(2)
   })
 
-  it('validates department duplicates, cycles, leaders and sorting against real data', () => {
+  it.each(['enabled', 'disabled', 'locked'] as const)('allows %s for new and existing users', (status) => {
+    const input = { name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'], status }
+    expect(validateUserCreateInput({
+      ...input, username: 'new_user', password: 'Admin1234', confirmPassword: 'Admin1234',
+    }, context())).toEqual([])
+    for (const currentStatus of ['enabled', 'disabled', 'locked'] as const) {
+      expect(validateUserBasicInfoInput(input, context(), user({ status: currentStatus }))).toEqual([])
+    }
+  })
+
+  it('rejects invalid account status in both forms', () => {
+    const input = {
+      name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'], status: 'unknown' as UserStatus,
+    }
+    const issue = { field: 'status', code: 'invalid', message: '请选择有效的账号状态' }
+    expect(validateUserCreateInput({
+      ...input, username: 'new_user', password: 'Admin1234', confirmPassword: 'Admin1234',
+    }, context())).toEqual([issue])
+    expect(validateUserBasicInfoInput(input, context(), user())).toEqual([issue])
+  })
+
+  it('validates department cycles, leaders and sorting against real data', () => {
     const validationContext = context()
     const issues = validateDepartmentInput({
       parentId: '11', name: '部门 10', ownerUserId: '404', sort: 10000, status: 'enabled',
@@ -92,5 +116,16 @@ describe('user management validation', () => {
       expect.objectContaining({ field: 'ownerUserId', code: 'not_found' }),
       expect.objectContaining({ field: 'sort', code: 'invalid' }),
     ]))
+  })
+
+  it('does not reject a username or department name already present in the loaded data', () => {
+    const validationContext = context()
+    expect(validateUserCreateInput({
+      username: 'venue_user', name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'],
+      status: 'enabled', password: 'Admin1234', confirmPassword: 'Admin1234',
+    }, validationContext)).toEqual([])
+    const input = { parentId: null, name: '部门 10', ownerUserId: null, sort: 10, status: 'enabled' as const }
+    expect(validateDepartmentInput(input, validationContext)).toEqual([])
+    expect(validateDepartmentInput(input, validationContext, '11')).toEqual([])
   })
 })

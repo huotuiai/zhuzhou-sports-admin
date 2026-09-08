@@ -9,6 +9,7 @@ import type {
   SeatGateOpenStatus,
   SeatGateOption,
   SeatPlanningService,
+  SeatPlanningQuery,
   SeatZone,
   SeatZoneImportResult,
   SeatZonePage,
@@ -108,10 +109,6 @@ function normalizeText(value: string): string {
   return value.trim().normalize('NFKC')
 }
 
-function identity(value: string): string {
-  return normalizeText(value).toLocaleLowerCase('zh-CN')
-}
-
 function requiredText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
   return value
@@ -162,16 +159,6 @@ function endpoint(path: string, id: string): string {
 
 function cloneFloor(value: SeatFloor): SeatFloor {
   return { ...value }
-}
-
-function cloneZone(value: SeatZone): SeatZone {
-  return {
-    ...value,
-    gateIds: [...value.gateIds],
-    gateNames: [...value.gateNames],
-    openGateIds: [...value.openGateIds],
-    openGateNames: [...value.openGateNames],
-  }
 }
 
 function cloneGate(value: SeatGateOption): SeatGateOption {
@@ -260,24 +247,18 @@ export function sanitizeSeatZoneInput(input: SeatZoneWriteInput): SeatZoneWriteI
 
 export function validateSeatFloorInput(
   input: SeatFloorWriteInput,
-  floors: readonly SeatFloor[] = [],
 ): SeatFloorValidationResult {
   const value = sanitizeSeatFloorInput(input)
   const issues: SeatFloorValidationIssue[] = []
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入楼层名称' })
   else if (Array.from(value.name).length > 20) issues.push({ field: 'name', code: 'too_long', message: '楼层名称不能超过 20 个字符' })
-  else if (floors.some(item => identity(item.name) === identity(value.name))) {
-    issues.push({ field: 'name', code: 'duplicate', message: '楼层名称不能重复' })
-  }
   return { valid: issues.length === 0, issues }
 }
 
 export function validateSeatZoneInput(
   input: SeatZoneWriteInput,
-  zones: readonly SeatZone[] = [],
   floors: readonly SeatFloor[] = [],
   ticketGates: readonly Pick<SeatGateOption, 'id'>[] = [],
-  excludedId?: string,
 ): SeatZoneValidationResult {
   const value = sanitizeSeatZoneInput(input)
   const issues: SeatZoneValidationIssue[] = []
@@ -285,9 +266,6 @@ export function validateSeatZoneInput(
   if (!value.code) issues.push({ field: 'code', code: 'required', message: '请输入分区编号' })
   else if (!/^[A-Z0-9-]{1,10}$/.test(value.code)) {
     issues.push({ field: 'code', code: 'invalid', message: '分区编号须为 1–10 位字母、数字或连字符' })
-  }
-  else if (zones.some(item => item.id !== excludedId && identity(item.code) === identity(value.code))) {
-    issues.push({ field: 'code', code: 'duplicate', message: '分区编号不能重复' })
   }
 
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入区域名称' })
@@ -328,14 +306,6 @@ export function sortSeatFloors(floors: readonly SeatFloor[]): SeatFloor[] {
     .map(cloneFloor)
 }
 
-export function sortSeatZones(zones: readonly SeatZone[], floors: readonly SeatFloor[]): SeatZone[] {
-  const floorOrder = new Map(sortSeatFloors(floors).map((floor, index) => [floor.id, index]))
-  return [...zones]
-    .sort((first, second) => (floorOrder.get(first.floorId) ?? Number.MAX_SAFE_INTEGER) - (floorOrder.get(second.floorId) ?? Number.MAX_SAFE_INTEGER) ||
-      first.sortOrder - second.sortOrder || first.code.localeCompare(second.code, 'zh-CN', { numeric: true }))
-    .map(cloneZone)
-}
-
 function zoneCreateBody(input: SeatZoneWriteInput): ApiZoneCreateRequest {
   const value = sanitizeSeatZoneInput(input)
   return {
@@ -367,6 +337,17 @@ function zoneUpdateBody(input: SeatZoneWriteInput): ApiZoneUpdateRequest {
 
 const defaultFileRequester: SeatPlanningFileRequester = config => rawHttpClient.request<Blob>(config)
 
+function filterParameters(query?: SeatPlanningQuery): Record<string, string | number> {
+  if (!query) return {}
+  const params: Record<string, string | number> = {}
+  const keyword = normalizeText(query.keyword)
+  if (keyword) params.keyword = keyword
+  if (query.floorId !== 'all') params.floor_id = query.floorId
+  if (query.gateIds.length) params.gate_ids = query.gateIds.join(',')
+  if (query.status !== 'all') params.status = query.status === 'enabled' ? 1 : 0
+  return params
+}
+
 export function createSeatPlanningService(
   request: SeatPlanningDataRequester = requestData,
   requestFile: SeatPlanningFileRequester = defaultFileRequester,
@@ -390,11 +371,11 @@ export function createSeatPlanningService(
       await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/floors', id) })
     },
 
-    async listZones(page: number, pageSize: number) {
+    async listZones(page: number, pageSize: number, query) {
       return mapZonePage(await request<ApiPage<ApiZoneVO>>({
         method: 'GET',
         url: 'api/v1/admin/zones',
-        params: { page, page_size: pageSize },
+        params: { page, page_size: pageSize, ...filterParameters(query) },
       }))
     },
 
@@ -416,10 +397,11 @@ export function createSeatPlanningService(
       await request<{ deleted: boolean }>({ method: 'DELETE', url: endpoint('api/v1/admin/zones', id) })
     },
 
-    async exportCsv() {
+    async exportCsv(query) {
       const response = await requestFile({
         method: 'GET',
         url: 'api/v1/admin/zones/export',
+        params: filterParameters(query),
         responseType: 'blob',
         headers: { Accept: 'text/csv' },
       })

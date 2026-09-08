@@ -63,6 +63,7 @@ class StubContentManagementService implements ContentManagementService {
   banners: BannerRecord[] = []
   hints: PriorityHintRecord[] = []
   contentQueries: ContentServerQuery[] = []
+  exportQueries: ContentServerQuery[] = []
   bannerQueries: BannerServerQuery[] = []
   hintQueries: PriorityHintServerQuery[] = []
   detailReads: string[] = []
@@ -216,7 +217,7 @@ class StubContentManagementService implements ContentManagementService {
     return this.contents.filter(item => item.type === type).map(item => ({ id: item.id, code: item.code, type, title: item.title, valid: true, description: '可引用' }))
   }
 
-  async exportContents(): Promise<ContentExportFile> { return { content: new Blob(['csv']), filename: 'contents.csv' } }
+  async exportContents(query: ContentServerQuery): Promise<ContentExportFile> { this.exportQueries.push({ ...query }); return { content: new Blob(['csv']), filename: 'contents.csv' } }
 }
 
 describe('content management store', () => {
@@ -242,12 +243,12 @@ describe('content management store', () => {
     expect(store.newsRecords.map(item => item.id)).toEqual(['2', '3'])
     expect(store.selectableReferences.some(item => item.id === '99')).toBe(true)
     expect(service.contentQueries.filter(query => Array.isArray(query.contentType))).toEqual([
-      { keyword: '', contentType: ['news', 'notice'], publishStatus: 'all' },
+      { keyword: '', contentType: ['news', 'notice'], publishStatus: 'all', enabled: 'all', pinned: 'all' },
     ])
     expect(service.referenceReads).toEqual(['activity', 'news', 'notice', 'traffic-control'])
 
     await store.setNewsQuery({ type: 'notice', publishStatus: 'draft', pinned: 'all', enabled: 'disabled', title: '接驳' })
-    expect(service.contentQueries.at(-1)).toEqual({ keyword: '接驳', contentType: 'notice', publishStatus: 'draft' })
+    expect(service.contentQueries.at(-1)).toEqual({ keyword: '接驳', contentType: 'notice', publishStatus: 'draft', enabled: 'disabled', pinned: 'all' })
     expect(store.newsRecords.map(item => item.id)).toEqual(['3'])
   })
 
@@ -306,8 +307,21 @@ describe('content management store', () => {
     expect(store.bannerRecords[0]?.displayEnabled).toBe(false)
     expect(await store.setPriorityHintEnabled('1', false)).toBe(true)
     expect(store.priorityHintRecords[0]?.displayEnabled).toBe(false)
-    await expect(store.exportContents()).resolves.toMatchObject({ filename: 'contents.csv' })
+    await expect(store.exportContents('news')).resolves.toMatchObject({ filename: 'contents.csv' })
     expect(store.isExporting).toBe(false)
+  })
+
+  it('exports the active content tab using the same filters as its list', async () => {
+    const store = createContentManagementStore(service, 'content-export-filters')()
+    await store.setActivityQuery({ title: '赛事', publishStatus: 'published', activityStatus: 'not-started', enabled: 'disabled', pinned: 'not-pinned' })
+    await store.exportContents('activity')
+    expect(service.exportQueries.at(-1)).toEqual(service.contentQueries.at(-1))
+    expect(service.exportQueries.at(-1)).toMatchObject({ contentType: 'activity', activityStatus: 'not-started', enabled: 'disabled', pinned: 'not-pinned' })
+    await store.setNewsQuery({ title: '通知', type: 'all', publishStatus: 'draft', enabled: 'enabled', pinned: 'pinned' })
+    await store.exportContents('news')
+    expect(service.exportQueries.at(-1)).toEqual(service.contentQueries.at(-1))
+    expect(service.exportQueries.at(-1)).toMatchObject({ contentType: ['news', 'notice'], keyword: '通知' })
+    expect(service.exportQueries.at(-1)).not.toHaveProperty('activityStatus')
   })
 
   it('does no local reference pre-check and preserves the backend delete reason after refresh', async () => {

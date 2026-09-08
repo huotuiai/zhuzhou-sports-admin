@@ -75,12 +75,13 @@ interface ApiUserCreateRequest {
   mobile?: string
   role_ids: number[]
   dept_ids: number[]
+  status: 0 | 1 | 2
 }
 
 interface ApiUserUpdateRequest {
   display_name?: string
   mobile?: string
-  status?: 0 | 1
+  status?: 0 | 1 | 2
   role_ids?: number[]
   dept_ids?: number[]
 }
@@ -157,8 +158,8 @@ function userStatus(value: unknown): UserStatus {
   return 'enabled'
 }
 
-function apiStatus(value: Exclude<UserStatus, 'locked'>): 0 | 1 {
-  return value === 'enabled' ? 1 : 0
+function apiStatus(value: UserStatus): 0 | 1 | 2 {
+  return value === 'enabled' ? 1 : value === 'disabled' ? 0 : 2
 }
 
 export function mapApiUser(value: ApiUserVO): SystemUser {
@@ -274,6 +275,7 @@ export function createUserManagementService(
         display_name: input.name.trim().normalize('NFKC'),
         role_ids: input.roleIds.map(bodyId),
         dept_ids: input.departmentIds.map(bodyId),
+        status: apiStatus(input.status),
         ...(input.phone.trim() ? { mobile: input.phone.trim() } : {}),
       }
       return mapApiUser(await request<ApiUserVO, ApiUserCreateRequest>({ method: 'POST', url: 'api/v1/admin/users', data }))
@@ -285,7 +287,7 @@ export function createUserManagementService(
         mobile: input.phone.trim(),
         role_ids: input.roleIds.map(bodyId),
         dept_ids: input.departmentIds.map(bodyId),
-        ...(options?.includeStatus === false || input.status === 'locked' ? {} : { status: apiStatus(input.status) }),
+        ...(options?.includeStatus === false ? {} : { status: apiStatus(input.status) }),
       }
       return mapApiUser(await request<ApiUserVO, ApiUserUpdateRequest>({ method: 'PATCH', url: endpoint('api/v1/admin/users', id), data }))
     },

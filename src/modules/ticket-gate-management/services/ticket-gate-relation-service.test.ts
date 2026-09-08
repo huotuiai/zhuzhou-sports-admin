@@ -30,14 +30,12 @@ describe('LocalTicketGateRelationService', () => {
     expect(await service.listSeatZoneBindings()).toHaveLength(2)
   })
 
-  it('persists, deduplicates and cleans parking and shuttle relations', async () => {
+  it('persists and cleans parking and shuttle relations', async () => {
     const storage = new MemoryStorage()
     let id = 0
     const service = new LocalTicketGateRelationService({ storage, createId: () => `rel-${++id}`, now: () => new Date('2026-08-14T00:00:00.000Z') })
     const parking = await service.bindParking({ gateId: 'gate-1', parkingLotId: 'parking-1', walkingMinutes: null })
-    await expect(service.bindParking({ gateId: 'gate-1', parkingLotId: 'parking-1', walkingMinutes: 5 })).rejects.toThrow('已绑定')
     const shuttle = await service.bindShuttle({ gateId: 'gate-1', shuttlePointId: 'line-1', stationId: 'station-1', direction: 'entry', walkingMinutes: 3 })
-    await expect(service.bindShuttle({ gateId: 'gate-1', shuttlePointId: 'line-1', stationId: 'station-1', direction: 'entry', walkingMinutes: 4 })).rejects.toThrow('已绑定')
     expect((await service.listRelations('gate-1')).parkingRelations).toHaveLength(1)
     await service.unbindParking(parking.id)
     await service.unbindShuttle(shuttle.id)

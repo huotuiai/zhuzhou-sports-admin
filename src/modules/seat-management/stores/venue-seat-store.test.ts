@@ -1,5 +1,5 @@
 import type { BackendCsvExportFile } from '@/lib/http'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type {
   SeatFloor,
@@ -54,11 +54,13 @@ const gates: SeatGateOption[] = [
 
 class FakeService implements SeatPlanningService {
   readonly listZoneCalls: Array<[number, number]> = []
+  readonly listZoneQueries: SeatPlanningQuery[] = []
   readonly createZoneInputs: SeatZoneWriteInput[] = []
   readonly updateZoneInputs: Array<{ id: string, input: SeatZoneWriteInput }> = []
   readonly detailCalls: string[] = []
   readonly importCsvInputs: string[] = []
   exportCalls = 0
+  exportQueries: SeatPlanningQuery[] = []
   failNextZoneList = false
   failExport = false
   failImport = false
@@ -103,16 +105,23 @@ class FakeService implements SeatPlanningService {
     this.floors = this.floors.filter(item => item.id !== id)
   }
 
-  async listZones(page: number, pageSize: number): Promise<SeatZonePage> {
+  async listZones(page: number, pageSize: number, filters = query()): Promise<SeatZonePage> {
     this.listZoneCalls.push([page, pageSize])
+    this.listZoneQueries.push({ ...filters, gateIds: [...filters.gateIds] })
     if (this.failNextZoneList) {
       this.failNextZoneList = false
       throw new Error('分区列表加载失败')
     }
+    const matches = this.zones.filter(item =>
+      (!filters.keyword || item.code.includes(filters.keyword) || item.name.includes(filters.keyword)) &&
+      (filters.floorId === 'all' || item.floorId === filters.floorId) &&
+      (filters.status === 'all' || item.status === filters.status) &&
+      (!filters.gateIds.length || item.gateIds.some(id => filters.gateIds.includes(id))),
+    ).sort((first, second) => first.sortOrder - second.sortOrder)
     const start = (page - 1) * pageSize
     return {
-      zones: this.zones.slice(start, start + pageSize).map(cloneZone),
-      total: this.zones.length,
+      zones: matches.slice(start, start + pageSize).map(cloneZone),
+      total: matches.length,
       page,
       pageSize,
     }
@@ -164,8 +173,9 @@ class FakeService implements SeatPlanningService {
     this.zones = this.zones.filter(item => item.id !== id)
   }
 
-  async exportCsv(): Promise<BackendCsvExportFile> {
+  async exportCsv(query: SeatPlanningQuery): Promise<BackendCsvExportFile> {
     this.exportCalls += 1
+    this.exportQueries.push({ ...query, gateIds: [...query.gateIds] })
     if (this.failExport) throw new Error('分区导出失败')
     if (this.exportPromise) return this.exportPromise
     return {
@@ -206,31 +216,65 @@ function zoneInput(overrides: Partial<SeatZoneWriteInput> = {}): SeatZoneWriteIn
 describe('seat planning store', () => {
   beforeEach(() => setActivePinia(createPinia()))
 
-  it('loads every server page, sorts globally and filters multiple gates with OR semantics', async () => {
+  it('requests only the selected server page and forwards all filters through pagination and reset', async () => {
     const service = new FakeService()
     const useStore = createSeatPlanningStore(service, `seat-planning-${Math.random()}`)
     const store = useStore()
 
     expect(await store.initialize()).toBe(true)
-    expect(service.listZoneCalls).toEqual(Array.from({ length: 7 }, (_, index) => [index + 1, 20]))
-    expect(store.zones).toHaveLength(125)
+    expect(service.listZoneCalls).toEqual([[1, 20]])
+    expect(service.listZoneQueries).toEqual([query()])
+    expect(store.zones).toHaveLength(20)
     expect(store.zones[0]?.id).toBe('zone-1')
     expect(store.total).toBe(125)
-    expect(store.paginatedZones).toHaveLength(20)
+    expect(store.totalZoneCount('floor-1')).toBe(60)
+    expect(store.totalZoneCount('floor-2')).toBe(65)
 
     await store.queryZones(query({ gateIds: ['gate-1'] }))
-    expect(store.filteredZones.every(item => item.gateIds.includes('gate-1'))).toBe(true)
+    expect(service.listZoneQueries.at(-1)).toEqual(query({ gateIds: ['gate-1'] }))
+    expect(store.total).toBe(63)
+    expect(await store.setPage(2)).toBe(true)
+    expect(service.listZoneCalls.at(-1)).toEqual([2, 20])
+    expect(service.listZoneQueries.at(-1)).toEqual(query({ gateIds: ['gate-1'] }))
+    expect(store.zones[0]?.id).toBe('zone-41')
+    expect(store.zones).toHaveLength(20)
+    expect(store.currentPage).toBe(2)
     await store.queryZones(query({ gateIds: ['gate-1', 'gate-2'] }))
+    expect(service.listZoneQueries.at(-1)).toEqual(query({ gateIds: ['gate-1', 'gate-2'] }))
+    expect(store.currentPage).toBe(1)
     expect(store.total).toBe(125)
-    await store.queryZones(query({ keyword: '东看台', floorId: 'floor-1', status: 'enabled' }))
-    expect(store.filteredZones.every(item =>
-      item.name.includes('东看台') && item.floorId === 'floor-1' && item.status === 'enabled',
-    )).toBe(true)
+    const filters = query({ keyword: '东看台', floorId: 'floor-1', status: 'enabled', gateIds: ['gate-1', 'gate-2'] })
+    await store.queryZones({ ...filters, keyword: ' 东看台 ' })
+    expect(service.listZoneQueries.at(-1)).toEqual(filters)
+    expect(store.total).toBe(20)
 
     expect(await store.setPageSize(50)).toBe(true)
     expect(store.pageSize).toBe(50)
     expect(store.currentPage).toBe(1)
-    expect(service.listZoneCalls.slice(-3)).toEqual([[1, 50], [2, 50], [3, 50]])
+    expect(service.listZoneQueries.at(-1)).toEqual(filters)
+    expect(service.listZoneCalls).toEqual([[1, 20], [1, 20], [2, 20], [1, 20], [1, 20], [1, 50]])
+    expect(await store.resetQuery()).toBe(true)
+    expect(service.listZoneCalls.at(-1)).toEqual([1, 50])
+    expect(service.listZoneQueries.at(-1)).toEqual(query())
+    expect(store.zones).toHaveLength(50)
+    expect(store.total).toBe(125)
+  })
+
+  it('displays the backend page and total without applying local filtering or sorting', async () => {
+    const service = new FakeService()
+    const store = createSeatPlanningStore(service, 'seat-server-authority')()
+    await store.initialize()
+    const backendPage = { zones: [zone(42), zone(1)], total: 82, page: 1, pageSize: 20 }
+    vi.spyOn(service, 'listZones').mockResolvedValue(backendPage)
+
+    await store.queryZones(query({ keyword: '后端别名查询', floorId: 'floor-2', status: 'disabled', gateIds: ['gate-3'] }))
+
+    expect(store.zones).toEqual(backendPage.zones)
+    expect(store.total).toBe(82)
+    expect(store.pageCount).toBe(5)
+    await store.getZone('zone-125')
+    expect(store.zones).toEqual(backendPage.zones)
+    expect(store.total).toBe(82)
   })
 
   it('refreshes changed gate options on re-entry while preserving filters and the current page', async () => {
@@ -239,7 +283,7 @@ describe('seat planning store', () => {
     const store = useStore()
     await store.initialize()
     await store.queryZones(query({ keyword: '看台', gateIds: ['gate-1'] }))
-    store.setPage(2)
+    await store.setPage(2)
 
     service.gateOptions = [
       { ...service.gateOptions[0]!, openStatus: 'closed', matchOpen: false },
@@ -255,7 +299,7 @@ describe('seat planning store', () => {
     expect(store.gateById.get('gate-1')).toMatchObject({ openStatus: 'closed', matchOpen: false })
     expect(store.query).toEqual(query({ keyword: '看台', gateIds: ['gate-1'] }))
     expect(store.page).toBe(2)
-    expect(service.listZoneCalls.slice(-7)).toEqual(Array.from({ length: 7 }, (_, index) => [index + 1, 20]))
+    expect(service.listZoneCalls).toEqual([[1, 20], [1, 20], [2, 20], [2, 20], [2, 20]])
   })
 
   it('uses detail and CRUD APIs while preserving immutable codes and authoritative floor counts', async () => {
@@ -286,18 +330,109 @@ describe('seat planning store', () => {
     expect(await store.removeFloor(floor!.id)).toBe(true)
   })
 
-  it('retains the current list and applied filters when a server refresh fails', async () => {
-    const service = new FakeService(4)
+  it('submits existing floor names and zone codes and surfaces backend conflicts', async () => {
+    const service = new FakeService(2)
+    const store = createSeatPlanningStore(service, 'seat-planning-conflicts')()
+    await store.initialize()
+    const createFloor = vi.spyOn(service, 'createFloor').mockRejectedValue(new Error('接口返回：楼层名称冲突'))
+    const createZone = vi.spyOn(service, 'createZone').mockRejectedValue(new Error('接口返回：分区编号冲突'))
+    const updateZone = vi.spyOn(service, 'updateZone').mockRejectedValue(new Error('接口返回：分区更新冲突'))
+
+    expect(await store.createFloor({ name: '一层' })).toBeNull()
+    expect(createFloor).toHaveBeenCalledTimes(1)
+    expect(store.error).toBe('接口返回：楼层名称冲突')
+    expect(await store.createZone(zoneInput({ code: 'A-001' }))).toBeNull()
+    expect(createZone).toHaveBeenCalledTimes(1)
+    expect(store.error).toBe('接口返回：分区编号冲突')
+    expect(await store.updateZone('zone-2', zoneInput({ code: 'A-001' }))).toBeNull()
+    expect(updateZone).toHaveBeenCalledTimes(1)
+    expect(store.error).toBe('接口返回：分区更新冲突')
+    expect(store.isSaving).toBe(false)
+    expect(store.zones).toHaveLength(2)
+  })
+
+  it('retains the current list, applied filters and pagination when a request fails', async () => {
+    const service = new FakeService()
     const useStore = createSeatPlanningStore(service, `seat-planning-${Math.random()}`)
     const store = useStore()
     await store.initialize()
+    const filters = query({ gateIds: ['gate-1'] })
+    await store.queryZones(filters)
+    await store.setPage(2)
     const beforeIds = store.zones.map(item => item.id)
 
-    service.failNextZoneList = true
-    expect(await store.queryZones(query({ keyword: '东看台' }))).toBe(false)
-    expect(store.zones.map(item => item.id)).toEqual(beforeIds)
-    expect(store.query.keyword).toBe('')
-    expect(store.error).toBe('分区列表加载失败')
+    for (const request of [
+      () => store.queryZones(query({ keyword: '东看台' })),
+      () => store.setPage(3),
+      () => store.setPageSize(50),
+    ]) {
+      service.failNextZoneList = true
+      expect(await request()).toBe(false)
+      expect(store.zones.map(item => item.id)).toEqual(beforeIds)
+      expect(store.query).toEqual(filters)
+      expect(store.page).toBe(2)
+      expect(store.pageSize).toBe(20)
+      expect(store.total).toBe(63)
+      expect(store.isLoading).toBe(false)
+      expect(store.error).toBe('分区列表加载失败')
+    }
+  })
+
+  it('ignores an older response that finishes after a newer query', async () => {
+    const service = new FakeService()
+    const store = createSeatPlanningStore(service, 'seat-query-race')()
+    await store.initialize()
+    let finishOlder!: (result: SeatZonePage) => void
+    vi.spyOn(service, 'listZones').mockImplementationOnce(() => new Promise(resolve => { finishOlder = resolve }))
+    const olderQuery = store.queryZones(query({ keyword: '东看台' }))
+    expect(store.isLoading).toBe(true)
+    await store.queryZones(query({ keyword: '西看台' }))
+    const newerZones = store.zones.map(item => item.id)
+    finishOlder({ zones: [zone(1)], total: 1, page: 1, pageSize: 20 })
+    await olderQuery
+
+    expect(store.query.keyword).toBe('西看台')
+    expect(store.zones.map(item => item.id)).toEqual(newerZones)
+    expect(store.total).toBe(62)
+    expect(store.isLoading).toBe(false)
+    expect(store.error).toBeNull()
+  })
+
+  it('refetches the last valid server page after deleting the only record on the final page', async () => {
+    const service = new FakeService(63)
+    const store = createSeatPlanningStore(service, 'seat-delete-last-page')()
+    await store.initialize()
+    const filters = query({ status: 'disabled' })
+    await store.queryZones(filters)
+    await store.setPage(2)
+    expect(store.zones.map(item => item.id)).toEqual(['zone-63'])
+    expect(store.total).toBe(21)
+
+    expect(await store.removeZone('zone-63')).toBe(true)
+
+    expect(service.listZoneCalls.slice(-2)).toEqual([[2, 20], [1, 20]])
+    expect(service.listZoneQueries.slice(-2)).toEqual([filters, filters])
+    expect(store.currentPage).toBe(1)
+    expect(store.zones).toHaveLength(20)
+    expect(store.total).toBe(20)
+    expect(store.totalZoneCount('floor-2')).toBe(2)
+  })
+
+  it('refreshes the filtered page after writes without inserting nonmatching records', async () => {
+    const service = new FakeService(4)
+    const store = createSeatPlanningStore(service, 'seat-write-filter')()
+    await store.initialize()
+    const filters = query({ status: 'disabled' })
+    await store.queryZones(filters)
+    expect(store.zones.map(item => item.id)).toEqual(['zone-3'])
+
+    expect(await store.updateStatus('zone-3', 'enabled')).toMatchObject({ status: 'enabled' })
+    expect(store.zones).toEqual([])
+    expect(store.total).toBe(0)
+    expect(await store.createZone(zoneInput())).not.toBeNull()
+    expect(store.zones).toEqual([])
+    expect(store.total).toBe(0)
+    expect(service.listZoneQueries.slice(-2)).toEqual([filters, filters])
   })
 
   it('exports once while a download is in flight and exposes export failures', async () => {
@@ -306,11 +441,14 @@ describe('seat planning store', () => {
     service.exportPromise = new Promise(resolve => { finishExport = resolve })
     const useStore = createSeatPlanningStore(service, `seat-export-${Math.random()}`)
     const store = useStore()
+    await store.initialize()
+    await store.queryZones(query({ keyword: ' 西 ', floorId: 'floor-1', status: 'disabled', gateIds: ['gate-2'] }))
 
     const first = store.exportCsv()
     expect(store.isExporting).toBe(true)
     await expect(store.exportCsv()).resolves.toBeNull()
     expect(service.exportCalls).toBe(1)
+    expect(service.exportQueries).toEqual([query({ keyword: '西', floorId: 'floor-1', status: 'disabled', gateIds: ['gate-2'] })])
     finishExport({
       content: new Blob(['csv']), filename: 'seat_zones.csv', truncated: false, count: null, total: null,
     })

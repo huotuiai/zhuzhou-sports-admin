@@ -83,7 +83,7 @@ export type TicketGateValidationField = keyof TicketGateWriteInput
 
 export interface TicketGateValidationIssue {
   field: TicketGateValidationField
-  code: 'required' | 'duplicate' | 'invalid' | 'positive_integer'
+  code: 'required' | 'invalid' | 'positive_integer'
   message: string
 }
 

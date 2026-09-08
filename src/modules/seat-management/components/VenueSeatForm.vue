@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { SeatFloor, SeatGateOption, SeatZone, SeatZoneValidationIssue, SeatZoneWriteInput } from '../types'
+import type { SeatFloor, SeatGateOption, SeatZoneValidationIssue, SeatZoneWriteInput } from '../types'
 import { AlertTriangle, Ban, CircleCheck, ShieldAlert } from '@lucide/vue'
 import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import { Badge } from '@/components/ui/badge'
@@ -18,7 +18,6 @@ const props = withDefaults(defineProps<{
   mode: 'create' | 'edit'
   value: SeatZoneWriteInput
   floors: readonly SeatFloor[]
-  zones: readonly SeatZone[]
   ticketGates: readonly SeatGateOption[]
   editingId?: string
   issues?: readonly SeatZoneValidationIssue[]
@@ -35,7 +34,7 @@ const touched = reactive<Record<Field, boolean>>({
 
 const allIssues = computed(() => {
   const issues = [...props.issues]
-  for (const issue of validateSeatZoneInput(props.value, props.zones, props.floors, props.ticketGates, props.editingId).issues) {
+  for (const issue of validateSeatZoneInput(props.value, props.floors, props.ticketGates).issues) {
     if (!issues.some((item) => item.field === issue.field)) issues.push(issue)
   }
   return issues

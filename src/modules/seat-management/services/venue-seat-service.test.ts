@@ -81,10 +81,10 @@ describe('seat planning API mapping and validation', () => {
   })
 
   it('keeps the prototype required-field and range business validation', () => {
-    expect(validateSeatFloorInput({ name: ' 一层 ' }, floors).issues[0]?.code).toBe('duplicate')
+    expect(validateSeatFloorInput({ name: ' ' }).issues[0]?.code).toBe('required')
     const result = validateSeatZoneInput(zoneInput({
       code: '!', floorId: 'missing', rowStart: 0, rowEnd: 0, sortOrder: 0, gateIds: [],
-    }), [], floors, [{ id: '21' }])
+    }), floors, [{ id: '21' }])
     expect(result.issues.map(item => item.field)).toEqual([
       'code', 'floorId', 'rowStart', 'rowEnd', 'sortOrder', 'gateIds',
     ])
@@ -93,7 +93,6 @@ describe('seat planning API mapping and validation', () => {
   it('accepts a single-character numeric zone code without padding it', () => {
     const result = validateSeatZoneInput(
       zoneInput({ code: ' 1 ' }),
-      [],
       floors,
       [{ id: '21' }, { id: '22' }],
     )
@@ -168,10 +167,12 @@ describe('seat planning API service', () => {
         headers: { 'content-disposition': "attachment; filename*=UTF-8''seat%20zones.csv" },
       } as unknown as AxiosResponse<Blob>
     }
-    const { configs, request } = queuedRequester([{ imported: '3' }])
+    const { configs, request } = queuedRequester([{ list: [], total: 0, page: 2, page_size: 20 }, { imported: '3' }])
     const service = createSeatPlanningService(request, requestFile)
+    const query = { keyword: ' A 区 ', floorId: '11', status: 'disabled' as const, gateIds: ['21', '22'] }
+    await service.listZones(2, 20, query)
 
-    await expect(service.exportCsv()).resolves.toMatchObject({
+    await expect(service.exportCsv(query)).resolves.toMatchObject({
       content: blob,
       filename: 'seat zones.csv',
     })
@@ -179,10 +180,12 @@ describe('seat planning API service', () => {
     expect(fileConfig).toEqual({
       method: 'GET',
       url: 'api/v1/admin/zones/export',
+      params: { keyword: 'A 区', floor_id: '11', gate_ids: '21,22', status: 0 },
       responseType: 'blob',
       headers: { Accept: 'text/csv' },
     })
-    expect(configs[0]).toMatchObject({
+    expect(configs[0]?.params).toEqual({ page: 2, page_size: 20, ...fileConfig!.params })
+    expect(configs[1]).toMatchObject({
       method: 'POST',
       url: 'api/v1/admin/zones/import',
       data: { csv: '\uFEFF编号,名称\nA-01,A 区' },

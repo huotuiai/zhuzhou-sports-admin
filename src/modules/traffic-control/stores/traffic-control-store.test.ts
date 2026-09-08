@@ -61,6 +61,7 @@ class StubTrafficControlService implements TrafficControlService {
   records: TrafficControl[] = []
   details = new Map<string, TrafficControl>()
   listQueries: TrafficControlServerQuery[] = []
+  exportQueries: TrafficControlServerQuery[] = []
   detailReads: string[] = []
   updateInputs: Array<{ id: string, input: TrafficControlWriteInput }> = []
   failDelete: Error | null = null
@@ -119,7 +120,7 @@ class StubTrafficControlService implements TrafficControlService {
     return structuredClone(item)
   }
 
-  async export(): Promise<TrafficControlExportFile> { return this.exportFile }
+  async export(query: TrafficControlServerQuery): Promise<TrafficControlExportFile> { this.exportQueries.push({ ...query }); return this.exportFile }
 }
 
 describe('traffic control store', () => {
@@ -147,7 +148,7 @@ describe('traffic control store', () => {
     const store = createTrafficControlStore(service, () => currentTime, 'traffic-filter')()
     await store.load()
     await store.setQuery({ keyword: '南门', type: 'detour', publishStatus: 'published', timeStatus: 'upcoming', dateStart: '2026-08-21', dateEnd: '2026-08-22' })
-    expect(service.listQueries.at(-1)).toEqual({ keyword: '南门', type: 'detour', publishStatus: 'published' })
+    expect(service.listQueries.at(-1)).toEqual({ keyword: '南门', type: 'detour', publishStatus: 'published', timeStatus: 'upcoming', dateStart: '2026-08-21', dateEnd: '2026-08-22' })
     expect(store.filteredRecords.map(item => item.id)).toEqual(['GZ-002'])
     await store.setQuery({ keyword: '', type: 'all', timeStatus: 'ended', dateStart: '', dateEnd: '' })
     expect(store.filteredRecords.map(item => item.id)).toEqual(['GZ-003'])
@@ -216,9 +217,11 @@ describe('traffic control store', () => {
 
   it('returns the raw server export file and exposes export failures', async () => {
     const store = createTrafficControlStore(service, () => currentTime, 'traffic-export')()
-    await expect(store.exportAll()).resolves.toBe(service.exportFile)
+    await store.setQuery({ keyword: '东门', type: 'restriction', publishStatus: 'published', timeStatus: 'ended', dateStart: '2026-08-01', dateEnd: '2026-08-31' })
+    await expect(store.exportCurrent()).resolves.toBe(service.exportFile)
+    expect(service.exportQueries).toEqual([service.listQueries.at(-1)])
     service.export = async () => { throw new Error('导出接口不可用') }
-    await expect(store.exportAll()).resolves.toBeNull()
+    await expect(store.exportCurrent()).resolves.toBeNull()
     expect(store.error).toBe('导出接口不可用')
   })
 })

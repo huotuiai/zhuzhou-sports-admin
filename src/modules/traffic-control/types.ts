@@ -53,6 +53,7 @@ export interface TrafficControlQuery {
 }
 
 export type TrafficControlServerQuery = Pick<TrafficControlQuery, 'keyword' | 'type' | 'publishStatus'>
+  & Partial<Pick<TrafficControlQuery, 'timeStatus' | 'dateStart' | 'dateEnd'>>
 
 export interface TrafficControlPage {
   records: TrafficControl[]
@@ -88,7 +89,7 @@ export interface TrafficControlService {
   remove(id: string): Promise<void>
   publish(id: string): Promise<TrafficControl>
   revoke(id: string): Promise<TrafficControl>
-  export(): Promise<TrafficControlExportFile>
+  export(query: TrafficControlServerQuery): Promise<TrafficControlExportFile>
 }
 
 export const TRAFFIC_CONTROL_TYPES: readonly {

@@ -19,7 +19,6 @@ import {
   sanitizeSeatZoneInput,
   seatPlanningService,
   sortSeatFloors,
-  sortSeatZones,
   validateSeatFloorInput,
   validateSeatZoneInput,
 } from '../services/venue-seat-service'
@@ -72,6 +71,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
     const query = reactive<SeatPlanningQuery>({ ...DEFAULT_SEAT_PLANNING_QUERY, gateIds: [] })
     const page = ref(1)
     const pageSize = ref(PAGE_SIZE)
+    const total = ref(0)
     const initialized = ref(false)
     const isLoading = ref(false)
     const isSaving = ref(false)
@@ -82,80 +82,62 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
     const detailLoadingId = ref<string | null>(null)
     const error = ref<string | null>(null)
     let initializePromise: Promise<boolean> | null = null
+    let pageRequestSequence = 0
 
     const gateById = computed(() => new Map(ticketGates.value.map(item => [item.id, item])))
-    const filteredZones = computed(() => {
-      const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
-      const selectedGateIds = new Set(query.gateIds)
-      return zones.value.filter((item) => {
-        if (keyword && ![item.code, item.name].some(value => value.normalize('NFKC').toLocaleLowerCase('zh-CN').includes(keyword))) return false
-        if (query.floorId !== 'all' && item.floorId !== query.floorId) return false
-        if (query.status !== 'all' && item.status !== query.status) return false
-        if (selectedGateIds.size && !item.gateIds.some(id => selectedGateIds.has(id))) return false
-        return true
-      })
-    })
-    const total = computed(() => filteredZones.value.length)
     const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
     const currentPage = computed(() => Math.min(Math.max(page.value, 1), pageCount.value))
-    const paginatedZones = computed(() => {
-      const start = (currentPage.value - 1) * pageSize.value
-      return filteredZones.value.slice(start, start + pageSize.value)
-    })
-
-    async function fetchAllZones(): Promise<SeatZone[]> {
-      const requestPageSize = Math.max(1, pageSize.value)
-      const first = await service.listZones(1, requestPageSize)
-      const records = [...first.zones]
-      const pages = Math.ceil(first.total / Math.max(1, first.pageSize))
-      for (let nextPage = 2; nextPage <= pages; nextPage += 1) {
-        const result = await service.listZones(nextPage, requestPageSize)
-        records.push(...result.zones)
-      }
-      const unique = new Map(records.map(item => [item.id, item]))
-      return sortSeatZones([...unique.values()], floors.value)
-    }
 
     function applyFloors(value: readonly SeatFloor[]): void {
       floors.value = sortSeatFloors(value)
-      zones.value = sortSeatZones(zones.value, floors.value)
-    }
-
-    function applyZones(value: readonly SeatZone[]): void {
-      zones.value = sortSeatZones(value, floors.value)
-      page.value = Math.min(page.value, pageCount.value)
     }
 
     function applyTicketGates(value: readonly SeatGateOption[]): void {
       ticketGates.value = value.map(cloneGate)
     }
 
-    async function loadBundle(): Promise<void> {
-      const [nextFloors, nextGates, nextZones] = await Promise.all([
-        service.listFloors(),
-        service.listGateOptions(),
-        fetchAllZones(),
-      ])
-      applyFloors(nextFloors)
-      applyZones(nextZones)
-      applyTicketGates(nextGates)
+    async function loadPage(nextQuery: SeatPlanningQuery, nextPage: number, nextPageSize: number, refreshOptions = false): Promise<boolean> {
+      const requestId = ++pageRequestSequence
+      const appliedQuery = normalizedQuery(nextQuery)
+      isLoading.value = true
+      error.value = null
+      try {
+        const [result, nextFloors, nextGates] = await Promise.all([
+          service.listZones(nextPage, nextPageSize, appliedQuery),
+          refreshOptions ? service.listFloors() : null,
+          refreshOptions ? service.listGateOptions() : null,
+        ])
+        if (requestId !== pageRequestSequence) return true
+        // 删除末页记录后，按后端总数回退到仍然存在的最后一页。
+        const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize))
+        const next = result.page > lastPage
+          ? await service.listZones(lastPage, nextPageSize, appliedQuery)
+          : result
+        if (requestId !== pageRequestSequence) return true
+        if (nextFloors) applyFloors(nextFloors)
+        if (nextGates) applyTicketGates(nextGates)
+        zones.value = next.zones
+        total.value = next.total
+        page.value = next.page
+        pageSize.value = next.pageSize
+        Object.assign(query, appliedQuery)
+        if (refreshOptions) initialized.value = true
+        return true
+      }
+      catch (cause) {
+        if (requestId !== pageRequestSequence) return true
+        error.value = message(cause)
+        return false
+      }
+      finally {
+        if (requestId === pageRequestSequence) isLoading.value = false
+      }
     }
 
     async function refresh(): Promise<boolean> {
       if (initializePromise) return initializePromise
-      isLoading.value = true
-      error.value = null
-      initializePromise = loadBundle()
-        .then(() => {
-          initialized.value = true
-          return true
-        })
-        .catch((cause: unknown) => {
-          error.value = message(cause)
-          return false
-        })
+      initializePromise = loadPage(query, page.value, pageSize.value, true)
         .finally(() => {
-          isLoading.value = false
           initializePromise = null
         })
       return initializePromise
@@ -167,57 +149,30 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
     }
 
     async function queryZones(nextQuery: SeatPlanningQuery): Promise<boolean> {
-      isLoading.value = true
-      error.value = null
-      try {
-        applyZones(await fetchAllZones())
-        Object.assign(query, normalizedQuery(nextQuery))
-        page.value = 1
-        return true
-      }
-      catch (cause) {
-        error.value = message(cause)
-        return false
-      }
-      finally {
-        isLoading.value = false
-      }
+      return loadPage(nextQuery, 1, pageSize.value)
     }
 
     async function resetQuery(): Promise<boolean> {
       return queryZones({ ...DEFAULT_SEAT_PLANNING_QUERY, gateIds: [] })
     }
 
-    function setPage(value: number): void {
-      if (Number.isFinite(value)) page.value = Math.min(Math.max(Math.trunc(value), 1), pageCount.value)
+    async function setPage(value: number): Promise<boolean> {
+      if (!Number.isFinite(value)) return false
+      return loadPage(query, Math.min(Math.max(Math.trunc(value), 1), pageCount.value), pageSize.value)
     }
 
     async function setPageSize(value: number): Promise<boolean> {
       const next = Math.trunc(Number(value))
-      if (!Number.isInteger(next) || next <= 0) return false
-      pageSize.value = next
-      page.value = 1
-      isLoading.value = true
-      error.value = null
-      try {
-        applyZones(await fetchAllZones())
-        return true
-      }
-      catch (cause) {
-        error.value = message(cause)
-        return false
-      }
-      finally {
-        isLoading.value = false
-      }
+      if (!Number.isInteger(next) || next <= 0 || next > 100) return false
+      return loadPage(query, 1, next)
     }
 
     function validateFloor(input: SeatFloorWriteInput): SeatFloorValidationResult {
-      return validateSeatFloorInput(input, floors.value)
+      return validateSeatFloorInput(input)
     }
 
-    function validateZone(input: SeatZoneWriteInput, excludedId?: string): SeatZoneValidationResult {
-      return validateSeatZoneInput(input, zones.value, floors.value, ticketGates.value, excludedId)
+    function validateZone(input: SeatZoneWriteInput): SeatZoneValidationResult {
+      return validateSeatZoneInput(input, floors.value, ticketGates.value)
     }
 
     function zoneGateIds(zoneCode: string): string[] {
@@ -226,26 +181,13 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
         .sort((first, second) => (gateById.value.get(first)?.code ?? first).localeCompare(gateById.value.get(second)?.code ?? second, 'zh-CN', { numeric: true }))
     }
 
-    function matchingZoneCount(floorId: string): number {
-      return filteredZones.value.filter(item => item.floorId === floorId).length
-    }
-
     function totalZoneCount(floorId: string): number {
-      return floors.value.find(item => item.id === floorId)?.zoneCount ?? zones.value.filter(item => item.floorId === floorId).length
+      return floors.value.find(item => item.id === floorId)?.zoneCount ?? 0
     }
 
-    function nextSortOrder(floorId: string): number {
-      return zones.value.filter(item => item.floorId === floorId).reduce((maximum, item) => Math.max(maximum, item.sortOrder), 0) + 1
-    }
-
-    async function refreshAfterZoneMutation(): Promise<void> {
-      try {
-        const [nextFloors, nextZones] = await Promise.all([service.listFloors(), fetchAllZones()])
-        applyFloors(nextFloors)
-        applyZones(nextZones)
-      }
-      catch (cause) {
-        error.value = `操作已成功，但最新列表刷新失败：${message(cause)}`
+    async function refreshAfterZoneMutation(nextPage = page.value): Promise<void> {
+      if (!await loadPage(query, nextPage, pageSize.value, true)) {
+        error.value = `操作已成功，但最新列表刷新失败：${error.value}`
       }
     }
 
@@ -253,9 +195,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       detailLoadingId.value = id
       error.value = null
       try {
-        const zone = await service.getZone(id)
-        applyZones([...zones.value.filter(item => item.id !== id), zone])
-        return zone
+        return await service.getZone(id)
       }
       catch (cause) {
         error.value = message(cause)
@@ -303,7 +243,9 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       try {
         await service.deleteFloor(id)
         applyFloors(floors.value.filter(item => item.id !== id))
-        if (query.floorId === id) Object.assign(query, { ...DEFAULT_SEAT_PLANNING_QUERY, gateIds: [] })
+        if (query.floorId === id && !await resetQuery()) {
+          error.value = `操作已成功，但最新列表刷新失败：${error.value}`
+        }
         return true
       }
       catch (cause) {
@@ -325,8 +267,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       error.value = null
       try {
         const zone = await service.createZone(sanitizeSeatZoneInput(input))
-        applyZones([...zones.value, zone])
-        await refreshAfterZoneMutation()
+        await refreshAfterZoneMutation(1)
         return zone
       }
       catch (cause) {
@@ -339,7 +280,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
     }
 
     async function updateZone(id: string, input: SeatZoneWriteInput): Promise<SeatZone | null> {
-      const validation = validateZone(input, id)
+      const validation = validateZone(input)
       if (!validation.valid) {
         error.value = validation.issues[0]!.message
         return null
@@ -348,7 +289,6 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       error.value = null
       try {
         const zone = await service.updateZone(id, sanitizeSeatZoneInput(input))
-        applyZones([...zones.value.filter(item => item.id !== id), zone])
         await refreshAfterZoneMutation()
         return zone
       }
@@ -371,7 +311,6 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       error.value = null
       try {
         const zone = await service.updateZone(id, toWriteInput(current, status))
-        applyZones([...zones.value.filter(item => item.id !== id), zone])
         await refreshAfterZoneMutation()
         return zone
       }
@@ -394,9 +333,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       error.value = null
       try {
         await service.deleteZone(id)
-        applyZones(zones.value.filter(item => item.id !== id))
         await refreshAfterZoneMutation()
-        page.value = Math.min(page.value, pageCount.value)
         return true
       }
       catch (cause) {
@@ -413,7 +350,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       isExporting.value = true
       error.value = null
       try {
-        return await service.exportCsv()
+        return await service.exportCsv(normalizedQuery(query))
       }
       catch (cause) {
         error.value = message(cause)
@@ -430,11 +367,8 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       error.value = null
       try {
         const result = await service.importCsv(csv)
-        try {
-          await loadBundle()
-        }
-        catch (cause) {
-          error.value = `已成功导入 ${result.imported} 条座位分区，但最新列表刷新失败：${message(cause)}`
+        if (!await loadPage(query, page.value, pageSize.value, true)) {
+          error.value = `已成功导入 ${result.imported} 条座位分区，但最新列表刷新失败：${error.value}`
         }
         return result
       }
@@ -468,11 +402,9 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       changingStatusId,
       detailLoadingId,
       error,
-      filteredZones,
       total,
       pageCount,
       currentPage,
-      paginatedZones,
       initialize,
       refresh,
       queryZones,
@@ -482,9 +414,7 @@ export function createSeatPlanningStore(service: SeatPlanningService, storeId = 
       validateFloor,
       validateZone,
       zoneGateIds,
-      matchingZoneCount,
       totalZoneCount,
-      nextSortOrder,
       getZone,
       createFloor,
       removeFloor,

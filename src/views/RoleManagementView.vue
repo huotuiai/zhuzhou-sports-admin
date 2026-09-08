@@ -169,11 +169,8 @@ async function openCreate(): Promise<void> {
 
 async function openEdit(role: SystemRole): Promise<void> {
   if (!canOperate.value) return
-  const [referencesLoaded, detail] = await Promise.all([
-    store.loadRoleReferences(),
-    store.getRole(role.id),
-  ])
-  if (!referencesLoaded || !detail) return showStoreError('角色详情加载失败')
+  const detail = await store.getRole(role.id)
+  if (!detail) return showStoreError('角色详情加载失败')
   editRole.value = detail
   editForm.value = { name: detail.name, description: detail.description }
   editInitialJson.value = JSON.stringify(editForm.value)
@@ -230,7 +227,7 @@ function discardChanges(): void {
 
 async function saveCreate(): Promise<void> {
   if (!canOperate.value) return
-  createIssues.value = validateRoleCreateInput(createForm.value, store.roleReferences, store.permissions)
+  createIssues.value = validateRoleCreateInput(createForm.value, store.permissions)
   await nextTick()
   if (!createFormRef.value?.validateAndFocus() || createIssues.value.length) return
   const saved = await store.createRole(createForm.value)
@@ -241,7 +238,7 @@ async function saveCreate(): Promise<void> {
 
 async function saveEdit(): Promise<void> {
   if (!canOperate.value || !editRole.value) return
-  editIssues.value = validateRoleBasicInfoInput(editForm.value, store.roleReferences, editRole.value.id)
+  editIssues.value = validateRoleBasicInfoInput(editForm.value)
   await nextTick()
   if (!editFormRef.value?.validateAndFocus() || editIssues.value.length) return
   const saved = await store.updateRole(editRole.value.id, editForm.value)

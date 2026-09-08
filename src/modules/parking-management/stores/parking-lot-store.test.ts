@@ -11,7 +11,7 @@ import type {
   ParkingLotUpdateInput,
   ParkingLotUpdateOptions,
 } from '../types'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { createParkingLotStore } from './parking-lot-store'
 
@@ -53,6 +53,7 @@ class StubParkingLotService implements ParkingLotService {
   failExport = false
   failImport = false
   exportCalls = 0
+  exportQueries: ParkingLotQuery[] = []
   readonly importCsvInputs: string[] = []
   exportPromise: Promise<BackendCsvExportFile> | null = null
   importPromise: Promise<ParkingLotImportResult> | null = null
@@ -137,8 +138,9 @@ class StubParkingLotService implements ParkingLotService {
     this.records = this.records.filter((record) => record.id !== id)
   }
 
-  async exportCsv(): Promise<BackendCsvExportFile> {
+  async exportCsv(query: ParkingLotQuery): Promise<BackendCsvExportFile> {
     this.exportCalls += 1
+    this.exportQueries.push({ ...query })
     if (this.failExport) throw new Error('停车场导出失败')
     if (this.exportPromise) return this.exportPromise
     return {
@@ -236,14 +238,31 @@ describe('parking lot store', () => {
     expect(store.mapRecords).toHaveLength(21)
   })
 
-  it('validates unique codes for create and base fields for update', async () => {
+  it('leaves duplicate codes to the backend and validates base fields for update', async () => {
     service.records = [lot('A-001')]
     const store = createParkingLotStore(service, 'parking-validation')()
     await store.load()
-    expect(store.validateCreate(input({ code: 'a-001' })).issues).toContainEqual(
-      expect.objectContaining({ field: 'code', code: 'duplicate' }),
-    )
+    expect(store.validateCreate(input({ code: 'a-001' })).valid).toBe(true)
+    expect(await store.create(input({ code: 'a-001' }))).toMatchObject({ code: 'A-001' })
     expect(store.validateUpdate(updateInput({ name: ' ' })).valid).toBe(false)
+  })
+
+  it('shows the backend conflict regardless of which page or filter contains the matching code', async () => {
+    service.records = Array.from({ length: 21 }, (_, index) => lot(`A-${String(index + 1).padStart(3, '0')}`))
+    const write = vi.spyOn(service, 'create').mockRejectedValue(new Error('接口返回：停车场编号冲突'))
+    const store = createParkingLotStore(service, 'parking-code-conflict')()
+    await store.load()
+    const submit = async () => {
+      expect(await store.create(input({ code: 'A-001' }))).toBeNull()
+      expect(store.error).toBe('接口返回：停车场编号冲突')
+      expect(store.isSaving).toBe(false)
+    }
+    await submit()
+    await store.setPage(2)
+    await submit()
+    await store.setQuery({ keyword: '不存在' })
+    await submit()
+    expect(write).toHaveBeenCalledTimes(3)
   })
 
   it('loads details and performs API-backed mutations without changing the current interactions', async () => {
@@ -290,11 +309,13 @@ describe('parking lot store', () => {
     let finishExport!: (file: BackendCsvExportFile) => void
     service.exportPromise = new Promise(resolve => { finishExport = resolve })
     const store = createParkingLotStore(service, `parking-export-${Math.random()}`)()
+    await store.setQuery({ keyword: ' 东区 ', feeType: 'paid', openStatus: 'closed', availabilityUpdateMethod: 'integrated' })
 
     const first = store.exportCsv()
     expect(store.isExporting).toBe(true)
     await expect(store.exportCsv()).resolves.toBeNull()
     expect(service.exportCalls).toBe(1)
+    expect(service.exportQueries).toEqual([{ keyword: '东区', feeType: 'paid', openStatus: 'closed', availabilityUpdateMethod: 'integrated' }])
     finishExport({
       content: new Blob(['csv']), filename: 'parkings.csv', truncated: false, count: null, total: null,
     })

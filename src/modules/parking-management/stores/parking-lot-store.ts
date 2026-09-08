@@ -136,7 +136,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
     }
 
     function validateCreate(input: ParkingLotCreateInput): ParkingLotValidationResult {
-      return validateParkingLotCreateInput(input, records.value)
+      return validateParkingLotCreateInput(input)
     }
 
     function validateUpdate(input: ParkingLotUpdateInput): ParkingLotValidationResult {
@@ -283,7 +283,7 @@ export function createParkingLotStore(service: ParkingLotService, storeId = 'par
       isExporting.value = true
       error.value = null
       try {
-        return await service.exportCsv()
+        return await service.exportCsv(normalizeQuery(query))
       }
       catch (cause) {
         error.value = errorMessage(cause)

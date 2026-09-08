@@ -170,6 +170,9 @@ export interface ContentServerQuery {
   keyword: string
   contentType: ContentType | readonly ContentType[]
   publishStatus: PublishStatus | 'all'
+  enabled?: ActivityQuery['enabled']
+  pinned?: ActivityQuery['pinned']
+  activityStatus?: ActivityQuery['activityStatus']
 }
 
 export interface BannerServerQuery {
@@ -247,5 +250,5 @@ export interface ContentManagementService {
   setPriorityHintEnabled(id: string, enabled: boolean): Promise<PriorityHintRecord>
   removePriorityHint(id: string): Promise<void>
   listReferenceOptions(type: ReferenceType): Promise<SelectableReference[]>
-  exportContents(): Promise<ContentExportFile>
+  exportContents(query: ContentServerQuery): Promise<ContentExportFile>
 }

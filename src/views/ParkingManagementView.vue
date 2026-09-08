@@ -173,7 +173,7 @@ function downloadCsv(content: Blob, filename: string): void {
   URL.revokeObjectURL(url)
 }
 
-async function exportAll(): Promise<void> {
+async function exportCurrent(): Promise<void> {
   if (!canExport.value) return
   const file = await store.exportCsv()
   if (!file) {
@@ -181,7 +181,7 @@ async function exportAll(): Promise<void> {
     return
   }
   downloadCsv(file.content, file.filename)
-  toast.success('已导出全部停车场。')
+  toast.success('停车场 CSV 已导出。')
 }
 
 function resetImportSelection(): void {
@@ -557,7 +557,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
               <MapIcon aria-hidden="true" />地图
             </Button>
           </div>
-          <Button v-if="canExport" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting || store.isImporting" @click="exportAll">
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting || store.isImporting" @click="exportCurrent">
             <LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}
           </Button>
           <Button v-if="canOperate" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting || store.isImporting || isReadingImport" @click="chooseImportFile">

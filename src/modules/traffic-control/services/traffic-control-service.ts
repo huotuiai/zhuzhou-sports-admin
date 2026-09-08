@@ -357,13 +357,20 @@ function updateBody(input: TrafficControlWriteInput): ApiControlUpdateRequest {
   }
 }
 
-function queryParameters(page: number, pageSize: number, query: TrafficControlServerQuery): Record<string, string | number> {
-  const params: Record<string, string | number> = { page, page_size: pageSize }
+function filterParameters(query: TrafficControlServerQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
   const keyword = normalizeText(query.keyword)
   if (keyword) params.keyword = keyword
   if (query.publishStatus !== 'all') params.publish_status = query.publishStatus
   if (query.type !== 'all') params.control_type = apiControlType(query.type)
+  if (query.timeStatus && query.timeStatus !== 'all') params.time_status = query.timeStatus === 'ended' ? 'expired' : query.timeStatus
+  if (query.dateStart) params.start_from = query.dateStart
+  if (query.dateEnd) params.end_to = query.dateEnd
   return params
+}
+
+function queryParameters(page: number, pageSize: number, query: TrafficControlServerQuery): Record<string, string | number> {
+  return { page, page_size: pageSize, ...filterParameters(query) }
 }
 
 function headerValue(response: AxiosResponse, name: string): string | null {
@@ -465,10 +472,11 @@ export function createTrafficControlService(
       }))
     },
 
-    async export(): Promise<TrafficControlExportFile> {
+    async export(query): Promise<TrafficControlExportFile> {
       const response = await requestFile({
         method: 'GET',
         url: 'api/v1/admin/controls/export',
+        params: filterParameters(query),
         responseType: 'blob',
         headers: { Accept: 'text/csv' },
       })

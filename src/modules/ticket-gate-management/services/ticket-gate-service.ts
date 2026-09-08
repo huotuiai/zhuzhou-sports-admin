@@ -96,10 +96,6 @@ function normalizeText(value: string): string {
   return value.trim().normalize('NFKC')
 }
 
-function identity(value: string): string {
-  return normalizeText(value).toLocaleLowerCase('zh-CN')
-}
-
 function requiredText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
   return value
@@ -201,8 +197,6 @@ export function sanitizeTicketGateInput(input: TicketGateWriteInput): TicketGate
 export function validateTicketGateInput(
   input: TicketGateWriteInput,
   floors: readonly TicketGateFloorOption[] = [],
-  records: readonly TicketGate[] = [],
-  excludedId?: string,
 ): TicketGateValidationResult {
   const value = sanitizeTicketGateInput(input)
   const issues: TicketGateValidationIssue[] = []
@@ -211,14 +205,8 @@ export function validateTicketGateInput(
   else if (!/^[A-Z0-9-]{2,10}$/.test(value.code)) {
     issues.push({ field: 'code', code: 'invalid', message: '编号须为 2–10 位字母、数字或连字符' })
   }
-  else if (records.some((item) => item.id !== excludedId && identity(item.code) === identity(value.code))) {
-    issues.push({ field: 'code', code: 'duplicate', message: '检票口编号不能重复' })
-  }
 
   if (!value.name) issues.push({ field: 'name', code: 'required', message: '请输入检票口名称' })
-  else if (records.some((item) => item.id !== excludedId && identity(item.name) === identity(value.name))) {
-    issues.push({ field: 'name', code: 'duplicate', message: '检票口名称不能重复' })
-  }
 
   if (!value.floorId) issues.push({ field: 'floorId', code: 'required', message: '请选择楼层' })
   else if (floors.length && !floors.some((item) => item.id === value.floorId)) {

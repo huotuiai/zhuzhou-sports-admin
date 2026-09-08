@@ -154,7 +154,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
     }
 
     async function create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute | null> {
-      const validation = validateShuttleRouteCreateInput(input, records.value)
+      const validation = validateShuttleRouteCreateInput(input)
       if (!validation.valid) {
         error.value = validation.issues[0]!.message
         return null
@@ -271,7 +271,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       replaceStations,
       remove,
       resetError,
-      validateCreate: (input: ShuttleRouteCreateInput) => validateShuttleRouteCreateInput(input, records.value),
+      validateCreate: validateShuttleRouteCreateInput,
       validateUpdate: validateShuttleRouteUpdateInput,
       validateStations: validateShuttleStations,
     }

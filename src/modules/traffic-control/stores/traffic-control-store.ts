@@ -21,7 +21,7 @@ function errorMessage(error: unknown): string {
 }
 
 function serverQuery(query: TrafficControlQuery): TrafficControlServerQuery {
-  return { keyword: query.keyword, type: query.type, publishStatus: query.publishStatus }
+  return { ...query }
 }
 
 function writeInput(item: TrafficControl, patch: Partial<TrafficControlWriteInput> = {}): TrafficControlWriteInput {
@@ -253,11 +253,11 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
     const publish = (item: TrafficControl) => changePublishStatus(item, 'publish')
     const revoke = (item: TrafficControl) => changePublishStatus(item, 'revoke')
 
-    async function exportAll(): Promise<TrafficControlExportFile | null> {
+    async function exportCurrent(): Promise<TrafficControlExportFile | null> {
       isExporting.value = true
       error.value = null
       try {
-        return await service.export()
+        return await service.export(serverQuery(query))
       }
       catch (cause) {
         error.value = errorMessage(cause)
@@ -300,7 +300,7 @@ export function createTrafficControlStore(service: TrafficControlService, now: (
       togglePinned,
       publish,
       revoke,
-      exportAll,
+      exportCurrent,
       resetError,
       refreshTime,
     }

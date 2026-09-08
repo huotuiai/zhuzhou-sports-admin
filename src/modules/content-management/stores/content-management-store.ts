@@ -56,8 +56,15 @@ function emptySnapshot(): ContentManagementSnapshot {
   return { contents: [], banners: [], priorityHints: [] }
 }
 
-function contentServerQuery(type: ContentServerQuery['contentType'], query: Pick<ActivityQuery, 'title' | 'publishStatus'>): ContentServerQuery {
-  return { keyword: query.title, contentType: type, publishStatus: query.publishStatus }
+function contentServerQuery(type: ContentServerQuery['contentType'], query: Pick<ActivityQuery, 'title' | 'publishStatus' | 'enabled' | 'pinned'> & Partial<Pick<ActivityQuery, 'activityStatus'>>): ContentServerQuery {
+  return {
+    keyword: query.title,
+    contentType: type,
+    publishStatus: query.publishStatus,
+    enabled: query.enabled,
+    pinned: query.pinned,
+    ...(type === 'activity' ? { activityStatus: query.activityStatus } : {}),
+  }
 }
 
 export function createContentManagementStore(
@@ -148,13 +155,18 @@ export function createContentManagementStore(
     const activePriorityHintIds = computed(() => sortPriorityHints(snapshot.value.priorityHints)
       .filter(priorityHintIsEffective).slice(0, 2).map(record => record.id))
 
+    function queryForContentTab(tab: 'activity' | 'news'): ContentServerQuery {
+      if (tab === 'activity') return contentServerQuery('activity', activityQuery)
+      const types = newsQuery.type === 'all' ? (['news', 'notice'] as const) : newsQuery.type
+      return contentServerQuery(types, newsQuery)
+    }
+
     async function fetchActivities(): Promise<ContentRecord[]> {
-      return service.listContents(contentServerQuery('activity', activityQuery))
+      return service.listContents(queryForContentTab('activity'))
     }
 
     async function fetchNews(): Promise<ContentRecord[]> {
-      const types = newsQuery.type === 'all' ? (['news', 'notice'] as const) : newsQuery.type
-      return service.listContents(contentServerQuery(types, newsQuery))
+      return service.listContents(queryForContentTab('news'))
     }
 
     async function fetchBanners(): Promise<BannerRecord[]> {
@@ -339,10 +351,10 @@ export function createContentManagementStore(
     const setPriorityHintEnabled = (id: string, enabled: boolean) => mutate(() => service.setPriorityHintEnabled(id, enabled), ['hint'])
     const removePriorityHint = (id: string) => mutate(() => service.removePriorityHint(id), ['hint'])
 
-    async function exportContents(): Promise<ContentExportFile | null> {
+    async function exportContents(tab: 'activity' | 'news'): Promise<ContentExportFile | null> {
       isExporting.value = true
       error.value = null
-      try { return await service.exportContents() }
+      try { return await service.exportContents(queryForContentTab(tab)) }
       catch (cause) {
         error.value = errorMessage(cause)
         return null

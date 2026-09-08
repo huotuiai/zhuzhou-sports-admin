@@ -32,6 +32,7 @@ export interface UserCreateInput {
   phone: string
   departmentIds: string[]
   roleIds: string[]
+  status: UserStatus
   password: string
   confirmPassword: string
 }
@@ -170,7 +171,7 @@ export interface RoleQuery {
 
 export interface ValidationIssue<TField extends string> {
   field: TField
-  code: 'required' | 'duplicate' | 'invalid' | 'too_short' | 'too_long' | 'not_found'
+  code: 'required' | 'invalid' | 'too_short' | 'too_long' | 'not_found'
   message: string
 }
 
