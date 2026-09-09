@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createShuttleRouteService,
   mapApiShuttleRoute,
+  mapApiShuttleStop,
   sanitizeShuttleRouteBaseInput,
   validateShuttleRouteCreateInput,
   validateShuttleRouteUpdateInput,
@@ -106,6 +107,8 @@ function station(id: string, overrides: Partial<ShuttleStation> = {}): ShuttleSt
     name: `站点 ${id}`,
     point: { lng: 113.1462, lat: 27.8165 },
     navigationAddress: '',
+    outboundPoint: { lng: 113.2462, lat: 27.9165 },
+    outboundNavigationAddress: '',
     arrivalGateIds: [],
     ...overrides,
   }
@@ -144,13 +147,51 @@ describe('shuttle route API mapping and validation', () => {
       sortOrder: 1,
       enabled: false,
       stations: [
-        { id: '1', name: '首站', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', arrivalGateIds: ['11', '12'] },
-        { id: '2', name: '体育中心站', point: null, navigationAddress: '', arrivalGateIds: [] },
+        { id: '1', name: '首站', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', outboundPoint: { lng: 113.1462, lat: 27.8165 }, outboundNavigationAddress: '', arrivalGateIds: ['11', '12'] },
+        { id: '2', name: '体育中心站', point: null, navigationAddress: '', outboundPoint: null, outboundNavigationAddress: '', arrivalGateIds: [] },
       ],
+      pairLineId: null,
+      stationsInherited: false,
       coordinateSystem: 'GCJ-02',
       createdAt: timestamp,
       updatedAt: timestamp,
     })
+  })
+
+  it('prefers directional fields over legacy aliases and preserves an explicitly empty entry address', () => {
+    expect(mapApiShuttleStop(apiStop({
+      entry_lng: '113.1', entry_lat: '27.8', entry_nav_address: null,
+      exit_lng: '113.2', exit_lat: '27.9', exit_nav_address: '离场导航',
+      nav_address: '旧导航', vr_url: 'https://example.com/vr',
+    }))).toMatchObject({
+      point: { lng: 113.1, lat: 27.8 }, navigationAddress: '',
+      outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '离场导航',
+      vrUrl: 'https://example.com/vr',
+    })
+  })
+
+  it('maps a response containing only new coordinate fields and accepts zero coordinates', () => {
+    expect(mapApiShuttleStop(apiStop({
+      lng: undefined, lat: undefined, nav_address: undefined,
+      entry_lng: 0, entry_lat: 0, entry_nav_address: '入场导航',
+      exit_lng: 113.2, exit_lat: 27.9, exit_nav_address: '',
+    }))).toMatchObject({
+      point: { lng: 0, lat: 0 }, navigationAddress: '入场导航',
+      outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '',
+    })
+  })
+
+  it('keeps incomplete directional coordinates visible for correction without mixing aliases', () => {
+    expect(mapApiShuttleStop(apiStop({ entry_lng: 113.1, entry_lat: null, exit_lng: null, exit_lat: null })))
+      .toMatchObject({ point: null, outboundPoint: null })
+  })
+
+  it.each([
+    { entry_lng: 181, entry_lat: 27.8 },
+    { exit_lng: 113.2, exit_lat: 91 },
+    { exit_lng: 'invalid', exit_lat: 27.9 },
+  ])('rejects invalid server coordinates %j', (coordinates) => {
+    expect(() => mapApiShuttleStop(apiStop(coordinates))).toThrow('定位无效')
   })
 
   it('keeps current frontend validation rules', () => {
@@ -161,6 +202,8 @@ describe('shuttle route API mapping and validation', () => {
     expect(validateShuttleStations([]).issues[0]).toMatchObject({ field: 'stations', code: 'required' })
     expect(validateShuttleStations([station('S1', { point: null })]).issues[0]).toMatchObject({ field: 'point', code: 'required' })
     expect(validateShuttleStations(Array.from({ length: 21 }, (_, index) => station(String(index)))).issues[0]?.field).toBe('stations')
+    expect(validateShuttleStations([station('S1', { outboundPoint: null })]).issues[0]).toMatchObject({ field: 'outboundPoint', code: 'required' })
+    expect(validateShuttleStations([station('S1', { outboundPoint: { lng: 181, lat: 27.8 } })]).issues[0]).toMatchObject({ field: 'outboundPoint', code: 'invalid' })
   })
 
   it.each([
@@ -192,6 +235,25 @@ describe('shuttle route API mapping and validation', () => {
 })
 
 describe('shuttle route API service', () => {
+  it.each(['', '   ', ' https://example.com/vr?token=A%2Fb#view '])('submits and reads the station VR link including an explicit clear: %j', async (vrUrl) => {
+    const { configs, request } = queuedRequester([apiLine({ stops: [apiStop({ vr_url: vrUrl.trim() })] })])
+    const saved = await createShuttleRouteService(request).replaceStations('21', [station('11', { vrUrl })])
+    expect(configs[0]?.data).toMatchObject({ stops: [{ vr_url: vrUrl.trim() }] })
+    expect(saved.stations[0]?.vrUrl).toBe(vrUrl.trim())
+  })
+
+  it('loads complete station details and inherited line metadata', async () => {
+    const { configs, request } = queuedRequester([apiLine({
+      id: 22, direction: 2, pair_line_id: '9007199254740993', stops_inherited: true,
+      stops: [apiStop({ seq: 2, id: 11 }), apiStop({ seq: 1, id: 12, exit_lng: 113.2, exit_lat: 27.9 })],
+    })])
+    const detail = await createShuttleRouteService(request).get('22')
+    expect(configs).toEqual([{ method: 'GET', url: 'api/v1/admin/shuttle/lines/22' }])
+    expect(detail).toMatchObject({ pairLineId: '9007199254740993', stationsInherited: true })
+    expect(detail.stations.map(item => item.id)).toEqual(['12', '11'])
+    expect(detail.stations[0]?.outboundPoint).toEqual({ lng: 113.2, lat: 27.9 })
+  })
+
   it('saves an edited route with second-format API times and keeps the response editable', async () => {
     const line = apiLine({ id: 21, first_bus: '14:00:00', last_bus: '23:00:00' })
     const { configs, request } = queuedRequester([
@@ -249,13 +311,14 @@ describe('shuttle route API service', () => {
 
   it('loads every matching page from the list payload without extra detail requests', async () => {
     const { configs, request } = queuedRequester([
-      { list: [apiLine({ id: 2, code: 'L2', sort_order: 2, stops: [apiStop({ id: 21 })] })], total: 101, page: 1, page_size: 100 },
+      { list: [apiLine({ id: 2, code: 'L2', sort_order: 2, stops: [apiStop({ id: 21, exit_lng: 113.2, exit_lat: 27.9, exit_nav_address: '离场导航' })] })], total: 101, page: 1, page_size: 100 },
       { list: [apiLine({ id: 3, code: 'L3', sort_order: 1, stops: [apiStop({ id: 31 })] })], total: 101, page: 2, page_size: 100 },
     ])
     const records = await createShuttleRouteService(request).list()
 
     expect(records.map(record => record.code)).toEqual(['L3', 'L2'])
     expect(records.every(record => record.stations.length === 1)).toBe(true)
+    expect(records[1]?.stations[0]).toMatchObject({ outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '离场导航' })
     expect(configs).toMatchObject([
       { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 1, page_size: 100 } },
       { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 2, page_size: 100 } },
@@ -323,31 +386,49 @@ describe('shuttle route API service', () => {
   })
 
   it('replaces the complete station editor value through one transactional request', async () => {
-    const finalFirst = apiStop({ id: 11, name: '更新首站', seq: 1, arrival_gate_ids: [10, 13] })
-    const created = apiStop({ id: 13, name: '新增站', seq: 2 })
+    const finalFirst = apiStop({
+      id: 11, name: '更新首站', seq: 1, arrival_gate_ids: [10, 13],
+      entry_lng: 113.1462, entry_lat: 27.8165, entry_nav_address: '入场导航',
+      exit_lng: 113.2462, exit_lat: 27.9165, exit_nav_address: '离场导航', vr_url: 'https://example.com/vr',
+    })
+    const created = apiStop({ id: 13, name: '新增站', seq: 2, exit_lng: 113.2462, exit_lat: 27.9165 })
     const { configs, request } = queuedRequester([
+      apiLine({ id: 21, stops: [finalFirst, created] }),
       apiLine({ id: 21, stops: [finalFirst, created] }),
     ])
     const service = createShuttleRouteService(request)
 
     const saved = await service.replaceStations('21', [
-      station('11', { name: '更新首站', arrivalGateIds: ['10', '13'] }),
+      station('11', { name: ' 更新首站 ', navigationAddress: ' 入场导航 ', outboundNavigationAddress: ' 离场导航 ', arrivalGateIds: ['10', '13', '10'], vrUrl: 'https://example.com/vr' }),
       station('client-new', { name: '新增站' }),
     ])
 
     expect(saved.stations.map(item => item.id)).toEqual(['11', '13'])
     expect(configs).toHaveLength(1)
-    expect(configs[0]).toMatchObject({
+    expect(configs[0]).toEqual({
       method: 'PUT',
       url: 'api/v1/admin/shuttle/lines/21/stops',
       data: {
         stops: [
-          { name: '更新首站', seq: 1, lng: 113.1462, lat: 27.8165, nav_address: '', arrival_gate_ids: ['10', '13'] },
-          { name: '新增站', seq: 2, lng: 113.1462, lat: 27.8165, nav_address: '', arrival_gate_ids: [] },
+          { name: '更新首站', seq: 1, entry_lng: 113.1462, entry_lat: 27.8165, entry_nav_address: '入场导航', exit_lng: 113.2462, exit_lat: 27.9165, exit_nav_address: '离场导航', arrival_gate_ids: ['10', '13'], vr_url: 'https://example.com/vr' },
+          { name: '新增站', seq: 2, entry_lng: 113.1462, entry_lat: 27.8165, entry_nav_address: '', exit_lng: 113.2462, exit_lat: 27.9165, exit_nav_address: '', arrival_gate_ids: [] },
         ],
       },
     })
     expect(configs[0]?.data).not.toHaveProperty('idempotency_key')
+    expect(saved.stations[0]).toMatchObject({
+      point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '入场导航',
+      outboundPoint: { lng: 113.2462, lat: 27.9165 }, outboundNavigationAddress: '离场导航',
+      arrivalGateIds: ['10', '13'], vrUrl: 'https://example.com/vr',
+    })
+    expect((await service.get('21')).stations).toEqual(saved.stations)
+  })
+
+  it('does not submit stations missing an outbound coordinate', async () => {
+    const { configs, request } = queuedRequester([])
+    await expect(createShuttleRouteService(request).replaceStations('21', [station('11', { outboundPoint: null })]))
+      .rejects.toThrow('请输入离场定位经纬度')
+    expect(configs).toEqual([])
   })
 
   it('submits int64 gate IDs as strings without precision loss', async () => {

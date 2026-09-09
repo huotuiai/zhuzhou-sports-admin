@@ -102,6 +102,24 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       }
     }
 
+    async function loadStationRoute(id: string): Promise<ShuttleRoute | null> {
+      error.value = null
+      try {
+        const route = await service.get(id)
+        if (!route.stationsInherited) return route
+        if (!route.pairLineId) throw new Error('本线路站点继承自入场线路，请从对应入场线路配置。')
+        const source = await service.get(route.pairLineId)
+        if (source.stationsInherited || source.direction !== 'inbound') {
+          throw new Error('未找到可配置站点的入场线路，请刷新后重试。')
+        }
+        return source
+      }
+      catch (cause) {
+        error.value = message(cause)
+        return null
+      }
+    }
+
     async function setQuery(patch: Partial<ShuttleRouteQuery>): Promise<boolean> {
       Object.assign(query, normalizeQuery({ ...query, ...patch }))
       page.value = 1
@@ -265,6 +283,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       load,
       loadPage,
       loadMap,
+      loadStationRoute,
       exportCurrent,
       create,
       update,

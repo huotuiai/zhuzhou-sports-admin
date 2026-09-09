@@ -30,6 +30,12 @@ class StubShuttleRouteService implements ShuttleRouteService {
   records: ShuttleRoute[] = []
   exportQueries: ShuttleRouteQuery[] = []
 
+  async get(id: string): Promise<ShuttleRoute> {
+    const record = this.records.find(item => item.id === id)
+    if (!record) throw new Error('线路不存在')
+    return structuredClone(record)
+  }
+
   private filtered(query: ShuttleRouteQuery): ShuttleRoute[] {
     const keyword = query.keyword.trim().normalize('NFKC').toLocaleLowerCase('zh-CN')
     return this.records.filter((item) => {
@@ -119,9 +125,60 @@ describe('shuttle route store', () => {
     expect((await store.create(input))?.code).toBe('L2')
     const updated = await store.update('L1', { ...input, name: '更新线路' })
     expect(updated?.name).toBe('更新线路')
-    const station: ShuttleStation = { id: 'S1', name: '体育中心', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', arrivalGateIds: ['gate-1'] }
-    expect((await store.replaceStations('L1', [station]))?.stations).toHaveLength(1)
+    const station: ShuttleStation = {
+      id: 'S1', name: '体育中心', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '入场导航',
+      outboundPoint: { lng: 113.2462, lat: 27.9165 }, outboundNavigationAddress: '离场导航', arrivalGateIds: ['gate-1'],
+      vrUrl: 'https://example.com/vr',
+    }
+    expect((await store.replaceStations('L1', [station]))?.stations).toEqual([station])
+    expect(store.records.find(item => item.id === 'L1')?.stations).toEqual([station])
     expect(await store.remove('L1')).toBe(true)
+  })
+
+  it('opens station details instead of the lightweight list data', async () => {
+    service.records = [route('L1')]
+    const store = createShuttleRouteStore(service, 'shuttle-station-detail')()
+    await store.load()
+    const detail = route('L1', { stations: [{
+      id: 'S1', name: '首站', point: { lng: 113.1, lat: 27.8 }, navigationAddress: '入场导航',
+      outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '离场导航', arrivalGateIds: ['11'],
+    }] })
+    service.records = [detail]
+    expect(await store.loadStationRoute('L1')).toEqual(detail)
+    expect(store.records[0]?.stations).toEqual([])
+  })
+
+  it('resolves inherited stations to the paired inbound line even when it is outside the current page', async () => {
+    const inbound = route('L1')
+    service.records = [inbound, route('L2', { direction: 'outbound', pairLineId: 'L1', stationsInherited: true })]
+    const get = vi.spyOn(service, 'get')
+    const store = createShuttleRouteStore(service, 'shuttle-inherited-stations')()
+    expect(await store.loadStationRoute('L2')).toEqual(inbound)
+    expect(get.mock.calls).toEqual([['L2'], ['L1']])
+  })
+
+  it('does not open a writable station editor if loading the paired inbound line fails', async () => {
+    service.records = [route('L2', { direction: 'outbound', pairLineId: 'L1', stationsInherited: true })]
+    const store = createShuttleRouteStore(service, 'shuttle-inherited-stations-error')()
+    expect(await store.loadStationRoute('L2')).toBeNull()
+    expect(store.error).toBe('线路不存在')
+  })
+
+  it('retains the caller draft and saved stations when saving fails', async () => {
+    const station: ShuttleStation = {
+      id: 'S1', name: '首站', point: { lng: 113.1, lat: 27.8 }, navigationAddress: '',
+      outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '', arrivalGateIds: [],
+    }
+    service.records = [route('L1', { stations: [station] })]
+    const store = createShuttleRouteStore(service, 'shuttle-station-save-error')()
+    await store.load()
+    const draft = [{ ...station, outboundNavigationAddress: ' 修改离场导航 ' }]
+    vi.spyOn(service, 'replaceStations').mockRejectedValue(new Error('保存失败'))
+    expect(await store.replaceStations('L1', draft)).toBeNull()
+    expect(store.error).toBe('保存失败')
+    expect(store.isSaving).toBe(false)
+    expect(draft[0]?.outboundNavigationAddress).toBe(' 修改离场导航 ')
+    expect(store.records[0]?.stations).toEqual([station])
   })
 
   it('shows the backend conflict regardless of which page or filter contains the matching code', async () => {

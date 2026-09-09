@@ -4,6 +4,7 @@ import type { ShuttleStation } from '../types'
 import { createApp, h, nextTick, ref, shallowRef } from 'vue'
 import { afterEach, describe, expect, it } from 'vitest'
 import ShuttleStationConfig from './ShuttleStationConfig.vue'
+import { mapApiShuttleStop } from '../services/shuttle-route-service'
 
 const mounted: Array<{ app: App, host: HTMLDivElement }> = []
 
@@ -51,6 +52,29 @@ afterEach(() => {
 })
 
 describe('shuttle station directional fields', () => {
+  it('fills both directions from API data and retains existing VR metadata when edited and reordered', async () => {
+    const saved = mapApiShuttleStop({
+      id: 'S1', name: '体育中心站', line_id: 21, seq: 1, code: null,
+      create_at: '2026-09-09', update_at: '2026-09-09', status: 1, arrival_offset_minutes: null,
+      entry_lng: '113.1', entry_lat: '27.8', entry_nav_address: '入场导航',
+      exit_lng: '113.2', exit_lat: '27.9', exit_nav_address: '离场导航',
+      arrival_gate_ids: ['9007199254740993'], vr_url: 'https://example.com/vr',
+    })
+    const fixture = mountConfig([saved, { ...saved, id: 'S2', name: '第二站' }])
+    await fixture.click('编辑')
+    expect(fixture.host.querySelector<HTMLInputElement>('#station-inbound-coordinate')?.value).toBe('113.1,27.8')
+    expect(fixture.host.querySelector<HTMLInputElement>('#station-outbound-coordinate')?.value).toBe('113.2,27.9')
+    expect(fixture.host.querySelector<HTMLInputElement>('#station-inbound-address')?.value).toBe('入场导航')
+    expect(fixture.host.querySelector<HTMLInputElement>('#station-outbound-address')?.value).toBe('离场导航')
+    expect(fixture.host.querySelector<HTMLInputElement>('#station-vr-url')?.value).toBe('https://example.com/vr')
+    await fixture.fill('station-outbound-address', '修改离场导航')
+    await fixture.click('更新站点')
+    fixture.host.querySelector<HTMLButtonElement>('[aria-label="下移体育中心站"]')!.click()
+    await nextTick()
+    expect(fixture.model.value[1]).toEqual({ ...saved, outboundNavigationAddress: '修改离场导航' })
+    expect(fixture.form.value?.validateAndCommit()).toBe(true)
+  })
+
   it('requires both coordinates, permits empty navigation addresses and commits the latest draft on save', async () => {
     const fixture = mountConfig()
     await fixture.click('新增站点')
@@ -68,9 +92,31 @@ describe('shuttle station directional fields', () => {
     expect(fixture.model.value[0]).toMatchObject({
       point: { lng: 113.1, lat: 27.8 }, navigationAddress: '',
       outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '',
+      vrUrl: '',
     })
     expect(fixture.host.textContent).toContain('入场导航：未配置')
     expect(fixture.host.textContent).toContain('离场导航：未配置')
+  })
+
+  it('validates, creates, edits and clears the optional station VR link', async () => {
+    const fixture = mountConfig()
+    await fixture.click('新增站点')
+    await fixture.fill('station-name', '体育中心站')
+    await fixture.fill('station-inbound-coordinate', '113.1,27.8')
+    await fixture.fill('station-outbound-coordinate', '113.2,27.9')
+    await fixture.fill('station-vr-url', 'javascript:alert(1)')
+    expect(fixture.form.value?.validateAndCommit()).toBe(false)
+    await nextTick()
+    expect(fixture.host.querySelector('#station-vr-url')?.getAttribute('aria-invalid')).toBe('true')
+    await fixture.fill('station-vr-url', ' https://example.com/vr ')
+    expect(fixture.form.value?.validateAndCommit()).toBe(true)
+    await nextTick()
+    expect(fixture.model.value[0]?.vrUrl).toBe('https://example.com/vr')
+    await fixture.click('编辑')
+    await fixture.fill('station-vr-url', '')
+    expect(fixture.form.value?.validateAndCommit()).toBe(true)
+    await nextTick()
+    expect(fixture.model.value[0]?.vrUrl).toBe('')
   })
 
   it.each(['inbound', 'outbound'])('rejects invalid %s coordinates without updating the list', async (direction) => {
@@ -111,11 +157,12 @@ describe('shuttle station directional fields', () => {
   })
 
   it('discards cancelled edits without changing either set of saved draft coordinates', async () => {
-    const original = { ...station('S1'), outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '离场导航' }
+    const original = { ...station('S1'), outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '离场导航', vrUrl: 'https://example.com/vr' }
     const fixture = mountConfig([original])
     await fixture.click('编辑')
     await fixture.fill('station-inbound-address', '修改入场导航')
     await fixture.fill('station-outbound-coordinate', '114,28')
+    await fixture.fill('station-vr-url', 'https://example.com/changed')
     await fixture.click('取消编辑')
     expect(fixture.model.value).toEqual([original])
   })

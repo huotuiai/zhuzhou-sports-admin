@@ -10,6 +10,7 @@ export interface GeoPoint {
 }
 
 export interface TicketGate {
+  vrUrl?: string
   id: string
   code: string
   name: string
@@ -38,6 +39,7 @@ export interface TicketGateFloorOption {
 
 /** 表单使用“经度, 纬度”字符串承接接口要求的单个定位点。 */
 export interface TicketGateWriteInput {
+  vrUrl?: string
   code: string
   name: string
   floorId: string

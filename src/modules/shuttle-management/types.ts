@@ -9,10 +9,11 @@ export interface ShuttleStation {
   name: string
   point: GeoPoint | null
   navigationAddress: string
-  // 离场信息仅用于前端编辑，待新接口文档提供后接入读写。
+  // point / navigationAddress 对应入场字段；离场字段为空时需要补齐定位。
   outboundPoint?: GeoPoint | null
   outboundNavigationAddress?: string
   arrivalGateIds: string[]
+  vrUrl?: string
 }
 
 export interface ShuttleRoute {
@@ -29,6 +30,8 @@ export interface ShuttleRoute {
   sortOrder: number
   enabled: boolean
   stations: ShuttleStation[]
+  pairLineId?: string | null
+  stationsInherited?: boolean
   coordinateSystem: 'GCJ-02'
   createdAt: string
   updatedAt: string
@@ -61,6 +64,7 @@ export interface ShuttleRoutePage {
 }
 
 export interface ShuttleRouteService {
+  get(id: string): Promise<ShuttleRoute>
   list(query?: ShuttleRouteQuery): Promise<ShuttleRoute[]>
   listPage(page: number, pageSize: number, query?: ShuttleRouteQuery): Promise<ShuttleRoutePage>
   exportCsv(query: ShuttleRouteQuery): Promise<BackendCsvExportFile>
@@ -84,7 +88,7 @@ export interface ShuttleRouteValidationIssue {
   message: string
 }
 
-export type ShuttleStationValidationField = 'stations' | 'name' | 'point' | 'outboundPoint'
+export type ShuttleStationValidationField = 'stations' | 'name' | 'point' | 'outboundPoint' | 'vrUrl'
 
 export interface ShuttleStationValidationIssue {
   field: ShuttleStationValidationField

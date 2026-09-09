@@ -7,6 +7,7 @@ export type ParkingAvailabilityUpdateMethod = 'integrated' | 'manual'
 export type ParkingAvailabilityLevel = 'ample' | 'tight' | 'nearly-full'
 
 export interface ParkingLot {
+  vrUrl?: string
   id: string
   code: string
   name: string
@@ -30,6 +31,7 @@ export interface ParkingLot {
 }
 
 export interface ParkingLotBaseInput {
+  vrUrl?: string
   name: string
   locationDescription: string
   point: GeoPoint | null

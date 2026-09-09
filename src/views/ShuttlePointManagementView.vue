@@ -61,7 +61,8 @@ const routeInitial = ref<ShuttleRouteCreateInput>(emptyRoute())
 const routeIssues = ref<readonly ShuttleRouteValidationIssue[]>([])
 const routeFormRef = ref<{ validateAndFocus(): boolean } | null>(null)
 const stationOpen = ref(false)
-const stationRouteId = ref<string | null>(null)
+const stationRoute = ref<ShuttleRoute | null>(null)
+const stationLoadingId = ref<string | null>(null)
 const stationValue = ref<ShuttleStation[]>([])
 const stationInitial = ref<ShuttleStation[]>([])
 const stationEditorDirty = ref(false)
@@ -75,7 +76,7 @@ const loadError = ref('')
 
 const routeDirty = computed(() => JSON.stringify(routeValue.value) !== JSON.stringify(routeInitial.value))
 const stationDirty = computed(() => stationEditorDirty.value || JSON.stringify(stationValue.value) !== JSON.stringify(stationInitial.value))
-const stationRoute = computed(() => store.records.find((item) => item.id === stationRouteId.value) ?? null)
+const stationRouteId = computed(() => stationRoute.value?.id ?? null)
 const hasQuery = computed(() => Boolean(store.query.keyword || store.query.operatingStatus !== 'all'))
 
 function emptyRoute(): ShuttleRouteCreateInput {
@@ -185,19 +186,30 @@ function requestRouteClose(request: CrudDialogCloseRequest): void {
   else closeRoute()
 }
 
-function openStations(route: ShuttleRoute): void {
-  if (!canOperate.value) return
-  store.resetError()
-  stationRouteId.value = route.id
-  stationValue.value = cloneStations(route.stations)
-  stationInitial.value = cloneStations(route.stations)
-  stationEditorDirty.value = false
-  stationOpen.value = true
+async function openStations(route: ShuttleRoute): Promise<void> {
+  if (!canOperate.value || stationLoadingId.value) return
+  stationLoadingId.value = route.id
+  try {
+    const detail = await store.loadStationRoute(route.id)
+    if (!detail) {
+      toast.error(store.error ?? '站点配置加载失败，请重试。')
+      return
+    }
+    stationRoute.value = detail
+    stationValue.value = cloneStations(detail.stations)
+    stationInitial.value = cloneStations(detail.stations)
+    stationEditorDirty.value = false
+    stationOpen.value = true
+    if (detail.id !== route.id) toast.info(`离场站点继承自入场线路，已打开 ${detail.code} 的站点配置。`)
+  }
+  finally {
+    stationLoadingId.value = null
+  }
 }
 
 function closeStations(): void {
   stationOpen.value = false
-  stationRouteId.value = null
+  stationRoute.value = null
   stationValue.value = []
   stationInitial.value = []
   stationEditorDirty.value = false
@@ -405,7 +417,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-duration="{ row }"><span class="tabular-nums">{{ row.durationMinutes }} 分钟</span></template>
           <template #cell-operatingStatus="{ row }"><Badge variant="outline" :class="operatingClass(row)">{{ shuttleOperatingStatusLabel(row.operatingStatus) }}</Badge></template>
           <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
-          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" @click="openStations(row)"><MapPin aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="Boolean(store.deletingId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button></div></template>
+          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" :disabled="Boolean(stationLoadingId)" @click="openStations(row)"><LoaderCircle v-if="stationLoadingId === row.id" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><MapPin v-else aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="Boolean(store.deletingId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button></div></template>
         </DataTable>
         <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
@@ -417,7 +429,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <ShuttleRouteForm :key="`${routeMode}-${editingId ?? 'new'}`" ref="routeFormRef" :mode="routeMode" :value="routeValue" :issues="routeIssues" :saving="store.isSaving" @update:value="updateRoute" />
     </CrudSheet>
 
-    <CrudSheet :open="stationOpen" mode="edit" size="wide" :title="`站点配置 · ${stationRoute?.code ?? ''}`" :description="stationRoute ? `${stationRoute.name} · ${shuttleDirectionLabel(stationRoute.direction)}，站点定位为必填项。` : '维护线路站点'" submit-label="保存站点" :saving="store.isSaving" :dirty="stationDirty" @submit="saveStations" @request-close="requestStationClose">
+    <CrudSheet :open="stationOpen" mode="edit" size="wide" :title="`站点配置 · ${stationRoute?.code ?? ''}`" :description="stationRoute ? `${stationRoute.name} · ${shuttleDirectionLabel(stationRoute.direction)}，入场、离场定位均为必填项，请按入场方向配置站点顺序。` : '维护线路站点'" submit-label="保存站点" :saving="store.isSaving" :dirty="stationDirty" @submit="saveStations" @request-close="requestStationClose">
       <ShuttleStationConfig v-if="stationRouteId" :key="stationRouteId" ref="stationFormRef" :route-id="stationRouteId" :value="stationValue" :ticket-gates="ticketGates" :ticket-gates-loading="ticketGatesLoading" :ticket-gates-error="ticketGatesError" :saving="store.isSaving" @update:value="stationValue = $event; store.resetError()" @editor-dirty="stationEditorDirty = $event" />
     </CrudSheet>
 

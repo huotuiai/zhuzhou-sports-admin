@@ -140,6 +140,7 @@ function emptyForm(): ParkingLotFormValue {
     locationDescription: '',
     coordinateInput: '',
     navigationAddress: '',
+    vrUrl: '',
     totalSpaces: Number.NaN,
     availabilityUpdateMethod: 'manual',
     feeType: 'free',

@@ -19,6 +19,7 @@ import type {
   SeatZoneWriteInput,
 } from '../types'
 import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
+import { validateOptionalVrUrl } from '@/lib/vr-url'
 
 export interface ApiFloorVO {
   id: number | string
@@ -31,6 +32,7 @@ export interface ApiFloorVO {
 }
 
 export interface ApiZoneVO {
+  vr_url?: string | null
   id: number | string
   create_at: string
   update_at: string
@@ -72,6 +74,7 @@ interface ApiFloorCreateRequest {
 }
 
 interface ApiZoneCreateRequest {
+  vr_url?: string
   code: string
   name: string
   floor_id: number
@@ -191,6 +194,7 @@ export function mapApiZone(value: ApiZoneVO): SeatZone {
     sortOrder: integer(value.sort_order),
     status: mapStatus(value.status),
     remark: typeof value.remark === 'string' ? value.remark : '',
+    vrUrl: typeof value.vr_url === 'string' ? value.vr_url : '',
     gateIds: stringIds(value.gate_ids),
     gateNames: stringList(value.gate_names),
     openGateIds: stringIds(value.open_gate_ids),
@@ -233,6 +237,7 @@ export function sanitizeSeatFloorInput(input: SeatFloorWriteInput): SeatFloorWri
 
 export function sanitizeSeatZoneInput(input: SeatZoneWriteInput): SeatZoneWriteInput {
   return {
+    ...(input.vrUrl !== undefined ? { vrUrl: input.vrUrl.trim() } : {}),
     code: normalizeText(input.code).toUpperCase(),
     name: normalizeText(input.name),
     floorId: normalizeText(input.floorId),
@@ -297,6 +302,8 @@ export function validateSeatZoneInput(
   }
 
   if (Array.from(value.remark).length > 300) issues.push({ field: 'remark', code: 'too_long', message: '备注不能超过 300 个字符' })
+  const vrUrlError = validateOptionalVrUrl(value.vrUrl)
+  if (vrUrlError) issues.push({ field: 'vrUrl', code: 'invalid', message: vrUrlError })
   return { valid: issues.length === 0, issues }
 }
 
@@ -309,6 +316,7 @@ export function sortSeatFloors(floors: readonly SeatFloor[]): SeatFloor[] {
 function zoneCreateBody(input: SeatZoneWriteInput): ApiZoneCreateRequest {
   const value = sanitizeSeatZoneInput(input)
   return {
+    ...(value.vrUrl !== undefined ? { vr_url: value.vrUrl } : {}),
     code: value.code,
     name: value.name,
     floor_id: bodyId(value.floorId),
@@ -324,6 +332,7 @@ function zoneCreateBody(input: SeatZoneWriteInput): ApiZoneCreateRequest {
 function zoneUpdateBody(input: SeatZoneWriteInput): ApiZoneUpdateRequest {
   const body = zoneCreateBody(input)
   return {
+    ...(body.vr_url !== undefined ? { vr_url: body.vr_url } : {}),
     name: body.name,
     floor_id: body.floor_id,
     row_start: body.row_start,

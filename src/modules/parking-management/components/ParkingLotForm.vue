@@ -61,6 +61,7 @@ const fields: ParkingLotValidationField[] = [
   'locationDescription',
   'point',
   'navigationAddress',
+  'vrUrl',
   'totalSpaces',
   'feeType',
   'feeStandard',
@@ -293,6 +294,17 @@ watch(() => props.mode, () => {
         @blur="touched.navigationAddress = true"
       />
       <p v-if="issueFor('navigationAddress')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('navigationAddress')?.message }}</p>
+    </div>
+
+    <div class="col-span-2 space-y-2">
+      <Label :for="inputId('vrUrl')">VR 链接（选填）</Label>
+      <Input
+        :id="inputId('vrUrl')" data-field="vrUrl" :model-value="value.vrUrl ?? ''" type="url" class="h-11"
+        placeholder="https://" :disabled="saving" :aria-invalid="Boolean(issueFor('vrUrl'))"
+        @update:model-value="patch({ vrUrl: String($event) })" @blur="touched.vrUrl = true"
+      />
+      <p v-if="issueFor('vrUrl')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('vrUrl')?.message }}</p>
+      <p v-else class="text-xs leading-5 text-muted-foreground">填写此位置的 HTTP 或 HTTPS 链接；留空不配置，清空后保存可移除已有链接。</p>
     </div>
 
     <div class="space-y-2">

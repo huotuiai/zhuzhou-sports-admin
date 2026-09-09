@@ -54,6 +54,14 @@ function parkingLot(overrides: Partial<ParkingLot> = {}): ParkingLot {
 }
 
 describe('parking lot form value mapping', () => {
+  it('retains the VR link in both form write paths and submits an empty string when cleared', () => {
+    const value = parkingLotToFormValue(parkingLot({ vrUrl: 'https://example.com/vr' }))
+    expect(value.vrUrl).toBe('https://example.com/vr')
+    expect(parkingLotFormToCreateInput(value).vrUrl).toBe(value.vrUrl)
+    expect(parkingLotFormToUpdateInput(value).vrUrl).toBe(value.vrUrl)
+    expect(parkingLotFormToUpdateInput({ ...value, vrUrl: '' }).vrUrl).toBe('')
+  })
+
   it('always creates new parking lots with manual availability updates', () => {
     expect(parkingLotFormToCreateInput(formValue({ availabilityUpdateMethod: 'integrated' })))
       .toMatchObject({ availabilityUpdateMethod: 'manual' })

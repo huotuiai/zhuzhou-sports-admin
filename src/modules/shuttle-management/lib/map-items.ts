@@ -25,14 +25,15 @@ export function createShuttleMapItems(records: readonly ShuttleRoute[], selected
     const color = shuttleRouteColor(route)
     const points = []
     for (const [index, station] of route.stations.entries()) {
-      if (!station.point) {
+      const point = route.direction === 'outbound' ? station.outboundPoint : station.point
+      if (!point) {
         missingCount += 1
         continue
       }
-      points.push({ ...station.point })
+      points.push({ ...point })
       markers.push({
         id: `${route.id}::${station.id}`,
-        point: { ...station.point },
+        point: { ...point },
         label: `${index + 1}. ${station.name}`,
         description: route.code,
         color,

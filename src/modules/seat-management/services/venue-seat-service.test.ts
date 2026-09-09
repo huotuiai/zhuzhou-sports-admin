@@ -102,6 +102,21 @@ describe('seat planning API mapping and validation', () => {
 })
 
 describe('seat planning API service', () => {
+  it.each([undefined, '', '   ', ' https://example.com/vr?token=A%2Fb#view '])('writes an optional VR link without losing clear or omit semantics: %j', async (vrUrl) => {
+    const expected = vrUrl?.trim() ?? ''
+    const { configs, request } = queuedRequester([
+      apiZone({ vr_url: expected }), apiZone({ vr_url: expected }), apiZone({ vr_url: expected }),
+    ])
+    const service = createSeatPlanningService(request)
+    expect((await service.createZone(zoneInput({ vrUrl }))).vrUrl).toBe(expected)
+    expect((await service.updateZone('31', zoneInput({ vrUrl }))).vrUrl).toBe(expected)
+    expect((await service.getZone('31')).vrUrl).toBe(expected)
+    for (const config of configs.slice(0, 2)) {
+      if (vrUrl === undefined) expect(config.data).not.toHaveProperty('vr_url')
+      else expect(config.data).toHaveProperty('vr_url', expected)
+    }
+  })
+
   it('loads floors, paged zones, detail and gate options from their API endpoints', async () => {
     const { configs, request } = queuedRequester([
       [apiFloor({ id: 11 })],

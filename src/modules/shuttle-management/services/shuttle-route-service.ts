@@ -16,6 +16,7 @@ import type {
 } from '../types'
 import { isValidGeoPoint } from '@/components/map/geometry'
 import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
+import { validateOptionalVrUrl } from '@/lib/vr-url'
 
 type ApiShuttleDirection = 1 | 2
 type ApiShuttleOperatingStatus = 0 | 1 | 2
@@ -28,12 +29,19 @@ export interface ApiShuttleStopVO {
   code: string | null
   name: string
   seq: number | string
-  lng: number | string | null
-  lat: number | string | null
-  nav_address: string | null
+  lng?: number | string | null
+  lat?: number | string | null
+  nav_address?: string | null
+  entry_lng?: number | string | null
+  entry_lat?: number | string | null
+  entry_nav_address?: string | null
+  exit_lng?: number | string | null
+  exit_lat?: number | string | null
+  exit_nav_address?: string | null
   arrival_offset_minutes: number | string | null
   status: number | boolean
   arrival_gate_ids: Array<number | string> | null
+  vr_url?: string | null
 }
 
 export interface ApiShuttleLineVO {
@@ -60,6 +68,8 @@ export interface ApiShuttleLineVO {
   status: number | boolean
   stop_count: number | string
   stops?: ApiShuttleStopVO[] | null
+  pair_line_id?: number | string | null
+  stops_inherited?: boolean
 }
 
 export interface ApiShuttleLinePage {
@@ -86,10 +96,14 @@ interface ApiShuttleLineWriteRequest {
 interface ApiShuttleStopWriteRequest {
   name: string
   seq: number
-  lng: number
-  lat: number
-  nav_address: string
+  entry_lng: number
+  entry_lat: number
+  entry_nav_address: string
+  exit_lng: number
+  exit_lat: number
+  exit_nav_address: string
   arrival_gate_ids: string[]
+  vr_url?: string
 }
 
 interface ApiShuttleStopsReplaceRequest {
@@ -191,10 +205,9 @@ function apiOperatingStatus(value: ShuttleOperatingStatus): ApiShuttleOperatingS
 
 function cloneStation(station: ShuttleStation): ShuttleStation {
   return {
-    id: station.id,
-    name: station.name,
+    ...station,
     point: station.point ? { ...station.point } : null,
-    navigationAddress: station.navigationAddress,
+    outboundPoint: station.outboundPoint ? { ...station.outboundPoint } : null,
     arrivalGateIds: [...station.arrivalGateIds],
   }
 }
@@ -232,7 +245,10 @@ export function sanitizeShuttleStations(stations: readonly ShuttleStation[]): Sh
     name: normalizeText(station.name),
     point: station.point ? { lng: Number(station.point.lng), lat: Number(station.point.lat) } : null,
     navigationAddress: normalizeText(station.navigationAddress),
+    outboundPoint: station.outboundPoint ? { lng: Number(station.outboundPoint.lng), lat: Number(station.outboundPoint.lat) } : null,
+    outboundNavigationAddress: normalizeText(station.outboundNavigationAddress ?? ''),
     arrivalGateIds: [...new Set(station.arrivalGateIds.map(id => id.trim()).filter(Boolean))],
+    ...(station.vrUrl !== undefined ? { vrUrl: station.vrUrl.trim() } : {}),
   }))
 }
 
@@ -281,9 +297,14 @@ export function validateShuttleStations(stationsInput: readonly ShuttleStation[]
   if (stations.length === 0) issues.push({ field: 'stations', code: 'required', message: '每条线路至少保留 1 个站点' })
   if (stations.length > 20) issues.push({ field: 'stations', code: 'limit', message: '每条线路最多配置 20 个站点' })
   for (const station of stations) {
+    const vrUrlError = validateOptionalVrUrl(station.vrUrl)
+    if (vrUrlError) issues.push({ field: 'vrUrl', stationId: station.id, code: 'invalid', message: vrUrlError })
     if (!station.name) issues.push({ field: 'name', stationId: station.id, code: 'required', message: '请输入站点名称' })
-    if (!station.point) issues.push({ field: 'point', stationId: station.id, code: 'required', message: '请输入站点定位经纬度' })
-    else if (!isValidGeoPoint(station.point)) issues.push({ field: 'point', stationId: station.id, code: 'invalid', message: '请输入合法的经度,纬度' })
+    for (const [field, label] of [['point', '入场'], ['outboundPoint', '离场']] as const) {
+      const point = station[field]
+      if (!point) issues.push({ field, stationId: station.id, code: 'required', message: `请输入${label}定位经纬度` })
+      else if (!isValidGeoPoint(point)) issues.push({ field, stationId: station.id, code: 'invalid', message: `${label}定位：请输入合法的经度,纬度` })
+    }
   }
   return { valid: issues.length === 0, issues }
 }
@@ -303,20 +324,31 @@ function mapArrivalGateIds(value: unknown): string[] {
   }))]
 }
 
+function mapStopPoint(lng: unknown, lat: unknown, label: string): ShuttleStation['point'] {
+  if (lng === null || lng === undefined || lat === null || lat === undefined) return null
+  const point = { lng: Number(lng), lat: Number(lat) }
+  if (lng === '' || lat === '' || !isValidGeoPoint(point)) throw responseError(`服务器返回的站点${label}定位无效`)
+  return point
+}
+
 export function mapApiShuttleStop(value: ApiShuttleStopVO): ShuttleStation {
   if (value.id === null || value.id === undefined) throw responseError('服务器返回的站点 ID 不完整')
-  let point: ShuttleStation['point'] = null
-  if (value.lng !== null && value.lng !== undefined && value.lat !== null && value.lat !== undefined) {
-    const mapped = { lng: Number(value.lng), lat: Number(value.lat) }
-    if (!isValidGeoPoint(mapped)) throw responseError('服务器返回的站点定位无效')
-    point = mapped
-  }
+  const hasEntry = value.entry_lng !== undefined || value.entry_lat !== undefined
+  const point = mapStopPoint(hasEntry ? value.entry_lng : value.lng, hasEntry ? value.entry_lat : value.lat, '入场')
+  // 旧接口没有离场字段，按接口默认规则使用入场定位；显式空值仍保留待补齐。
+  const hasExit = value.exit_lng !== undefined || value.exit_lat !== undefined
+  const outboundPoint = hasExit
+    ? mapStopPoint(value.exit_lng, value.exit_lat, '离场')
+    : point ? { ...point } : null
   return {
     id: String(value.id),
     name: requiredText(value.name, '站点名称'),
     point,
-    navigationAddress: optionalText(value.nav_address),
+    navigationAddress: optionalText(value.entry_nav_address === undefined ? value.nav_address : value.entry_nav_address),
+    outboundPoint,
+    outboundNavigationAddress: optionalText(value.exit_nav_address),
     arrivalGateIds: mapArrivalGateIds(value.arrival_gate_ids),
+    ...(value.vr_url !== undefined ? { vrUrl: optionalText(value.vr_url) } : {}),
   }
 }
 
@@ -344,6 +376,8 @@ export function mapApiShuttleRoute(value: ApiShuttleLineVO, stops: unknown = val
     sortOrder: nonNegativeInteger(value.sort_order, '线路排序'),
     enabled: flag(value.status),
     stations: mapApiStops(stops),
+    pairLineId: value.pair_line_id === null || value.pair_line_id === undefined ? null : String(value.pair_line_id),
+    stationsInherited: value.stops_inherited === true,
     coordinateSystem: 'GCJ-02',
     createdAt: requiredText(value.create_at, '线路创建时间'),
     updatedAt: requiredText(value.update_at, '线路更新时间'),
@@ -367,14 +401,19 @@ function lineBody(input: ShuttleRouteUpdateInput): ApiShuttleLineWriteRequest {
 }
 
 function stopBody(station: ShuttleStation, sequence: number): ApiShuttleStopWriteRequest {
-  if (!station.point) throw new ShuttleRouteServiceError('请输入站点定位经纬度')
+  if (!station.point) throw new ShuttleRouteServiceError('请输入入场定位经纬度')
+  if (!station.outboundPoint) throw new ShuttleRouteServiceError('请输入离场定位经纬度')
   return {
     name: station.name,
     seq: sequence,
-    lng: station.point.lng,
-    lat: station.point.lat,
-    nav_address: station.navigationAddress,
+    entry_lng: station.point.lng,
+    entry_lat: station.point.lat,
+    entry_nav_address: station.navigationAddress,
+    exit_lng: station.outboundPoint.lng,
+    exit_lat: station.outboundPoint.lat,
+    exit_nav_address: station.outboundNavigationAddress ?? '',
     arrival_gate_ids: [...station.arrivalGateIds],
+    ...(station.vrUrl !== undefined ? { vr_url: station.vrUrl } : {}),
   }
 }
 
@@ -422,6 +461,10 @@ export function createShuttleRouteService(
   }
 
   const service: ShuttleRouteService = {
+    async get(id) {
+      return mapApiShuttleRoute(await rawDetail(id))
+    },
+
     async listPage(page, pageSize, query = DEFAULT_QUERY) {
       return mapApiShuttlePage(await request<ApiShuttleLinePage>({
         method: 'GET',

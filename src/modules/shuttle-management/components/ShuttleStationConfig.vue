@@ -10,7 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { createClientId } from '@/lib/id'
-import { isValidGeoPoint, parseGeoPointInput, serializeGeoPoint } from '@/components/map/geometry'
+import { parseGeoPointInput, serializeGeoPoint } from '@/components/map/geometry'
 import { validateShuttleStations } from '../services/shuttle-route-service'
 
 const props = withDefaults(defineProps<{
@@ -30,6 +30,7 @@ const emit = defineEmits<{
 type EditorMode = 'create' | 'edit'
 interface StationEditor {
   name: string
+  vrUrl: string
   inboundCoordinate: string
   inboundNavigationAddress: string
   outboundCoordinate: string
@@ -37,7 +38,7 @@ interface StationEditor {
   arrivalGateIds: string[]
 }
 
-const emptyEditor = (): StationEditor => ({ name: '', inboundCoordinate: '', inboundNavigationAddress: '', outboundCoordinate: '', outboundNavigationAddress: '', arrivalGateIds: [] })
+const emptyEditor = (): StationEditor => ({ name: '', vrUrl: '', inboundCoordinate: '', inboundNavigationAddress: '', outboundCoordinate: '', outboundNavigationAddress: '', arrivalGateIds: [] })
 const editorMode = ref<EditorMode | null>(null)
 const editingId = ref<string | null>(null)
 const editor = reactive<StationEditor>(emptyEditor())
@@ -55,8 +56,7 @@ function cloneEditor(value: StationEditor): StationEditor {
 
 function cloneStation(station: ShuttleStation): ShuttleStation {
   return {
-    id: station.id,
-    name: station.name,
+    ...station,
     point: station.point ? { ...station.point } : null,
     navigationAddress: station.navigationAddress,
     outboundPoint: station.outboundPoint ? { ...station.outboundPoint } : null,
@@ -89,6 +89,7 @@ function beginEdit(station: ShuttleStation): void {
   editingId.value = station.id
   setEditor({
     name: station.name,
+    vrUrl: station.vrUrl ?? '',
     inboundCoordinate: station.point ? serializeGeoPoint(station.point) : '',
     inboundNavigationAddress: station.navigationAddress,
     outboundCoordinate: station.outboundPoint ? serializeGeoPoint(station.outboundPoint) : '',
@@ -108,18 +109,6 @@ function cancelEditor(): void {
   editorMode.value = null
   editingId.value = null
   setEditor(emptyEditor())
-}
-
-function validateStations(stations: readonly ShuttleStation[]) {
-  const { issues: baseIssues } = validateShuttleStations(stations)
-  const issues = baseIssues.map((issue) => issue.field === 'point'
-    ? { ...issue, message: issue.code === 'required' ? '请输入入场定位经纬度' : '入场定位：请输入合法的经度,纬度' }
-    : issue)
-  for (const station of stations) {
-    if (!station.outboundPoint) issues.push({ field: 'outboundPoint', stationId: station.id, code: 'required', message: '请输入离场定位经纬度' })
-    else if (!isValidGeoPoint(station.outboundPoint)) issues.push({ field: 'outboundPoint', stationId: station.id, code: 'invalid', message: '离场定位：请输入合法的经度,纬度' })
-  }
-  return { valid: issues.length === 0, issues }
 }
 
 function commitEditor(): ShuttleStation[] | null {
@@ -151,19 +140,22 @@ function commitEditor(): ShuttleStation[] | null {
     }
   }
   const station: ShuttleStation = {
+    ...props.value.find((item) => item.id === editingId.value),
     id: editingId.value ?? createClientId(),
     name,
     ...points,
     navigationAddress: editor.inboundNavigationAddress.trim(),
+    vrUrl: editor.vrUrl.trim(),
     outboundNavigationAddress: editor.outboundNavigationAddress.trim(),
     arrivalGateIds: [...editor.arrivalGateIds],
   }
   const next = editorMode.value === 'edit'
     ? props.value.map((item) => item.id === editingId.value ? station : cloneStation(item))
     : [...props.value.map(cloneStation), station]
-  const validation = validateStations([station])
+  const validation = validateShuttleStations([station])
   if (!validation.valid) {
     editorError.value = validation.issues[0]!.message
+    if (validation.issues[0]!.field === 'vrUrl') editorErrorField.value = 'vrUrl'
     return null
   }
   emit('update:value', next)
@@ -198,14 +190,14 @@ function validateAndCommit(): boolean {
     stations = committed
   }
   else if (editorMode.value) cancelEditor()
-  const result = validateStations(stations)
+  const result = validateShuttleStations(stations)
   if (!result.valid) {
     const issue = result.issues[0]!
     const station = issue.stationId ? stations.find((item) => item.id === issue.stationId) : null
     if (station) {
       beginEdit(station)
       editorError.value = issue.message
-      editorErrorField.value = issue.field === 'point' ? 'inboundCoordinate' : issue.field === 'outboundPoint' ? 'outboundCoordinate' : 'name'
+      editorErrorField.value = issue.field === 'point' ? 'inboundCoordinate' : issue.field === 'outboundPoint' ? 'outboundCoordinate' : issue.field === 'vrUrl' ? 'vrUrl' : 'name'
     }
     else {
       editorError.value = issue.message
@@ -268,6 +260,11 @@ watch(() => props.routeId, cancelEditor)
         <div class="space-y-2"><Label for="station-inbound-address">入场导航地址（选填）</Label><Input id="station-inbound-address" v-model="editor.inboundNavigationAddress" class="h-11" placeholder="请输入导航地址" :disabled="saving" /></div>
         <div class="space-y-2"><Label for="station-outbound-coordinate">离场定位（经度,纬度） <span class="text-destructive">*</span></Label><Input id="station-outbound-coordinate" v-model="editor.outboundCoordinate" class="h-11 font-mono" placeholder="例如：113.1462,27.8165" :disabled="saving" :aria-invalid="editorErrorField === 'outboundCoordinate'" /></div>
         <div class="space-y-2"><Label for="station-outbound-address">离场导航地址（选填）</Label><Input id="station-outbound-address" v-model="editor.outboundNavigationAddress" class="h-11" placeholder="选填导航链接" :disabled="saving" /></div>
+        <div class="space-y-2 sm:col-span-2">
+          <Label for="station-vr-url">VR 链接（选填）</Label>
+          <Input id="station-vr-url" v-model="editor.vrUrl" data-field="vrUrl" type="url" class="h-11" placeholder="https://" :disabled="saving" :aria-invalid="editorErrorField === 'vrUrl'" />
+          <p class="text-xs text-muted-foreground">填写此位置的 HTTP 或 HTTPS 链接；留空不配置，清空后保存可移除已有链接。</p>
+        </div>
         <div class="space-y-2 sm:col-span-2">
           <Label>可达检票口</Label>
           <p class="text-xs text-muted-foreground">可多选，作为 H5 从接驳站前往检票口的路线依据。</p>

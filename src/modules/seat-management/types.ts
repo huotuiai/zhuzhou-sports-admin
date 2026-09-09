@@ -15,6 +15,7 @@ export interface SeatFloor {
 }
 
 export interface SeatZone {
+  vrUrl?: string
   id: string
   code: string
   name: string
@@ -51,6 +52,7 @@ export interface SeatFloorCreateInput extends SeatFloorWriteInput {
 }
 
 export interface SeatZoneWriteInput {
+  vrUrl?: string
   code: string
   name: string
   floorId: string

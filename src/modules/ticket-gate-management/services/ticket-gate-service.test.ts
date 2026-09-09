@@ -82,6 +82,7 @@ describe('ticket gate API mapping and validation', () => {
       locationDescription: '',
       point: { lng: 113.1462, lat: 27.8165 },
       navigationAddress: '',
+      vrUrl: '',
       sortOrder: 2,
       status: 'restricted',
       statusRemark: '临时管制',
@@ -106,6 +107,21 @@ describe('ticket gate API mapping and validation', () => {
 })
 
 describe('ticket gate API service', () => {
+  it.each([undefined, '', '   ', ' https://example.com/vr?token=A%2Fb#view '])('writes an optional VR link without losing clear or omit semantics: %j', async (vrUrl) => {
+    const expected = vrUrl?.trim() ?? ''
+    const { configs, request } = queuedRequester([
+      apiGate({ vr_url: expected }), apiGate({ vr_url: expected }), apiGate({ vr_url: expected }),
+    ])
+    const service = createTicketGateService(request)
+    expect((await service.create(input({ vrUrl }))).vrUrl).toBe(expected)
+    expect((await service.update('11', input({ vrUrl }))).vrUrl).toBe(expected)
+    expect((await service.get('11')).vrUrl).toBe(expected)
+    for (const config of configs.slice(0, 2)) {
+      if (vrUrl === undefined) expect(config.data).not.toHaveProperty('vr_url')
+      else expect(config.data).toHaveProperty('vr_url', expected)
+    }
+  })
+
   it('downloads the backend CSV with the active filters and export metadata', async () => {
     const configs: SignedRequestConfig[] = []
     const blob = new Blob(['csv'], { type: 'text/csv' })

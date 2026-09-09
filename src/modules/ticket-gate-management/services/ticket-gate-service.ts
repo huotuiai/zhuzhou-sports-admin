@@ -13,8 +13,10 @@ import type {
   TicketGateWriteInput,
 } from '../types'
 import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
+import { validateOptionalVrUrl } from '@/lib/vr-url'
 
 export interface ApiGateVO {
+  vr_url?: string | null
   id: number | string
   create_at: string
   update_at: string
@@ -50,6 +52,7 @@ export interface ApiGateFloorVO {
 }
 
 interface ApiGateCreateRequest {
+  vr_url?: string
   code: string
   name: string
   floor_id: number
@@ -182,6 +185,7 @@ export function formatMapCoordinates(point: GeoPoint): string {
 
 export function sanitizeTicketGateInput(input: TicketGateWriteInput): TicketGateWriteInput {
   return {
+    ...(input.vrUrl !== undefined ? { vrUrl: input.vrUrl.trim() } : {}),
     code: normalizeText(input.code).toUpperCase(),
     name: normalizeText(input.name),
     floorId: normalizeText(input.floorId),
@@ -229,6 +233,8 @@ export function validateTicketGateInput(
     issues.push({ field: 'sortOrder', code: 'positive_integer', message: '排序号必须是大于 0 的整数' })
   }
   if (!isStatus(value.status)) issues.push({ field: 'status', code: 'invalid', message: '请选择有效的检票口状态' })
+  const vrUrlError = validateOptionalVrUrl(value.vrUrl)
+  if (vrUrlError) issues.push({ field: 'vrUrl', code: 'invalid', message: vrUrlError })
 
   return { valid: issues.length === 0, issues }
 }
@@ -247,6 +253,7 @@ export function mapApiGate(value: ApiGateVO): TicketGate {
     locationDescription: typeof value.location_desc === 'string' ? value.location_desc : '',
     point,
     navigationAddress: typeof value.nav_address === 'string' ? value.nav_address : '',
+    vrUrl: typeof value.vr_url === 'string' ? value.vr_url : '',
     sortOrder: integer(value.sort_order),
     status: mapOpenStatus(value.open_status),
     statusRemark: typeof value.status_remark === 'string' ? value.status_remark : '',
@@ -301,6 +308,7 @@ function createBody(input: TicketGateWriteInput): ApiGateCreateRequest {
   const value = sanitizeTicketGateInput(input)
   const point = parseMapCoordinates(value.mapCoordinates)
   return {
+    ...(value.vrUrl !== undefined ? { vr_url: value.vrUrl } : {}),
     code: value.code,
     name: value.name,
     floor_id: bodyId(value.floorId),
@@ -318,6 +326,7 @@ function createBody(input: TicketGateWriteInput): ApiGateCreateRequest {
 function updateBody(input: TicketGateWriteInput): ApiGateUpdateRequest {
   const data = createBody(input)
   return {
+    ...(data.vr_url !== undefined ? { vr_url: data.vr_url } : {}),
     name: data.name,
     floor_id: data.floor_id,
     location_desc: data.location_desc,

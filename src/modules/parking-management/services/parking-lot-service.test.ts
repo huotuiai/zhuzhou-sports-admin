@@ -108,6 +108,7 @@ describe('parking lot API mapping and validation', () => {
       locationDescription: '',
       point: { lng: 113.1462, lat: 27.8165 },
       navigationAddress: '',
+      vrUrl: '',
       totalSpaces: 120,
       availableSpaces: 0,
       availabilityUpdateMethod: 'integrated',
@@ -136,6 +137,22 @@ describe('parking lot API mapping and validation', () => {
 })
 
 describe('parking lot API service', () => {
+  it.each([undefined, '', '   ', ' https://example.com/vr?token=A%2Fb#view '])('writes an optional VR link without losing clear or omit semantics: %j', async (vrUrl) => {
+    const expected = vrUrl?.trim() ?? ''
+    const { configs, request } = queuedRequester([
+      apiParking({ vr_url: expected }), apiParking({ vr_url: 'https://example.com/old' }),
+      apiParking({ vr_url: expected }), apiParking({ vr_url: expected }),
+    ])
+    const service = createParkingLotService(request)
+    expect((await service.create(input({ vrUrl }))).vrUrl).toBe(expected)
+    expect((await service.update('11', { ...updateInput(), vrUrl })).vrUrl).toBe(expected)
+    expect((await service.get('11')).record.vrUrl).toBe(expected)
+    for (const config of [configs[0]!, configs[2]!]) {
+      if (vrUrl === undefined) expect(config.data).not.toHaveProperty('vr_url')
+      else expect(config.data).toHaveProperty('vr_url', expected)
+    }
+  })
+
   it('loads every server page and reads the latest detail', async () => {
     const { configs, request } = queuedRequester([
       { list: [apiParking({ id: 2, code: 'P-002', sort_order: 2 })], total: 101, page: 1, page_size: 100 },

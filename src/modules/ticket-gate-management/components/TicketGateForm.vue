@@ -28,6 +28,7 @@ const touched = reactive<Record<Field, boolean>>({
   locationDescription: false,
   mapCoordinates: false,
   navigationAddress: false,
+  vrUrl: false,
   sortOrder: false,
   status: false,
   statusRemark: false,
@@ -195,6 +196,18 @@ watch(() => props.mode, () => {
         @blur="touched.navigationAddress = true"
       />
       <p class="text-xs leading-5 text-muted-foreground">文本地址，作为第三方地图目的地或复制地址兜底。</p>
+    </div>
+
+    <div class="col-span-2 space-y-2">
+      <Label :for="inputId('vrUrl')">VR 链接（选填）</Label>
+      <Input
+        :id="inputId('vrUrl')" data-field="vrUrl" :model-value="value.vrUrl ?? ''" type="url" class="h-11"
+        placeholder="https://" :disabled="saving" :aria-invalid="Boolean(issueFor('vrUrl'))"
+        :aria-describedby="issueFor('vrUrl') ? errorId('vrUrl') : undefined"
+        @update:model-value="patch({ vrUrl: String($event) })" @blur="touched.vrUrl = true"
+      />
+      <p v-if="issueFor('vrUrl')" :id="errorId('vrUrl')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('vrUrl')?.message }}</p>
+      <p v-else class="text-xs leading-5 text-muted-foreground">填写此位置的 HTTP 或 HTTPS 链接；留空不配置，清空后保存可移除已有链接。</p>
     </div>
 
     <div class="col-span-2 space-y-2">

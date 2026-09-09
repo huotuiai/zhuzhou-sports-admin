@@ -29,7 +29,7 @@ const container = ref<HTMLDivElement | null>(null)
 const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const touched = reactive<Record<Field, boolean>>({
   code: false, name: false, floorId: false, rowStart: false, rowEnd: false,
-  gateIds: false, sortOrder: false, status: false, remark: false,
+  gateIds: false, sortOrder: false, status: false, remark: false, vrUrl: false,
 })
 
 const allIssues = computed(() => {
@@ -198,6 +198,17 @@ watch(() => [props.mode, props.editingId], () => {
         <SelectTrigger :id="inputId('status')" data-field="status" class="h-11 w-full"><SelectValue /></SelectTrigger>
         <SelectContent><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">停用</SelectItem></SelectContent>
       </Select>
+    </div>
+
+    <div class="col-span-2 space-y-2">
+      <Label :for="inputId('vrUrl')">VR 链接（选填）</Label>
+      <Input
+        :id="inputId('vrUrl')" data-field="vrUrl" :model-value="value.vrUrl ?? ''" type="url" class="h-11"
+        placeholder="https://" :disabled="saving" :aria-invalid="Boolean(issueFor('vrUrl'))"
+        :aria-describedby="errorId('vrUrl')" @update:model-value="patch({ vrUrl: String($event) })" @blur="touched.vrUrl = true"
+      />
+      <p v-if="issueFor('vrUrl')" :id="errorId('vrUrl')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('vrUrl')?.message }}</p>
+      <p v-else class="text-xs leading-5 text-muted-foreground">填写此位置的 HTTP 或 HTTPS 链接；留空不配置，清空后保存可移除已有链接。</p>
     </div>
 
     <div class="col-span-2 space-y-2">

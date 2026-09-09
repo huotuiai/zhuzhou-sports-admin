@@ -21,6 +21,7 @@ import type {
 } from '../types'
 import { isValidGeoPoint } from '@/components/map/geometry'
 import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
+import { validateOptionalVrUrl } from '@/lib/vr-url'
 
 type ApiParkingOpenStatus = 0 | 1 | 2
 type ApiParkingUpdateMode = 'manual' | 'sync'
@@ -32,6 +33,7 @@ export interface ApiParkingDirectGate {
 }
 
 export interface ApiParkingVO {
+  vr_url?: string | null
   id: number | string
   create_at: string
   update_at: string
@@ -64,6 +66,7 @@ export interface ApiParkingPage {
 }
 
 interface ApiParkingWriteRequest {
+  vr_url?: string
   code?: string
   name: string
   location_desc: string
@@ -221,6 +224,7 @@ function characterCount(value: string): number {
 
 export function sanitizeParkingLotBaseInput(input: ParkingLotBaseInput): ParkingLotBaseInput {
   return {
+    ...(input.vrUrl !== undefined ? { vrUrl: input.vrUrl.trim() } : {}),
     name: normalizeText(input.name),
     locationDescription: normalizeText(input.locationDescription),
     point: clonePoint(input.point),
@@ -262,6 +266,8 @@ export function validateParkingLotBaseInput(input: ParkingLotBaseInput): Parking
   pushLengthIssue(issues, 'locationDescription', value.locationDescription, 100, '位置描述')
   pushLengthIssue(issues, 'navigationAddress', value.navigationAddress, 200, '导航地址')
   pushLengthIssue(issues, 'remark', value.remark, 300, '备注')
+  const vrUrlError = validateOptionalVrUrl(value.vrUrl)
+  if (vrUrlError) issues.push({ field: 'vrUrl', code: 'invalid', message: vrUrlError })
 
   if (!value.point) issues.push({ field: 'point', code: 'required', message: '请输入定位经纬度' })
   else if (!isValidGeoPoint(value.point)) issues.push({ field: 'point', code: 'invalid', message: '请输入合法的经度,纬度' })
@@ -347,6 +353,7 @@ export function mapApiParkingLot(value: ApiParkingVO): ParkingLot {
     locationDescription: optionalText(value.location_desc),
     point,
     navigationAddress: optionalText(value.nav_address),
+    vrUrl: optionalText(value.vr_url),
     totalSpaces,
     availableSpaces,
     availabilityUpdateMethod: mapUpdateMethod(value.update_mode),
@@ -385,6 +392,7 @@ function writeBody(input: ParkingLotBaseInput, originalOpenStatus: ApiParkingOpe
   const value = sanitizeParkingLotBaseInput(input)
   if (!value.point) throw new ParkingLotServiceError('请输入定位经纬度')
   return {
+    ...(value.vrUrl !== undefined ? { vr_url: value.vrUrl } : {}),
     name: value.name,
     location_desc: value.locationDescription,
     lng: value.point.lng,
