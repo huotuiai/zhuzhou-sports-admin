@@ -1,3 +1,5 @@
+import type { BackendCsvExportFile } from '@/lib/http'
+
 export type RoleKind = 'super-admin' | 'preset' | 'custom'
 export type PermissionType = 'group' | 'page' | 'action'
 export type UserStatus = 'enabled' | 'disabled' | 'locked'
@@ -139,6 +141,7 @@ export interface RolePage {
 
 export interface RoleManagementService {
   listRoles(query: RoleQuery, page: number, pageSize: number): Promise<RolePage>
+  exportCsv(query: RoleQuery): Promise<BackendCsvExportFile>
   getRole(id: string): Promise<SystemRole>
   createRole(input: RoleCreateInput): Promise<SystemRole>
   updateRole(id: string, input: RoleBasicInfoInput): Promise<SystemRole>
@@ -151,6 +154,7 @@ export interface RoleManagementService {
 
 export interface UserManagementService {
   listUsers(query: UserQuery, page: number, pageSize: number): Promise<UserPage>
+  exportCsv(query: UserQuery): Promise<BackendCsvExportFile>
   getUser(id: string): Promise<SystemUser>
   createUser(input: UserCreateInput): Promise<SystemUser>
   updateUser(id: string, input: UserBasicInfoInput, options?: UserUpdateOptions): Promise<SystemUser>

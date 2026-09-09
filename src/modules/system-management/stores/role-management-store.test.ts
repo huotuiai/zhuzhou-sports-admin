@@ -1,3 +1,4 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   RoleBasicInfoInput,
   RoleCreateInput,
@@ -13,7 +14,7 @@ import type {
   UserPage,
   UserQuery,
 } from '../types'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { createRoleManagementStore } from './role-management-store'
 
@@ -49,6 +50,7 @@ const permissions: SystemPermission[] = [
 ]
 
 class StubRoleManagementService implements RoleManagementService {
+  exportCsv = vi.fn<(query: RoleQuery) => Promise<BackendCsvExportFile>>()
   roles: SystemRole[] = []
   roleUsers = new Map<string, SystemUser[]>()
   listCalls: Array<{ query: RoleQuery; page: number; pageSize: number }> = []
@@ -129,6 +131,7 @@ class StubRoleManagementService implements RoleManagementService {
 }
 
 class StubUserManagementService implements UserManagementService {
+  async exportCsv(): Promise<BackendCsvExportFile> { throw new Error('unused') }
   users: SystemUser[] = []
   departments: SystemDepartment[] = [department(1)]
   userListCalls: Array<{ page: number; pageSize: number }> = []
@@ -161,6 +164,41 @@ describe('role management store', () => {
     setActivePinia(createPinia())
     service = new StubRoleManagementService()
     usersService = new StubUserManagementService()
+  })
+
+  it('exports all matching roles with a filter snapshot and prevents concurrent exports', async () => {
+    const store = createRoleManagementStore(service, usersService, 'role-export')()
+    store.query.keyword = '场馆'
+    store.page = 3
+    let finish!: (file: BackendCsvExportFile) => void
+    service.exportCsv.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+
+    const pending = store.exportCsv()
+    expect(store.isExporting).toBe(true)
+    await expect(store.exportCsv()).resolves.toBeNull()
+    store.query.keyword = '其他'
+    expect(service.exportCsv).toHaveBeenCalledExactlyOnceWith({ keyword: '场馆' })
+    expect(service.listCalls).toEqual([])
+
+    const file = { content: new Blob(['编码\nvenue']), filename: 'sys_roles.csv', truncated: false, count: null, total: null }
+    finish(file)
+    await expect(pending).resolves.toEqual(file)
+    expect(store.isExporting).toBe(false)
+    expect(store.page).toBe(3)
+  })
+
+  it('reports export failures and allows a successful retry', async () => {
+    const store = createRoleManagementStore(service, usersService, 'role-export-error')()
+    service.exportCsv.mockRejectedValueOnce(new Error('没有角色导出权限'))
+    await expect(store.exportCsv()).resolves.toBeNull()
+    expect(store.error).toBe('没有角色导出权限')
+    expect(store.isExporting).toBe(false)
+
+    const file = { content: new Blob(['编码']), filename: 'sys_roles.csv', truncated: false, count: null, total: null }
+    service.exportCsv.mockResolvedValueOnce(file)
+    await expect(store.exportCsv()).resolves.toEqual(file)
+    expect(store.error).toBeNull()
+    expect(store.isExporting).toBe(false)
   })
 
   it('initializes dynamic menus and delegates keyword pagination to the server', async () => {

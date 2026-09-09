@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CrudDialogCloseRequest, DataTableColumn } from '@/components/common'
 import type { SystemUser, UserBasicInfoInput, UserCreateInput, UserPasswordResetInput, UserQuery, UserStatus, ValidationIssue } from '@/modules/system-management/types'
-import { Building2, Download, KeyRound, LockKeyholeOpen, MoreHorizontal, PencilLine, Plus, Power, Trash2, UserRoundPlus, UsersRound } from '@lucide/vue'
+import { Building2, Download, KeyRound, LoaderCircle, LockKeyholeOpen, MoreHorizontal, PencilLine, Plus, Power, Trash2, UserRoundPlus, UsersRound } from '@lucide/vue'
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import { CrudDialog, DataTable, PaginationBar, QueryPanel } from '@/components/common'
@@ -204,9 +204,18 @@ async function confirmStatus(): Promise<void> {
   if (!saved) return showError('账号状态更新失败')
   statusTarget.value = null; toast.success(`账号已${status === 'enabled' ? '启用' : '禁用'}。`)
 }
-function exportUsers(): void {
-  if (!canExport.value) return
-  toast.info('后端接口未提供')
+async function exportUsers(): Promise<void> {
+  if (!canExport.value || store.isExporting) return
+  const file = await store.exportCsv()
+  if (!file) return showError('用户导出失败')
+  const url = URL.createObjectURL(file.content)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = file.filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+  if (file.truncated) toast.warning(`用户 CSV 已导出，数据超过上限，仅包含前 ${file.count ?? 5000} 条。`)
+  else toast.success('用户 CSV 已导出。')
 }
 
 onMounted(async () => {
@@ -225,7 +234,10 @@ onMounted(async () => {
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <Button v-if="canOperate" variant="outline" size="lg" class="h-11" @click="organizationOpen = true"><Building2 aria-hidden="true" />组织架构管理</Button>
-          <Button v-if="canExport" variant="outline" size="lg" class="h-11" @click="exportUsers"><Download aria-hidden="true" />导出</Button>
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="store.isLoading || store.isExporting" @click="exportUsers">
+            <LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            <Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中…' : '导出' }}
+          </Button>
           <Button v-if="canCreateUser()" size="lg" class="h-11" @click="openCreate"><Plus aria-hidden="true" />新增用户</Button>
         </div>
       </header>

@@ -1,3 +1,4 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   DepartmentWriteInput,
   SystemDepartment,
@@ -43,6 +44,7 @@ export function createUserManagementStore(service: UserManagementService, storeI
     const leaderCandidatesLoaded = ref(false)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
     const isLoadingLeaderCandidates = ref(false)
     const loadingDetailId = ref<string | null>(null)
     const deletingId = ref<string | null>(null)
@@ -327,6 +329,22 @@ export function createUserManagementStore(service: UserManagementService, storeI
       }
     }
 
+    async function exportCsv(): Promise<BackendCsvExportFile | null> {
+      if (isExporting.value) return null
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.exportCsv({ ...query })
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        isExporting.value = false
+      }
+    }
+
     function resetError(): void {
       error.value = null
     }
@@ -345,6 +363,7 @@ export function createUserManagementStore(service: UserManagementService, storeI
       initialized,
       isLoading,
       isSaving,
+      isExporting,
       isLoadingLeaderCandidates,
       loadingDetailId,
       deletingId,
@@ -352,6 +371,7 @@ export function createUserManagementStore(service: UserManagementService, storeI
       initialize,
       refresh,
       queryUsers,
+      exportCsv,
       changePage,
       changePageSize,
       getUser,

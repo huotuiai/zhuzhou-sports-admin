@@ -104,14 +104,14 @@ function formatActivityRange(activity: DashboardActivityOption): string {
 
 <template>
   <section class="glass-panel rounded-xl border p-4" aria-labelledby="dashboard-filter-title" :aria-busy="loading">
-    <div class="flex flex-col gap-4 xl:flex-row xl:items-end">
-      <div class="grid min-w-0 flex-1 gap-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,230px)_minmax(240px,320px)_minmax(280px,1fr)]">
-        <div class="space-y-2">
+    <div class="flex flex-wrap items-end gap-4">
+      <div class="grid min-w-0 flex-[1_1_52rem] gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,230px)_minmax(0,320px)_minmax(280px,1fr)]">
+        <div class="min-w-0 space-y-2">
           <Label id="dashboard-filter-title" for="dashboard-range-preset">时间范围</Label>
           <Select :model-value="modelValue.preset" :disabled="loading" @update:model-value="handlePresetChange">
-            <SelectTrigger id="dashboard-range-preset" class="h-11 w-full bg-background">
+            <SelectTrigger id="dashboard-range-preset" class="h-11 w-full min-w-0 bg-background">
               <CalendarRange class="size-4 text-muted-foreground" aria-hidden="true" />
-              <SelectValue placeholder="选择时间范围" />
+              <SelectValue class="min-w-0 truncate" placeholder="选择时间范围" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem v-for="preset in presets" :key="preset.value" :value="preset.value">
@@ -121,22 +121,22 @@ function formatActivityRange(activity: DashboardActivityOption): string {
           </Select>
         </div>
 
-        <div class="space-y-2">
+        <div class="min-w-0 space-y-2">
           <Label for="dashboard-activity">快捷选活动</Label>
           <Select :model-value="modelValue.activityId || 'none'" :disabled="loading || activities.length === 0" @update:model-value="handleActivityChange">
-            <SelectTrigger id="dashboard-activity" class="h-11 w-full bg-background">
-              <SelectValue :placeholder="activities.length ? '选择活动（自动切换时间）' : '暂无活动'" />
+            <SelectTrigger id="dashboard-activity" class="h-11 w-full min-w-0 bg-background">
+              <SelectValue class="min-w-0 flex-1 truncate text-left" :placeholder="activities.length ? '选择活动（自动切换时间）' : '暂无活动'" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="none">不按活动筛选</SelectItem>
-              <SelectItem v-for="activity in activities" :key="activity.id" :value="activity.id">
+              <SelectItem v-for="activity in activities" :key="activity.id" :value="activity.id" class="whitespace-normal [overflow-wrap:anywhere]">
                 {{ activity.name }}（{{ formatActivityRange(activity) }}）
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        <div v-if="modelValue.preset === 'custom'" class="space-y-2 md:col-span-2 xl:col-span-1">
+        <div v-if="modelValue.preset === 'custom'" class="min-w-0 space-y-2 md:col-span-2 xl:col-span-1">
           <Label for="dashboard-custom-start">自定义日期</Label>
           <div class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
             <Input
@@ -162,7 +162,7 @@ function formatActivityRange(activity: DashboardActivityOption): string {
         </div>
       </div>
 
-      <div class="flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+      <div class="flex min-h-11 max-w-full flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
         <LoaderCircle v-if="loading" class="size-4 animate-spin text-primary motion-reduce:animate-none" aria-hidden="true" />
         <span v-else class="size-2 rounded-full bg-success" aria-hidden="true" />
         <span>当前统计范围：</span>

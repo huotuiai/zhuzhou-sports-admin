@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   RolePage,
@@ -6,9 +7,10 @@ import type {
   SystemUser,
   UserManagementService,
   UserPage,
+  UserQuery,
   UserStatus,
 } from '../types'
-import { ApiError, requestData } from '@/lib/http'
+import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
 
 export interface ApiUserVO {
   id: number | string
@@ -104,6 +106,10 @@ interface ApiDepartmentUpdateRequest {
 
 export interface UserManagementDataRequester {
   <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface UserManagementFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
 function responseError(message: string): ApiError {
@@ -250,18 +256,37 @@ function mapRolePage(value: ApiPage<ApiRoleVO>): RolePage {
   }
 }
 
+function filterParameters(query: UserQuery): Record<string, string | number> {
+  const params: Record<string, string | number> = {}
+  const keyword = query.keyword.trim().normalize('NFKC')
+  if (keyword) params.keyword = keyword
+  if (query.departmentId) params.dept_id = query.departmentId
+  if (query.roleId) params.role_id = query.roleId
+  if (query.status !== 'all') params.status = apiStatus(query.status)
+  return params
+}
+
+const defaultFileRequester: UserManagementFileRequester = config => rawHttpClient.request<Blob>(config)
+
 export function createUserManagementService(
   request: UserManagementDataRequester = requestData,
+  requestFile: UserManagementFileRequester = defaultFileRequester,
 ): UserManagementService {
   return {
     async listUsers(query, page, pageSize) {
-      const params: Record<string, string | number> = { page, page_size: pageSize }
-      const keyword = query.keyword.trim().normalize('NFKC')
-      if (keyword) params.keyword = keyword
-      if (query.departmentId) params.dept_id = query.departmentId
-      if (query.roleId) params.role_id = query.roleId
-      if (query.status !== 'all') params.status = query.status === 'enabled' ? 1 : query.status === 'disabled' ? 0 : 2
+      const params = { page, page_size: pageSize, ...filterParameters(query) }
       return mapUserPage(await request<ApiPage<ApiUserVO>>({ method: 'GET', url: 'api/v1/admin/users', params }))
+    },
+
+    async exportCsv(query) {
+      const response = await requestFile({
+        method: 'GET',
+        url: 'api/v1/admin/users/export',
+        params: filterParameters(query),
+        responseType: 'blob',
+        headers: { Accept: 'text/csv' },
+      })
+      return mapCsvExportResponse(response, 'sys_users.csv')
     },
 
     async getUser(id) {

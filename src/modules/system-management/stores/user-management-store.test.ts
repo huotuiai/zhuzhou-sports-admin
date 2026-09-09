@@ -1,3 +1,4 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   DepartmentWriteInput,
   RolePage,
@@ -10,7 +11,7 @@ import type {
   UserPage,
   UserQuery,
 } from '../types'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { createUserManagementStore } from './user-management-store'
 
@@ -51,6 +52,7 @@ function role(id: number): SystemRole {
 }
 
 class StubUserManagementService implements UserManagementService {
+  exportCsv = vi.fn<(query: UserQuery) => Promise<BackendCsvExportFile>>()
   users: SystemUser[] = []
   departments: SystemDepartment[] = [department(1)]
   roles: SystemRole[] = [role(1)]
@@ -163,6 +165,42 @@ describe('user management store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     service = new StubUserManagementService()
+  })
+
+  it('exports all matching users with a filter snapshot and prevents concurrent exports', async () => {
+    const store = createUserManagementStore(service, 'user-export')()
+    const query: UserQuery = { keyword: '场馆', departmentId: '21', roleId: '11', status: 'locked' }
+    Object.assign(store.query, query)
+    store.page = 3
+    let finish!: (file: BackendCsvExportFile) => void
+    service.exportCsv.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+
+    const pending = store.exportCsv()
+    expect(store.isExporting).toBe(true)
+    await expect(store.exportCsv()).resolves.toBeNull()
+    store.query.keyword = '其他'
+    expect(service.exportCsv).toHaveBeenCalledExactlyOnceWith(query)
+    expect(service.userListCalls).toEqual([])
+
+    const file = { content: new Blob(['用户名\nvenue']), filename: 'sys_users.csv', truncated: false, count: null, total: null }
+    finish(file)
+    await expect(pending).resolves.toEqual(file)
+    expect(store.isExporting).toBe(false)
+    expect(store.page).toBe(3)
+  })
+
+  it('reports export failures and allows a successful retry', async () => {
+    const store = createUserManagementStore(service, 'user-export-error')()
+    service.exportCsv.mockRejectedValueOnce(new Error('没有用户导出权限'))
+    await expect(store.exportCsv()).resolves.toBeNull()
+    expect(store.error).toBe('没有用户导出权限')
+    expect(store.isExporting).toBe(false)
+
+    const file = { content: new Blob(['用户名']), filename: 'sys_users.csv', truncated: false, count: null, total: null }
+    service.exportCsv.mockResolvedValueOnce(file)
+    await expect(store.exportCsv()).resolves.toEqual(file)
+    expect(store.error).toBeNull()
+    expect(store.isExporting).toBe(false)
   })
 
   it('initializes the current page, all departments and every role reference page', async () => {

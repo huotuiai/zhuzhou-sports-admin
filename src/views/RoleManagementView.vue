@@ -12,6 +12,7 @@ import {
   CircleEllipsis,
   Download,
   KeyRound,
+  LoaderCircle,
   PencilLine,
   Plus,
   ShieldCheck,
@@ -75,7 +76,7 @@ const baseColumns: readonly DataTableColumn<SystemRole>[] = [
 const store = useRoleManagementStore()
 const authStore = useAuthStore()
 const canOperate = computed(() => authStore.hasPermission('role:operate'))
-const canExport = computed(() => authStore.hasPermission('role:view'))
+const canExport = computed(() => authStore.hasPermission('role:export'))
 const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
 const queryDraft = ref(store.query.keyword)
 
@@ -284,9 +285,18 @@ function showStoreError(fallback: string): void {
   store.resetError()
 }
 
-function exportRoles(): void {
-  if (!canExport.value) return
-  toast.info('后端接口未提供')
+async function exportRoles(): Promise<void> {
+  if (!canExport.value || store.isExporting) return
+  const file = await store.exportCsv()
+  if (!file) return showStoreError('角色导出失败')
+  const url = URL.createObjectURL(file.content)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = file.filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+  if (file.truncated) toast.warning(`角色 CSV 已导出，数据超过上限，仅包含前 ${file.count ?? 5000} 条。`)
+  else toast.success('角色 CSV 已导出。')
 }
 
 onMounted(async () => {
@@ -309,8 +319,9 @@ onMounted(async () => {
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <Button v-if="canExport" variant="outline" size="lg" class="h-11" @click="exportRoles">
-            <Download aria-hidden="true" />导出
+          <Button v-if="canExport" variant="outline" size="lg" class="h-11" :disabled="store.isLoading || store.isExporting" @click="exportRoles">
+            <LoaderCircle v-if="store.isExporting" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            <Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中…' : '导出' }}
           </Button>
           <Button v-if="canOperate" size="lg" class="h-11" @click="openCreate">
             <Plus aria-hidden="true" />新增角色

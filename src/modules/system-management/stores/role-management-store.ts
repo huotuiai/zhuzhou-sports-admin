@@ -1,3 +1,4 @@
+import type { BackendCsvExportFile } from '@/lib/http'
 import type {
   RoleBasicInfoInput,
   RoleCreateInput,
@@ -57,6 +58,7 @@ export function createRoleManagementStore(
     const referencesLoaded = ref(false)
     const isLoading = ref(false)
     const isSaving = ref(false)
+    const isExporting = ref(false)
     const isLoadingReferences = ref(false)
     const isLoadingAssignment = ref(false)
     const loadingDetailId = ref<string | null>(null)
@@ -343,6 +345,22 @@ export function createRoleManagementStore(
       }
     }
 
+    async function exportCsv(): Promise<BackendCsvExportFile | null> {
+      if (isExporting.value) return null
+      isExporting.value = true
+      error.value = null
+      try {
+        return await service.exportCsv({ ...query })
+      }
+      catch (cause) {
+        error.value = errorMessage(cause)
+        return null
+      }
+      finally {
+        isExporting.value = false
+      }
+    }
+
     function resetError(): void {
       error.value = null
     }
@@ -364,6 +382,7 @@ export function createRoleManagementStore(
       referencesLoaded,
       isLoading,
       isSaving,
+      isExporting,
       isLoadingReferences,
       isLoadingAssignment,
       loadingDetailId,
@@ -372,6 +391,7 @@ export function createRoleManagementStore(
       initialize,
       refresh,
       queryRoles,
+      exportCsv,
       changePage,
       changePageSize,
       getRole,

@@ -1,3 +1,4 @@
+import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   RoleManagementService,
@@ -5,7 +6,7 @@ import type {
   RoleQuery,
   SystemPermission,
 } from '../types'
-import { ApiError, requestData } from '@/lib/http'
+import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
 import { mapApiRole, mapApiUser } from './user-management-service'
 import type { ApiRoleVO, ApiUserVO } from './user-management-service'
 
@@ -49,6 +50,10 @@ interface ApiIdListRequest {
 
 export interface RoleManagementDataRequester {
   <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
+}
+
+export interface RoleManagementFileRequester {
+  (config: SignedRequestConfig): Promise<AxiosResponse<Blob>>
 }
 
 function responseError(message: string): ApiError {
@@ -115,19 +120,36 @@ function mapRolePage(value: ApiPage<ApiRoleVO>): RolePage {
   }
 }
 
+function filterParameters(query: RoleQuery): Record<string, string | number> {
+  const keyword = query.keyword.trim().normalize('NFKC')
+  return keyword ? { keyword } : {}
+}
+
+const defaultFileRequester: RoleManagementFileRequester = config => rawHttpClient.request<Blob>(config)
+
 export function createRoleManagementService(
   request: RoleManagementDataRequester = requestData,
+  requestFile: RoleManagementFileRequester = defaultFileRequester,
 ): RoleManagementService {
   return {
     async listRoles(query: RoleQuery, page: number, pageSize: number) {
-      const params: Record<string, string | number> = { page, page_size: pageSize }
-      const keyword = query.keyword.trim().normalize('NFKC')
-      if (keyword) params.keyword = keyword
+      const params = { page, page_size: pageSize, ...filterParameters(query) }
       return mapRolePage(await request<ApiPage<ApiRoleVO>>({
         method: 'GET',
         url: 'api/v1/admin/roles',
         params,
       }))
+    },
+
+    async exportCsv(query) {
+      const response = await requestFile({
+        method: 'GET',
+        url: 'api/v1/admin/roles/export',
+        params: filterParameters(query),
+        responseType: 'blob',
+        headers: { Accept: 'text/csv' },
+      })
+      return mapCsvExportResponse(response, 'sys_roles.csv')
     },
 
     async getRole(id) {
