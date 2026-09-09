@@ -7,7 +7,6 @@ import {
   createContentManagementService,
   formatContentRequestDateTime,
   getActivityStatus,
-  isWithinValidity,
   mapApiBanner,
   mapApiContent,
   mapApiPriorityHint,
@@ -167,12 +166,11 @@ describe('content management API service', () => {
 
   })
 
-  it('derives activity/effective state and formats supported local times', () => {
+  it('derives activity state and formats supported local times', () => {
     const activity = mapApiContent(apiContent({
       content_type: 'activity', activity_start_at: '2026-08-22T10:00:00+08:00', activity_end_at: '2026-08-22T12:00:00+08:00',
     }))
     expect(getActivityStatus(activity, new Date('2026-08-22T09:00:00+08:00'))).toBe('not-started')
-    expect(isWithinValidity('2026-08-21', '2026-08-31', new Date('2026-08-25T12:00:00+08:00'))).toBe(true)
     expect(formatContentRequestDateTime('2026-08-22T10:20')).toBe('2026-08-22 10:20:00')
   })
 

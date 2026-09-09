@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import type { SystemDepartment, SystemRole, UserCreateInput, UserStatus, ValidationIssue } from '../types'
+import type { SystemDepartment, SystemRole, UserCreateInput, ValidationIssue } from '../types'
 import { computed, nextTick, ref } from 'vue'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import DepartmentTreeSelector from './DepartmentTreeSelector.vue'
 import FormError from './FormError.vue'
 import RoleSelector from './RoleSelector.vue'
@@ -51,18 +50,10 @@ defineExpose({ validateAndFocus })
       <RoleSelector :roles="roles" :model-value="value.roleIds" :disabled="saving" @update:model-value="patch({ roleIds: $event })" />
       <FormError :message="issueMap.get('roleIds')" />
     </div>
-    <div class="space-y-2">
+    <div class="space-y-2 sm:col-span-2">
       <Label for="create-user-phone">手机号</Label>
       <Input id="create-user-phone" data-field="phone" :model-value="value.phone" class="h-11" placeholder="选填，11 位手机号" inputmode="tel" autocomplete="tel" :disabled="saving" :aria-invalid="Boolean(issueMap.get('phone'))" @update:model-value="patch({ phone: String($event) })" />
       <FormError :message="issueMap.get('phone')" />
-    </div>
-    <div class="space-y-2">
-      <Label for="create-user-status">账号状态</Label>
-      <Select :model-value="value.status" :disabled="saving" @update:model-value="patch({ status: $event as UserStatus })">
-        <SelectTrigger id="create-user-status" data-field="status" class="h-11 w-full" :aria-invalid="Boolean(issueMap.get('status'))"><SelectValue /></SelectTrigger>
-        <SelectContent><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">禁用</SelectItem><SelectItem value="locked">锁定</SelectItem></SelectContent>
-      </Select>
-      <FormError :message="issueMap.get('status')" />
     </div>
     <div class="space-y-2">
       <Label for="create-user-password">初始密码 <span class="text-destructive">*</span></Label>

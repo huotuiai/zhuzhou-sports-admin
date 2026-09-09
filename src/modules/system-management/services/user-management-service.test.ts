@@ -118,12 +118,11 @@ describe('user management API service', () => {
     })
   })
 
-  it('maps create and update forms without leaking confirmation or prototype-absent fields', async () => {
+  it('omits status from create requests and supports updates without status', async () => {
     const { configs, request } = queuedRequester([apiUser({ id: 1 }), apiUser({ id: 1, status: 2 })])
     const service = createUserManagementService(request)
     const createInput: UserCreateInput = {
       username: ' venue_user ', name: ' 场馆用户 ', phone: '', departmentIds: ['21'], roleIds: ['11'],
-      status: 'enabled',
       password: 'Admin1234', confirmPassword: 'Admin1234',
     }
     const updateInput: UserBasicInfoInput = {
@@ -135,7 +134,6 @@ describe('user management API service', () => {
 
     expect(configs[0]?.data).toEqual({
       username: 'venue_user', password: 'Admin1234', display_name: '场馆用户', role_ids: [11], dept_ids: [21],
-      status: 1,
     })
     expect(configs[1]).toMatchObject({
       method: 'PATCH', url: 'api/v1/admin/users/1',
@@ -147,9 +145,8 @@ describe('user management API service', () => {
     ['enabled', 1],
     ['disabled', 0],
     ['locked', 2],
-  ] as const)('submits and reads back %s status for create and edit', async (status, apiValue) => {
+  ] as const)('submits and reads back %s status for edit', async (status, apiValue) => {
     const { configs, request } = queuedRequester([
-      apiUser({ id: 1, status: apiValue }),
       apiUser({ id: 1, status: apiValue }),
     ])
     const service = createUserManagementService(request)
@@ -157,13 +154,9 @@ describe('user management API service', () => {
       name: '场馆用户', phone: '', departmentIds: ['21'], roleIds: ['11'], status,
     }
 
-    await expect(service.createUser({
-      ...basicInput, username: 'venue_user', password: 'Admin1234', confirmPassword: 'Admin1234',
-    })).resolves.toMatchObject({ status })
     await expect(service.updateUser('1', basicInput, { includeStatus: true })).resolves.toMatchObject({ status })
 
-    expect(configs[0]).toMatchObject({ method: 'POST', url: 'api/v1/admin/users', data: { status: apiValue } })
-    expect(configs[1]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/users/1', data: { status: apiValue } })
+    expect(configs[0]).toMatchObject({ method: 'PATCH', url: 'api/v1/admin/users/1', data: { status: apiValue } })
   })
 
   it('uses dedicated status, password, unlock and delete endpoints', async () => {

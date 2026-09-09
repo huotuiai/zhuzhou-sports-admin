@@ -49,7 +49,6 @@ describe('user management validation', () => {
   it('validates API-aligned username, password, phone and real relations', () => {
     const issues = validateUserCreateInput({
       username: '1bad', name: '新用户', phone: '123', departmentIds: ['404'], roleIds: ['404'],
-      status: 'enabled',
       password: '12345678', confirmPassword: 'different',
     }, context())
 
@@ -72,7 +71,6 @@ describe('user management validation', () => {
     expect(validateUserBasicInfoInput(input, validationContext, current)).toEqual([])
     expect(validateUserCreateInput({
       username: 'new_user', name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'],
-      status: 'enabled',
       password: 'Admin1234', confirmPassword: 'Admin1234',
     }, validationContext)).toEqual(expect.arrayContaining([
       expect.objectContaining({ field: 'departmentIds', code: 'invalid' }),
@@ -84,24 +82,18 @@ describe('user management validation', () => {
     expect(validateUserPasswordResetInput({ password: 'short', confirmPassword: '' })).toHaveLength(2)
   })
 
-  it.each(['enabled', 'disabled', 'locked'] as const)('allows %s for new and existing users', (status) => {
+  it.each(['enabled', 'disabled', 'locked'] as const)('allows %s for existing users', (status) => {
     const input = { name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'], status }
-    expect(validateUserCreateInput({
-      ...input, username: 'new_user', password: 'Admin1234', confirmPassword: 'Admin1234',
-    }, context())).toEqual([])
     for (const currentStatus of ['enabled', 'disabled', 'locked'] as const) {
       expect(validateUserBasicInfoInput(input, context(), user({ status: currentStatus }))).toEqual([])
     }
   })
 
-  it('rejects invalid account status in both forms', () => {
+  it('rejects invalid account status in the edit form', () => {
     const input = {
       name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'], status: 'unknown' as UserStatus,
     }
     const issue = { field: 'status', code: 'invalid', message: '请选择有效的账号状态' }
-    expect(validateUserCreateInput({
-      ...input, username: 'new_user', password: 'Admin1234', confirmPassword: 'Admin1234',
-    }, context())).toEqual([issue])
     expect(validateUserBasicInfoInput(input, context(), user())).toEqual([issue])
   })
 
@@ -122,7 +114,7 @@ describe('user management validation', () => {
     const validationContext = context()
     expect(validateUserCreateInput({
       username: 'venue_user', name: '新用户', phone: '', departmentIds: ['10'], roleIds: ['20'],
-      status: 'enabled', password: 'Admin1234', confirmPassword: 'Admin1234',
+      password: 'Admin1234', confirmPassword: 'Admin1234',
     }, validationContext)).toEqual([])
     const input = { parentId: null, name: '部门 10', ownerUserId: null, sort: 10, status: 'enabled' as const }
     expect(validateDepartmentInput(input, validationContext)).toEqual([])

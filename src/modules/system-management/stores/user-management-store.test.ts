@@ -89,7 +89,6 @@ class StubUserManagementService implements UserManagementService {
     this.ensureAvailable()
     const record = user(++this.nextId, {
       username: input.username, name: input.name, phone: input.phone,
-      status: input.status,
       departmentIds: [...input.departmentIds], roleIds: [...input.roleIds], mustChangePassword: true,
     })
     this.users.unshift(record)
@@ -276,7 +275,6 @@ describe('user management store', () => {
 
     const created = await store.createUser({
       username: 'new_user', name: '新用户', phone: '', departmentIds: ['1'], roleIds: ['1'],
-      status: 'enabled',
       password: 'Admin1234', confirmPassword: 'Admin1234',
     })
     expect(created?.username).toBe('new_user')

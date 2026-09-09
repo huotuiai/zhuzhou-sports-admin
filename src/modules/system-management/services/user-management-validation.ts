@@ -16,7 +16,6 @@ function sanitizeUserCreate(input: UserCreateInput): UserCreateInput {
     phone: input.phone.trim(),
     departmentIds: [...new Set(input.departmentIds)],
     roleIds: [...new Set(input.roleIds)],
-    status: input.status,
     password: input.password,
     confirmPassword: input.confirmPassword,
   }
@@ -78,7 +77,6 @@ export function validateUserCreateInput(
   else if (Array.from(value.name).length > 50) issues.push({ field: 'name', code: 'too_long', message: '姓名不能超过 50 个字符' })
   if (value.phone && !/^1\d{10}$/.test(value.phone)) issues.push({ field: 'phone', code: 'invalid', message: '请输入正确的 11 位手机号' })
   issues.push(...validateUserRelations(value.departmentIds, value.roleIds, context))
-  if (!['enabled', 'disabled', 'locked'].includes(value.status)) issues.push({ field: 'status', code: 'invalid', message: '请选择有效的账号状态' })
   issues.push(...validatePassword(value))
   return issues
 }

@@ -27,7 +27,7 @@ interface FormHandle { validateAndFocus(): boolean }
 type DiscardAction = 'create-close' | 'edit-close' | 'switch-basic' | 'switch-password'
 
 const ALL_FILTER_VALUE = '__all__'
-const EMPTY_CREATE: UserCreateInput = { username: '', name: '', phone: '', departmentIds: [], roleIds: [], status: 'enabled', password: '', confirmPassword: '' }
+const EMPTY_CREATE: UserCreateInput = { username: '', name: '', phone: '', departmentIds: [], roleIds: [], password: '', confirmPassword: '' }
 const EMPTY_PASSWORD: UserPasswordResetInput = { password: '', confirmPassword: '' }
 const baseColumns: readonly DataTableColumn<SystemUser>[] = [
   { key: 'username', label: '用户名', minWidth: '150px' },

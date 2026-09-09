@@ -421,12 +421,6 @@ function dateValue(value: string | null): number | null {
   return Number.isFinite(result) ? result : null
 }
 
-function dateOnlyValue(value: string | null, endOfDay = false): number | null {
-  if (!value) return null
-  const result = Date.parse(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`)
-  return Number.isFinite(result) ? result : null
-}
-
 function dateOnly(value: string | null | undefined): string | null {
   if (!value) return null
   const direct = value.match(/^(\d{4}-\d{2}-\d{2})/)
@@ -445,22 +439,6 @@ export function getActivityStatus(record: ContentRecord, now = new Date()): Acti
   if (start !== null && now.getTime() < start) return 'not-started'
   if (end !== null && now.getTime() > end) return 'ended'
   return 'ongoing'
-}
-
-export function isWithinValidity(validFrom: string | null, validTo: string | null, now = new Date()): boolean {
-  const start = dateOnlyValue(validFrom)
-  const end = dateOnlyValue(validTo, true)
-  if (start !== null && now.getTime() < start) return false
-  if (end !== null && now.getTime() > end) return false
-  return true
-}
-
-export function isBannerEffective(record: BannerRecord, now = new Date()): boolean {
-  return record.displayEnabled && isWithinValidity(record.validFrom, record.validTo, now)
-}
-
-export function isPriorityHintEffective(record: PriorityHintRecord, now = new Date()): boolean {
-  return record.displayEnabled && isWithinValidity(record.validFrom, record.validTo, now)
 }
 
 function validateTitle<TField extends string>(field: TField, title: string, label: string): ValidationIssue<TField>[] {

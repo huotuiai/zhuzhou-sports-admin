@@ -77,7 +77,6 @@ interface ApiUserCreateRequest {
   mobile?: string
   role_ids: number[]
   dept_ids: number[]
-  status: 0 | 1 | 2
 }
 
 interface ApiUserUpdateRequest {
@@ -300,7 +299,6 @@ export function createUserManagementService(
         display_name: input.name.trim().normalize('NFKC'),
         role_ids: input.roleIds.map(bodyId),
         dept_ids: input.departmentIds.map(bodyId),
-        status: apiStatus(input.status),
         ...(input.phone.trim() ? { mobile: input.phone.trim() } : {}),
       }
       return mapApiUser(await request<ApiUserVO, ApiUserCreateRequest>({ method: 'POST', url: 'api/v1/admin/users', data }))

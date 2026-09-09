@@ -34,7 +34,6 @@ export interface UserCreateInput {
   phone: string
   departmentIds: string[]
   roleIds: string[]
-  status: UserStatus
   password: string
   confirmPassword: string
 }

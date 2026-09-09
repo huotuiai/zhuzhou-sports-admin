@@ -462,7 +462,7 @@ function jumpTypeLabel(type: BannerRecord['jumpType']): string {
 function targetLabel(targetId: string | null, targetTitle?: string | null): string {
   if (!targetId) return '—'
   const reference = store.selectableReferences.find((item) => item.id === targetId)
-  if (!reference) return targetTitle || '引用目标已失效'
+  if (!reference) return targetTitle || '—'
   return reference.code.trim() ? `${reference.code} · ${reference.title}` : reference.title
 }
 
@@ -681,9 +681,9 @@ onBeforeRouteLeave(() => confirmLeave())
           <template #cell-title="{ row }"><p class="max-w-64 truncate font-medium" :title="row.title">{{ row.title }}</p></template>
           <template #cell-image="{ row }"><img v-if="row.image.url" :src="row.image.url" :alt="`${row.title}图片`" class="h-10 w-20 rounded-lg border object-cover"><span v-else class="inline-flex h-10 w-20 items-center justify-center rounded-lg border bg-muted/45 text-xs text-muted-foreground" :title="row.image.name"><ImageIcon class="mr-1 size-4" aria-hidden="true" />图片</span></template>
           <template #cell-jumpType="{ row }"><Badge variant="outline">{{ jumpTypeLabel(row.jumpType) }}</Badge></template>
-          <template #cell-targetId="{ row }"><div class="max-w-72"><span class="block truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId, row.targetTitle)">{{ targetLabel(row.targetId, row.targetTitle) }}</span><span v-if="row.targetId && !store.targetIsValid(row.targetId)" class="mt-1 block text-[10px] text-destructive">引用目标已失效</span></div></template>
+          <template #cell-targetId="{ row }"><span class="block max-w-72 truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId, row.targetTitle)">{{ targetLabel(row.targetId, row.targetTitle) }}</span></template>
           <template #cell-priority="{ row }"><span class="font-semibold tabular-nums">{{ row.priority }}</span></template>
-          <template #cell-displayEnabled="{ row }"><div class="flex flex-col items-center gap-1"><Badge :variant="row.displayEnabled ? 'outline' : 'secondary'" :class="row.displayEnabled ? 'border-success/30 bg-success/10 text-success' : 'text-muted-foreground'">{{ row.displayEnabled ? '启用' : '停用' }}</Badge><span v-if="row.displayEnabled && !store.isBannerEffective(row)" class="text-[10px] text-warning">当前不可展示</span></div></template>
+          <template #cell-displayEnabled="{ row }"><Badge :variant="row.displayEnabled ? 'outline' : 'secondary'" :class="row.displayEnabled ? 'border-success/30 bg-success/10 text-success' : 'text-muted-foreground'">{{ row.displayEnabled ? '启用' : '停用' }}</Badge></template>
           <template #cell-validity="{ row }"><span class="whitespace-nowrap text-xs text-muted-foreground">{{ formatValidity(row.validFrom, row.validTo) }}</span></template>
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openBannerEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(() => store.setBannerEnabled(row.id, !row.displayEnabled), row.displayEnabled ? 'Banner 已停用。' : 'Banner 已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'banner', record: row }">删除</Button></div></template>
@@ -696,9 +696,9 @@ onBeforeRouteLeave(() => confirmLeave())
           <template #cell-code="{ row }"><span class="rounded-md border bg-muted/35 px-2 py-1 font-mono text-xs">{{ row.code }}</span></template>
           <template #cell-title="{ row }"><div class="max-w-64"><p class="truncate font-medium" :title="row.title">{{ row.title }}</p></div></template>
           <template #cell-referenceType="{ row }"><Badge variant="outline">{{ contentTypeLabel(row.referenceType) }}</Badge></template>
-          <template #cell-targetId="{ row }"><div class="max-w-72"><span class="block truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId, row.targetTitle)">{{ targetLabel(row.targetId, row.targetTitle) }}</span><span v-if="!store.targetIsValid(row.targetId)" class="mt-1 block text-[10px] text-destructive">引用目标已失效</span></div></template>
+          <template #cell-targetId="{ row }"><span class="block max-w-72 truncate text-xs text-muted-foreground" :title="targetLabel(row.targetId, row.targetTitle)">{{ targetLabel(row.targetId, row.targetTitle) }}</span></template>
           <template #cell-priority="{ row }"><span class="font-semibold tabular-nums">{{ row.priority }}</span></template>
-          <template #cell-displayEnabled="{ row }"><div class="flex flex-col items-center gap-1"><Badge :variant="row.displayEnabled ? 'outline' : 'secondary'" :class="row.displayEnabled ? 'border-success/30 bg-success/10 text-success' : 'text-muted-foreground'">{{ row.displayEnabled ? '启用' : '停用' }}</Badge><span v-if="row.displayEnabled && !store.isPriorityHintEffective(row)" class="text-[10px] text-warning">当前不可展示</span></div></template>
+          <template #cell-displayEnabled="{ row }"><Badge :variant="row.displayEnabled ? 'outline' : 'secondary'" :class="row.displayEnabled ? 'border-success/30 bg-success/10 text-success' : 'text-muted-foreground'">{{ row.displayEnabled ? '启用' : '停用' }}</Badge></template>
           <template #cell-validity="{ row }"><span class="whitespace-nowrap text-xs text-muted-foreground">{{ formatValidity(row.validFrom, row.validTo) }}</span></template>
           <template #cell-clickMetrics="{ row }"><span class="whitespace-nowrap tabular-nums">{{ metrics(row.metrics.clickPv, row.metrics.clickUv) }}</span></template>
           <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" size="sm" class="h-9 px-2" @click="openHintEdit(row)">编辑</Button><Button variant="ghost" size="sm" class="h-9 px-2" @click="runAction(() => store.setPriorityHintEnabled(row.id, !row.displayEnabled), row.displayEnabled ? '高优提示已停用。' : '高优提示已启用。')">{{ row.displayEnabled ? '停用' : '启用' }}</Button><Button variant="ghost" size="sm" class="h-9 px-2 text-destructive hover:text-destructive" @click="deleteTarget = { kind: 'hint', record: row }">删除</Button></div></template>

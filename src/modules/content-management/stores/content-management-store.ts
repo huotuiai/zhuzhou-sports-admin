@@ -18,11 +18,7 @@ import type {
   ReferenceType,
   SelectableReference,
 } from '../types'
-import {
-  contentManagementService,
-  isBannerEffective,
-  isPriorityHintEffective,
-} from '../services/content-management-service'
+import { contentManagementService } from '../services/content-management-service'
 
 export const CONTENT_MANAGEMENT_PAGE_SIZE = 20
 
@@ -97,18 +93,6 @@ export function createContentManagementStore(
     let pendingPageSize: { value: number, epoch: number } | null = null
     let referencePromise: Promise<void> | null = null
     const selectableReferences = computed(() => REFERENCE_TYPES.flatMap(type => referencesByType[type]))
-
-    function targetIsValid(targetId: string | null): boolean {
-      return Boolean(targetId && selectableReferences.value.some(reference => reference.id === targetId && reference.valid))
-    }
-
-    function bannerIsEffective(record: BannerRecord): boolean {
-      return isBannerEffective(record, new Date(now.value)) && (record.jumpType === 'none' || targetIsValid(record.targetId))
-    }
-
-    function priorityHintIsEffective(record: PriorityHintRecord): boolean {
-      return isPriorityHintEffective(record, new Date(now.value)) && targetIsValid(record.targetId)
-    }
 
     function queryForContentTab(tab: 'activity' | 'news', filters: ActivityQuery | NewsQuery = queries[tab]): ContentServerQuery {
       if (tab === 'activity') return contentServerQuery('activity', filters as ActivityQuery)
@@ -335,9 +319,6 @@ export function createContentManagementStore(
       bannerRecords,
       priorityHintRecords,
       selectableReferences,
-      targetIsValid,
-      isBannerEffective: bannerIsEffective,
-      isPriorityHintEffective: priorityHintIsEffective,
       setPage,
       setPageSize,
       setActivityQuery,
