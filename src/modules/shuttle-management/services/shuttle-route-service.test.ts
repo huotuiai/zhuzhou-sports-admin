@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   createShuttleRouteService,
   mapApiShuttleRoute,
+  sanitizeShuttleRouteBaseInput,
   validateShuttleRouteCreateInput,
   validateShuttleRouteUpdateInput,
   validateShuttleStations,
@@ -161,9 +162,58 @@ describe('shuttle route API mapping and validation', () => {
     expect(validateShuttleStations([station('S1', { point: null })]).issues[0]).toMatchObject({ field: 'point', code: 'required' })
     expect(validateShuttleStations(Array.from({ length: 21 }, (_, index) => station(String(index)))).issues[0]?.field).toBe('stations')
   })
+
+  it.each([
+    ['14:00', '23:00'],
+    ['14:00:00', '23:00:00'],
+    [' 14:00:00 ', ' 23:00:00 '],
+  ])('accepts and normalizes saved schedule %s–%s without re-entry', (first, last) => {
+    const expected = { firstDeparture: '14:00', lastDeparture: '23:00' }
+    const value = input({ firstDeparture: first, lastDeparture: last })
+
+    expect(mapApiShuttleRoute(apiLine({ first_bus: first, last_bus: last }))).toMatchObject(expected)
+    expect(sanitizeShuttleRouteBaseInput(value)).toMatchObject(expected)
+    expect(validateShuttleRouteCreateInput(value).valid).toBe(true)
+    expect(validateShuttleRouteUpdateInput(value).valid).toBe(true)
+  })
+
+  it.each(['', '24:00:00', '14:60:00', '14:00:60', '14:00:00invalid'])('still rejects an empty or invalid schedule value %j', (time) => {
+    const result = validateShuttleRouteUpdateInput(updateInput({ firstDeparture: time, lastDeparture: time }))
+    expect(result.issues.map(issue => issue.field)).toEqual(['firstDeparture', 'lastDeparture'])
+  })
+
+  it.each([
+    ['23:00:00', '14:00:00'],
+    ['14:00:00', '14:00'],
+  ])('still rejects a non-increasing schedule %s–%s', (firstDeparture, lastDeparture) => {
+    expect(validateShuttleRouteUpdateInput(updateInput({ firstDeparture, lastDeparture })).issues)
+      .toEqual([{ field: 'schedule', code: 'range', message: '首班时间必须早于末班时间' }])
+  })
 })
 
 describe('shuttle route API service', () => {
+  it('saves an edited route with second-format API times and keeps the response editable', async () => {
+    const line = apiLine({ id: 21, first_bus: '14:00:00', last_bus: '23:00:00' })
+    const { configs, request } = queuedRequester([
+      { list: [line], total: 1, page: 1, page_size: 20 },
+      line,
+      { ...line, name: '更新线路' },
+    ])
+    const service = createShuttleRouteService(request)
+    const page = await service.listPage(1, 20)
+    const edited = { ...page.records[0]!, name: '更新线路' }
+
+    const saved = await service.update(edited.id, edited)
+
+    expect(configs[2]).toMatchObject({
+      method: 'PATCH',
+      url: 'api/v1/admin/shuttle/lines/21',
+      data: { name: '更新线路', first_bus: '14:00', last_bus: '23:00' },
+    })
+    expect(saved).toMatchObject({ name: '更新线路', firstDeparture: '14:00', lastDeparture: '23:00' })
+    expect(validateShuttleRouteUpdateInput(saved).valid).toBe(true)
+  })
+
   it('downloads the backend CSV with the active route filters', async () => {
     const configs: SignedRequestConfig[] = []
     const blob = new Blob(['csv'], { type: 'text/csv' })

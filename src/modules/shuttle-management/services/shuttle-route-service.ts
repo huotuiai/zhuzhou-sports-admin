@@ -119,6 +119,12 @@ function normalizeText(value: string): string {
   return value.trim().normalize('NFKC')
 }
 
+function normalizeDepartureTime(value: string): string {
+  const time = value.trim()
+  // 接口可能为分钟时间补上 :00；回填、校验和提交统一使用 HH:mm。
+  return /^(?:[01]\d|2[0-3]):[0-5]\d:00$/.test(time) ? time.slice(0, 5) : time
+}
+
 function requiredText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw responseError(`服务器返回的${field}不完整`)
   return value
@@ -206,8 +212,8 @@ export function sanitizeShuttleRouteBaseInput(input: ShuttleRouteUpdateInput): S
     name: normalizeText(input.name),
     direction: input.direction,
     description: normalizeText(input.description),
-    firstDeparture: input.firstDeparture.trim(),
-    lastDeparture: input.lastDeparture.trim(),
+    firstDeparture: normalizeDepartureTime(input.firstDeparture),
+    lastDeparture: normalizeDepartureTime(input.lastDeparture),
     departureIntervalMinutes: Number(input.departureIntervalMinutes),
     durationMinutes: Number(input.durationMinutes),
     operatingStatus: input.operatingStatus,
@@ -330,8 +336,8 @@ export function mapApiShuttleRoute(value: ApiShuttleLineVO, stops: unknown = val
     name: requiredText(value.name, '线路名称'),
     direction: mapDirection(value.direction),
     description: optionalText(value.description),
-    firstDeparture: requiredText(value.first_bus, '首班时间'),
-    lastDeparture: requiredText(value.last_bus, '末班时间'),
+    firstDeparture: normalizeDepartureTime(requiredText(value.first_bus, '首班时间')),
+    lastDeparture: normalizeDepartureTime(requiredText(value.last_bus, '末班时间')),
     departureIntervalMinutes: positiveInteger(value.interval_minutes, '发车间隔'),
     durationMinutes: positiveInteger(value.duration_minutes, '全程时长'),
     operatingStatus: mapOperatingStatus(value.operate_status),
