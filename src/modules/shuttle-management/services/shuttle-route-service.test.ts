@@ -147,7 +147,7 @@ describe('shuttle route API mapping and validation', () => {
       sortOrder: 1,
       enabled: false,
       stations: [
-        { id: '1', name: '首站', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', outboundPoint: { lng: 113.1462, lat: 27.8165 }, outboundNavigationAddress: '', arrivalGateIds: ['11', '12'] },
+        { id: '1', name: '首站', point: { lng: 113.1462, lat: 27.8165 }, navigationAddress: '', outboundPoint: null, outboundNavigationAddress: '', arrivalGateIds: ['11', '12'] },
         { id: '2', name: '体育中心站', point: null, navigationAddress: '', outboundPoint: null, outboundNavigationAddress: '', arrivalGateIds: [] },
       ],
       pairLineId: null,
@@ -184,6 +184,11 @@ describe('shuttle route API mapping and validation', () => {
   it('keeps incomplete directional coordinates visible for correction without mixing aliases', () => {
     expect(mapApiShuttleStop(apiStop({ entry_lng: 113.1, entry_lat: null, exit_lng: null, exit_lat: null })))
       .toMatchObject({ point: null, outboundPoint: null })
+  })
+
+  it('keeps absent exit coordinates unconfigured even when entry coordinates are present', () => {
+    expect(mapApiShuttleStop(apiStop({ entry_lng: 113.1, entry_lat: 27.8 })))
+      .toMatchObject({ point: { lng: 113.1, lat: 27.8 }, outboundPoint: null })
   })
 
   it.each([

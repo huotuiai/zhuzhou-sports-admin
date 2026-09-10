@@ -335,11 +335,7 @@ export function mapApiShuttleStop(value: ApiShuttleStopVO): ShuttleStation {
   if (value.id === null || value.id === undefined) throw responseError('服务器返回的站点 ID 不完整')
   const hasEntry = value.entry_lng !== undefined || value.entry_lat !== undefined
   const point = mapStopPoint(hasEntry ? value.entry_lng : value.lng, hasEntry ? value.entry_lat : value.lat, '入场')
-  // 旧接口没有离场字段，按接口默认规则使用入场定位；显式空值仍保留待补齐。
-  const hasExit = value.exit_lng !== undefined || value.exit_lat !== undefined
-  const outboundPoint = hasExit
-    ? mapStopPoint(value.exit_lng, value.exit_lat, '离场')
-    : point ? { ...point } : null
+  const outboundPoint = mapStopPoint(value.exit_lng, value.exit_lat, '离场')
   return {
     id: String(value.id),
     name: requiredText(value.name, '站点名称'),

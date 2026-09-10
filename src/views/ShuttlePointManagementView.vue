@@ -25,7 +25,7 @@ import ShuttleRouteForm from '@/modules/shuttle-management/components/ShuttleRou
 import ShuttleRouteMapView from '@/modules/shuttle-management/components/ShuttleRouteMapView.vue'
 import ShuttleStationConfig from '@/modules/shuttle-management/components/ShuttleStationConfig.vue'
 import { useShuttleRouteStore } from '@/modules/shuttle-management/stores/shuttle-route-store'
-import { shuttleDirectionLabel, shuttleOperatingStatusLabel } from '@/modules/shuttle-management/types'
+import { shuttleOperatingStatusLabel } from '@/modules/shuttle-management/types'
 import { ticketGateService } from '@/modules/ticket-gate-management/services/ticket-gate-service'
 import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
@@ -429,7 +429,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <ShuttleRouteForm :key="`${routeMode}-${editingId ?? 'new'}`" ref="routeFormRef" :mode="routeMode" :value="routeValue" :issues="routeIssues" :saving="store.isSaving" @update:value="updateRoute" />
     </CrudSheet>
 
-    <CrudSheet :open="stationOpen" mode="edit" size="wide" :title="`站点配置 · ${stationRoute?.code ?? ''}`" :description="stationRoute ? `${stationRoute.name} · ${shuttleDirectionLabel(stationRoute.direction)}，入场、离场定位均为必填项，请按入场方向配置站点顺序。` : '维护线路站点'" submit-label="保存站点" :saving="store.isSaving" :dirty="stationDirty" @submit="saveStations" @request-close="requestStationClose">
+    <CrudSheet :open="stationOpen" mode="edit" size="wide" :title="`站点配置 · ${stationRoute?.code ?? ''}`" :description="stationRoute ? `${stationRoute.name}，入场、离场定位均为必填项，请按入场方向配置站点顺序。` : '维护线路站点'" submit-label="保存站点" :saving="store.isSaving" :dirty="stationDirty" @submit="saveStations" @request-close="requestStationClose">
       <ShuttleStationConfig v-if="stationRouteId" :key="stationRouteId" ref="stationFormRef" :route-id="stationRouteId" :value="stationValue" :ticket-gates="ticketGates" :ticket-gates-loading="ticketGatesLoading" :ticket-gates-error="ticketGatesError" :saving="store.isSaving" @update:value="stationValue = $event; store.resetError()" @editor-dirty="stationEditorDirty = $event" />
     </CrudSheet>
 
