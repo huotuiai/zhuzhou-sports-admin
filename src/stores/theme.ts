@@ -10,7 +10,7 @@ function isThemeMode(value: string | null): value is ThemeMode {
 }
 
 export const useThemeStore = defineStore('theme', () => {
-  const mode = ref<ThemeMode>('dark')
+  const mode = ref<ThemeMode>('light')
 
   function applyTheme() {
     const isDark = mode.value === 'dark'
@@ -24,7 +24,7 @@ export const useThemeStore = defineStore('theme', () => {
 
   function initialize() {
     const savedTheme = localStorage.getItem(THEME_KEY)
-    mode.value = isThemeMode(savedTheme) ? savedTheme : 'dark'
+    mode.value = isThemeMode(savedTheme) ? savedTheme : 'light'
     applyTheme()
   }
 

@@ -1,4 +1,4 @@
-export type VrPlaceType = 'gate' | 'parking' | 'shuttle_stop'
+export type VrPlaceType = 'gate' | 'parking' | 'shuttle_stop' | 'seat_zone'
 export type VrPlaceTypeFilter = 'all' | VrPlaceType
 export type VrLinkStatus = 'enabled' | 'disabled'
 export type VrLinkStatusFilter = 'all' | VrLinkStatus

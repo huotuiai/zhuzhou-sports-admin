@@ -25,7 +25,7 @@ import {
 } from '@lucide/vue'
 import { useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { onBeforeRouteLeave } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { CrudSheet, DataTable, PaginationBar, QueryPanel } from '@/components/common'
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
@@ -68,6 +68,7 @@ const baseColumns: readonly DataTableColumn<TicketGate>[] = [
 
 const store = useTicketGateStore()
 const authStore = useAuthStore()
+const router = useRouter()
 const canOperate = computed(() => authStore.hasPermission('gate:operate'))
 const canExport = computed(() => authStore.hasPermission('gate:export'))
 const columns = computed(() => canOperate.value ? baseColumns : baseColumns.filter(column => column.key !== 'actions'))
@@ -109,6 +110,30 @@ function toWriteInput(item: TicketGate): TicketGateWriteInput {
 
 function openCreate(): void {
   if (!canOperate.value) return
+  if (store.isLoading) {
+    toast.info('正在加载检票口和楼层数据，请稍后再试。')
+    return
+  }
+  if (!store.floors.length) {
+    if (loadError.value) {
+      toast.error('数据加载失败，请重新加载后再新增检票口。', {
+        description: loadError.value,
+        action: { label: '重新加载', onClick: () => { void load() } },
+      })
+      return
+    }
+    const canManageFloors = authStore.canAccessPath('/seats') && authStore.hasPermission('seat:operate')
+    toast.warning('暂无可选楼层，请先配置楼层后再新增检票口。', {
+      description: canManageFloors
+        ? '请在“座位规划管理 → 楼层管理”中新增楼层，完成后返回此页面。'
+        : '请联系管理员在“座位规划管理 → 楼层管理”中新增楼层。',
+      duration: 6000,
+      ...(canManageFloors ? {
+        action: { label: '去配置楼层', onClick: () => { void router.push({ name: 'seat-management' }) } },
+      } : {}),
+    })
+    return
+  }
   store.resetError()
   formMode.value = 'create'
   editingId.value = null
@@ -313,7 +338,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
         </div>
         <div class="flex items-center gap-2">
           <Button v-if="canExport" variant="outline" size="lg" class="h-11 px-4" :disabled="store.isLoading || store.isExporting" @click="exportCurrent"><LoaderCircle v-if="store.isExporting" class="animate-spin" aria-hidden="true" /><Download v-else aria-hidden="true" />{{ store.isExporting ? '导出中' : '导出' }}</Button>
-          <Button v-if="canOperate" size="lg" class="h-11 px-4" :disabled="store.isLoading || !store.floors.length" @click="openCreate"><Plus aria-hidden="true" />新增检票口</Button>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增检票口</Button>
         </div>
       </header>
 

@@ -95,6 +95,7 @@ function toWriteInput(item: VrLink): VrLinkWriteInput {
 function placeTypeClass(type: VrPlaceType): string {
   if (type === 'gate') return 'border-primary/25 bg-primary/8 text-primary'
   if (type === 'parking') return 'border-cyan-500/30 bg-cyan-500/8 text-cyan-700 dark:text-cyan-300'
+  if (type === 'seat_zone') return 'border-violet-500/30 bg-violet-500/8 text-violet-700 dark:text-violet-300'
   return 'border-warning/30 bg-warning/10 text-warning'
 }
 
@@ -283,7 +284,7 @@ useEventListener(window, 'beforeunload', beforeUnload)
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
         <div class="space-y-2"><Label for="vr-link-keyword">名称或 VR 地址</Label><Input id="vr-link-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="请输入展示名称或 VR 地址" autocomplete="off" /></div>
-        <div class="space-y-2"><Label for="vr-link-place-type">地点类型</Label><Select v-model="queryDraft.placeType"><SelectTrigger id="vr-link-place-type" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="gate">检票口</SelectItem><SelectItem value="parking">停车场</SelectItem><SelectItem value="shuttle_stop">接驳站点</SelectItem></SelectContent></Select></div>
+        <div class="space-y-2"><Label for="vr-link-place-type">地点类型</Label><Select v-model="queryDraft.placeType"><SelectTrigger id="vr-link-place-type" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类型</SelectItem><SelectItem value="gate">检票口</SelectItem><SelectItem value="parking">停车场</SelectItem><SelectItem value="shuttle_stop">接驳站点</SelectItem><SelectItem value="seat_zone">座位分区</SelectItem></SelectContent></Select></div>
         <div class="space-y-2"><Label for="vr-link-status">状态</Label><Select v-model="queryDraft.status"><SelectTrigger id="vr-link-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">停用</SelectItem></SelectContent></Select></div>
       </QueryPanel>
 

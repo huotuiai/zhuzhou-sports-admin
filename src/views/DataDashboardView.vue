@@ -28,9 +28,9 @@ import DistributionDetailSheet from '@/modules/data-dashboard/components/Distrib
 import DashboardFilterBar from '@/modules/data-dashboard/components/DashboardFilterBar.vue'
 import DashboardMetricCard from '@/modules/data-dashboard/components/DashboardMetricCard.vue'
 import MetricDetailSheet from '@/modules/data-dashboard/components/MetricDetailSheet.vue'
+import ParkingUsageTable from '@/modules/data-dashboard/components/ParkingUsageTable.vue'
 import {
   buildDistributionOption,
-  buildParkingUsageOption,
   distributionSliceColor,
 } from '@/modules/data-dashboard/lib/chart-options'
 import {
@@ -117,28 +117,6 @@ function selectDistributionChartSlice(distribution: DashboardDistribution, paylo
   const slice = distribution.slices.find(item => item.key === id)
   if (slice) selectDistributionSlice(distribution, slice)
 }
-
-function selectParking(id: string): void {
-  const parking = store.snapshot?.parkingUsage.find(item => item.id === id)
-  if (!parking) return
-  void store.selectDistribution({
-    kind: 'parking_remain',
-    slice: parking.id,
-    title: '停车场车位使用情况',
-    label: parking.name,
-  })
-}
-
-function selectParkingChart(payload: unknown): void {
-  const id = chartItemId(payload)
-  if (id) selectParking(id)
-}
-
-const parkingOption = computed(() => buildParkingUsageOption(
-  store.snapshot?.parkingUsage ?? [],
-  themeStore.mode,
-  reducedMotion.value === 'reduce',
-))
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return '—'
@@ -330,35 +308,11 @@ onMounted(async () => {
             <Skeleton v-for="index in 3" :key="index" class="h-72 rounded-xl" />
           </div>
 
-          <Card v-if="store.snapshot" class="gap-2 py-0">
-            <div class="flex flex-col justify-between gap-2 px-4 pt-4 sm:flex-row sm:items-center">
-              <div>
-                <h3 class="text-sm font-semibold">停车场车位使用情况</h3>
-                <p class="mt-1 text-xs text-muted-foreground">低使用率绿色 · 高使用率橙色 · 已满红色</p>
-              </div>
-              <span class="text-xs text-muted-foreground">数据为当前停车余位快照</span>
-            </div>
-            <div class="h-72 min-w-0 px-2 sm:h-80">
-              <DashboardChart
-                :option="parkingOption"
-                accessible-label="停车场车位使用情况柱状图"
-                @chart-click="selectParkingChart"
-              />
-            </div>
-            <div class="flex flex-wrap gap-2 border-t border-border/60 px-4 py-3" aria-label="停车场车位使用情况摘要">
-              <button
-                v-for="parking in store.snapshot.parkingUsage"
-                :key="parking.id"
-                type="button"
-                class="inline-flex min-h-9 cursor-pointer items-center rounded-lg border border-border/70 bg-background/60 px-3 text-xs transition-colors hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none"
-                :aria-label="`查看${parking.name}停车余位明细`"
-                @click="selectParking(parking.id)"
-              >
-                <strong>{{ parking.name }}</strong>
-                <span class="ml-2 tabular-nums text-muted-foreground">{{ parking.usageRate }}% · 剩余 {{ parking.available ?? '未知' }}</span>
-              </button>
-            </div>
-          </Card>
+          <ParkingUsageTable
+            v-if="store.snapshot"
+            :items="store.snapshot.parkingUsage"
+            :can-manage="authStore.hasPermission('parking:view')"
+          />
           <Skeleton v-else class="h-96 rounded-xl" />
         </section>
 

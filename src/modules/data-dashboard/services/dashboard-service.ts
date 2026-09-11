@@ -95,6 +95,7 @@ export interface ApiDistSlice {
 
 export interface ApiParkingBar {
   id: number | string
+  code?: string | null
   name: string
   remain: number | string | null
   capacity: number | string
@@ -404,6 +405,7 @@ export function mapApiDistribution(value: ApiDistributionVO): { distributions: D
     const usage = Math.min(1, Math.max(0, numberValue(item.usage, '停车场占用率')))
     return {
       id: String(item.id),
+      code: nullableText(item.code),
       name: requiredText(item.name, '停车场名称'),
       total,
       used: available === null

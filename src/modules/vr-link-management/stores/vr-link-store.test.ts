@@ -47,6 +47,7 @@ class StubVrLinkService implements VrLinkService {
     gate: [{ id: 'gate-1', name: '东门入口', extra: '', available: true }],
     parking: [{ id: 'parking-1', name: '一号停车场', extra: '', available: true }],
     shuttle_stop: [{ id: 'stop-1', name: '体育馆站', extra: '内环线', available: true }],
+    seat_zone: [{ id: 'zone-1', name: 'A 区', extra: '', available: true }],
   }
   failCreate = false
   failDelete = false
@@ -94,7 +95,7 @@ class StubVrLinkService implements VrLinkService {
       status: value.status,
       remark: value.remark,
       placeName: this.options[value.placeType].find(option => option.id === value.placeId)?.name ?? '未知地点',
-      placeTypeLabel: value.placeType === 'gate' ? '检票口' : value.placeType === 'parking' ? '停车场' : '接驳站点',
+      placeTypeLabel: ({ gate: '检票口', parking: '停车场', shuttle_stop: '接驳站点', seat_zone: '座位分区' })[value.placeType],
     })
     this.records.push(created)
     return structuredClone(created)

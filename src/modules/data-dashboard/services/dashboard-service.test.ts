@@ -118,13 +118,13 @@ describe('dashboard API service', () => {
     expect(result.distributions.map(item => item.detailKind)).toEqual(['parking_fee', 'control', 'activity'])
     expect(result.distributions[0]?.slices.map(item => item.key)).toEqual(['free', 'paid'])
     expect(result.distributions[0]?.centerText).toBe('5 项')
-    expect(result.parkingUsage[0]).toEqual({ id: '9007199254740995', name: 'P1', total: 100, used: 80, available: 20, usageRate: 80 })
+    expect(result.parkingUsage[0]).toEqual({ id: '9007199254740995', code: null, name: 'P1', total: 100, used: 80, available: 20, usageRate: 80 })
 
     const unknownRemain = mapApiDistribution({
       ...distribution(),
-      parking_remain: [{ id: 9, name: '临时停车场', remain: null, capacity: 80, usage: 0.75 }],
+      parking_remain: [{ id: 9, code: 'P9', name: '临时停车场', remain: null, capacity: 80, usage: 0.75 }],
     }).parkingUsage[0]
-    expect(unknownRemain).toEqual({ id: '9', name: '临时停车场', total: 80, used: 60, available: null, usageRate: 75 })
+    expect(unknownRemain).toEqual({ id: '9', code: 'P9', name: '临时停车场', total: 80, used: 60, available: null, usageRate: 75 })
   })
 
   it('maps remote VR fields and ranks works by PV', () => {

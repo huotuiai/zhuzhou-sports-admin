@@ -91,7 +91,7 @@ function endpoint(id: string): string {
 }
 
 export function isVrPlaceType(value: unknown): value is VrPlaceType {
-  return value === 'gate' || value === 'parking' || value === 'shuttle_stop'
+  return value === 'gate' || value === 'parking' || value === 'shuttle_stop' || value === 'seat_zone'
 }
 
 export function isVrLinkStatus(value: unknown): value is VrLinkStatus {

@@ -109,6 +109,7 @@ export interface DashboardDistribution {
 
 export interface ParkingUsageItem {
   id: string
+  code?: string | null
   name: string
   total: number
   used: number

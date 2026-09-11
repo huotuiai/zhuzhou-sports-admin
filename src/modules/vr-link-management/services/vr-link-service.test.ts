@@ -51,6 +51,15 @@ function queuedRequester(responses: unknown[]) {
 }
 
 describe('VR link API mapping and validation', () => {
+  it.each(['gate', 'parking', 'shuttle_stop', 'seat_zone'] as const)('accepts the documented place type %s in responses and writes', (placeType) => {
+    expect(mapApiVrLink(apiLink({ place_type: placeType })).placeType).toBe(placeType)
+    expect(validateVrLinkInput(input({ placeType })).valid).toBe(true)
+  })
+
+  it('still rejects undocumented place types', () => {
+    expect(() => mapApiVrLink(apiLink({ place_type: 'unknown' }))).toThrow('服务器返回的地点类型无效')
+  })
+
   it('maps snake_case fields, nullable remarks, statuses and int64 IDs without precision loss', () => {
     expect(mapApiVrLink(apiLink())).toEqual({
       id: '9007199254740993',
@@ -94,6 +103,60 @@ describe('VR link API mapping and validation', () => {
 })
 
 describe('VR link API service', () => {
+  it('loads a mixed page containing seat zones without rejecting the entire list', async () => {
+    const { configs, request } = queuedRequester([{
+      list: [
+        apiLink(),
+        apiLink({ id: '22', place_type: 'seat_zone', place_name: 'A 区', place_type_label: '座位分区' }),
+      ],
+      total: 2, page: 1, page_size: 20,
+    }])
+    const service = createVrLinkService(request)
+
+    await expect(service.listPage(1, 20, { keyword: '', placeType: 'all', status: 'all' })).resolves.toMatchObject({
+      records: [
+        { placeType: 'gate' },
+        { id: '22', placeType: 'seat_zone', placeName: 'A 区', placeTypeLabel: '座位分区' },
+      ],
+      total: 2,
+    })
+    expect(configs[0]?.params).toEqual({ page: 1, page_size: 20 })
+  })
+
+  it('supports seat-zone filters, options, detail, create, edit and status changes', async () => {
+    const zoneLink = apiLink({ place_type: 'seat_zone', place_name: 'A 区', place_type_label: '座位分区' })
+    const { configs, request } = queuedRequester([
+      { list: [zoneLink], total: 1, page: 1, page_size: 20 },
+      [{ id: zoneLink.place_id, name: 'A 区' }],
+      zoneLink,
+      zoneLink,
+      zoneLink,
+      { ...zoneLink, status: 0 },
+    ])
+    const service = createVrLinkService(request)
+    const value = input({ placeType: 'seat_zone' })
+
+    await expect(service.listPage(1, 20, { keyword: '', placeType: 'seat_zone', status: 'all' }))
+      .resolves.toMatchObject({ records: [{ placeType: 'seat_zone' }], total: 1 })
+    await expect(service.listPlaceOptions('seat_zone')).resolves.toEqual([
+      { id: zoneLink.place_id, name: 'A 区', extra: '', available: true },
+    ])
+    await expect(service.get(String(zoneLink.id))).resolves.toMatchObject({ placeType: 'seat_zone' })
+    await expect(service.create(value)).resolves.toMatchObject({ placeType: 'seat_zone' })
+    await expect(service.update(String(zoneLink.id), value)).resolves.toMatchObject({ placeType: 'seat_zone' })
+    await expect(service.updateStatus(String(zoneLink.id), 'disabled'))
+      .resolves.toMatchObject({ placeType: 'seat_zone', status: 'disabled' })
+
+    expect(configs).toMatchObject([
+      { method: 'GET', url: 'api/v1/admin/vr-links', params: { page: 1, page_size: 20, place_type: 'seat_zone' } },
+      { method: 'GET', url: 'api/v1/admin/vr-links/place-options', params: { place_type: 'seat_zone' } },
+      { method: 'GET', url: `api/v1/admin/vr-links/${zoneLink.id}` },
+      { method: 'POST', url: 'api/v1/admin/vr-links', data: { place_type: 'seat_zone', place_id: zoneLink.place_id } },
+      { method: 'PATCH', url: `api/v1/admin/vr-links/${zoneLink.id}`, data: { place_type: 'seat_zone', place_id: zoneLink.place_id } },
+      { method: 'PATCH', url: `api/v1/admin/vr-links/${zoneLink.id}`, data: { status: 0 } },
+    ])
+  })
+
   it('loads filtered pages, type-specific place options and detail', async () => {
     const { configs, request } = queuedRequester([
       { list: [apiLink()], total: '21', page: '2', page_size: '20' },

@@ -75,7 +75,7 @@ function errorId(field: Field): string | undefined {
 }
 
 function placeTypeLabel(type: VrPlaceType): string {
-  return ({ gate: '检票口', parking: '停车场', shuttle_stop: '接驳站点' })[type]
+  return ({ gate: '检票口', parking: '停车场', shuttle_stop: '接驳站点', seat_zone: '座位分区' })[type]
 }
 
 function validateAndFocus(): boolean {
@@ -156,6 +156,7 @@ watch(() => [props.mode, props.value.placeType], () => {
           <SelectItem value="gate">检票口</SelectItem>
           <SelectItem value="parking">停车场</SelectItem>
           <SelectItem value="shuttle_stop">接驳站点</SelectItem>
+          <SelectItem value="seat_zone">座位分区</SelectItem>
         </SelectContent>
       </Select>
       <p v-if="issueFor('placeType')" :id="errorId('placeType')" class="field-error" role="alert"><TriangleAlert />{{ issueFor('placeType')?.message }}</p>
