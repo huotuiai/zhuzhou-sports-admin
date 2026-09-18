@@ -1,4 +1,5 @@
 import type {
+  ShuttleRoadRoutesResult,
   ShuttleRoute,
   ShuttleRouteCreateInput,
   ShuttleRoutePage,
@@ -26,6 +27,7 @@ const DEFAULT_QUERY: ShuttleRouteQuery = {
   keyword: '',
   direction: 'all',
   operatingStatus: 'all',
+  status: 'all',
 }
 
 function message(error: unknown): string {
@@ -37,6 +39,7 @@ function normalizeQuery(value: ShuttleRouteQuery): ShuttleRouteQuery {
     keyword: value.keyword.trim().normalize('NFKC'),
     direction: value.direction,
     operatingStatus: value.operatingStatus,
+    status: value.status,
   }
 }
 
@@ -53,6 +56,9 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
     const isExporting = ref(false)
     const deletingId = ref<string | null>(null)
     const error = ref<string | null>(null)
+    const savingRoadRoutesId = ref<string | null>(null)
+    const roadRouteWarnings = ref<Record<string, string>>({})
+    const isMutating = computed(() => isSaving.value || Boolean(savingRoadRoutesId.value) || Boolean(deletingId.value))
 
     const pageCount = computed(() => Math.max(1, Math.ceil(total.value / Math.max(1, pageSize.value))))
     const currentPage = computed(() => Math.min(Math.max(page.value, 1), pageCount.value))
@@ -90,7 +96,19 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       isLoading.value = true
       error.value = null
       try {
-        mapRecords.value = await service.list(normalizeQuery(query))
+        const routes = await service.list(normalizeQuery(query))
+        // 道路折线仅在详情返回；只在打开地图时按需读取，并限制并发。
+        let nextIndex = 0
+        const loaded = await Promise.allSettled(Array.from({ length: Math.min(4, routes.length) }, async () => {
+          while (nextIndex < routes.length) {
+            const index = nextIndex++
+            const route = routes[index]!
+            if (route.roadRoutes === undefined) routes[index] = await service.get(route.id)
+          }
+        }))
+        const failed = loaded.find(result => result.status === 'rejected')
+        if (failed?.status === 'rejected') throw failed.reason
+        mapRecords.value = routes.map(route => hasRoadRouteWarning(route) ? { ...route, roadRoutes: [] } : route)
         return true
       }
       catch (cause) {
@@ -172,6 +190,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
     }
 
     async function create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute | null> {
+      if (isMutating.value) return null
       const validation = validateShuttleRouteCreateInput(input)
       if (!validation.valid) {
         error.value = validation.issues[0]!.message
@@ -195,6 +214,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
     }
 
     async function update(id: string, input: ShuttleRouteUpdateInput): Promise<ShuttleRoute | null> {
+      if (isMutating.value) return null
       const validation = validateShuttleRouteUpdateInput(input)
       if (!validation.valid) {
         error.value = validation.issues[0]!.message
@@ -217,6 +237,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
     }
 
     async function replaceStations(id: string, stations: readonly ShuttleStation[]): Promise<ShuttleRoute | null> {
+      if (isMutating.value) return null
       const validation = validateShuttleStations(stations)
       if (!validation.valid) {
         error.value = validation.issues[0]!.message
@@ -226,8 +247,18 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       error.value = null
       try {
         const record = await service.replaceStations(id, sanitizeShuttleStations(stations))
+        // PUT 已提交成功，后续规划失败不能把站点保存也报告为失败。
+        for (const collection of [records.value, mapRecords.value]) {
+          for (const [index, cached] of collection.entries()) {
+            if (cached.id === record.id) collection[index] = { ...record, roadRoutes: [] }
+            else if (cached.stationsInherited && cached.pairLineId === record.id) {
+              collection[index] = { ...cached, stations: [...record.stations].reverse(), roadRoutes: [] }
+            }
+          }
+        }
+        const roads = await persistRoadRoutes(id)
         await refreshAfterMutation()
-        return record
+        return { ...record, roadRoutes: roads?.routes ?? [] }
       }
       catch (cause) {
         error.value = message(cause)
@@ -238,11 +269,67 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       }
     }
 
+    function hasRoadRouteWarning(route: ShuttleRoute): boolean {
+      return Boolean(roadRouteWarnings.value[route.id]
+        || (route.stationsInherited && route.pairLineId && roadRouteWarnings.value[route.pairLineId]))
+    }
+
+    function applyRoadRoutes(requestedId: string, result: ShuttleRoadRoutesResult): void {
+      for (const collection of [records.value, mapRecords.value]) {
+        for (const route of collection) {
+          if (route.id === requestedId || route.id === result.lineId
+            || (route.stationsInherited && route.pairLineId === result.lineId)) {
+            route.roadRoutes = result.routes
+            delete roadRouteWarnings.value[route.id]
+          }
+        }
+      }
+      delete roadRouteWarnings.value[requestedId]
+      delete roadRouteWarnings.value[result.lineId]
+    }
+
+    async function persistRoadRoutes(id: string): Promise<ShuttleRoadRoutesResult | null> {
+      savingRoadRoutesId.value = id
+      const cached = [...records.value, ...mapRecords.value].find(route => route.id === id)
+      let sourceId = cached?.stationsInherited && cached.pairLineId ? cached.pairLineId : id
+      try {
+        const result = await service.saveRoadRoutes(id)
+        sourceId = result.lineId
+        const failed = result.routes.find(road => !road.enabled || road.lastError)
+        if (failed) throw new Error(failed.lastError || '后端返回的道路路径已失效')
+        if (result.routes.length && new Set(result.routes.map(road => road.direction)).size !== 2) {
+          throw new Error('后端未返回完整的入场和离场道路路径')
+        }
+        applyRoadRoutes(id, result)
+        return result
+      }
+      catch (cause) {
+        roadRouteWarnings.value[sourceId] = `道路路径未更新，请重试：${message(cause)}`
+        for (const collection of [records.value, mapRecords.value]) {
+          for (const route of collection) {
+            if (hasRoadRouteWarning(route)) route.roadRoutes = []
+          }
+        }
+        return null
+      }
+      finally {
+        savingRoadRoutesId.value = null
+      }
+    }
+
+    async function saveRoadRoutes(id: string): Promise<boolean> {
+      if (isMutating.value) return false
+      return Boolean(await persistRoadRoutes(id))
+    }
+
     async function remove(id: string): Promise<boolean> {
+      if (isMutating.value) return false
       deletingId.value = id
       error.value = null
       try {
         await service.remove(id)
+        delete roadRouteWarnings.value[id]
+        mapRecords.value = mapRecords.value.filter(route => route.id !== id)
         const targetPage = records.value.length === 1 && page.value > 1 ? page.value - 1 : page.value
         await refreshAfterMutation(targetPage)
         return true
@@ -271,6 +358,9 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       isExporting,
       deletingId,
       error,
+      savingRoadRoutesId,
+      roadRouteWarnings,
+      isMutating,
       filteredRecords,
       total,
       pageCount,
@@ -288,6 +378,7 @@ export function createShuttleRouteStore(service: ShuttleRouteService, storeId = 
       create,
       update,
       replaceStations,
+      saveRoadRoutes,
       remove,
       resetError,
       validateCreate: validateShuttleRouteCreateInput,

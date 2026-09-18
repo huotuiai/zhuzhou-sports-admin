@@ -1,5 +1,5 @@
 import type { MapMarkerItem, MapRouteItem } from '@/components/map/types'
-import type { ShuttleRoute } from '../types'
+import type { ShuttleRoadRoute, ShuttleRoute } from '../types'
 
 const SHUTTLE_ROUTE_PALETTE = ['#2563eb', '#f59e0b', '#06b6d4', '#8b5cf6', '#ec4899', '#16a34a', '#dc2626', '#0f766e']
 
@@ -10,6 +10,11 @@ export interface ShuttleMapItems {
   routes: MapRouteItem[]
   missingCount: number
   mappedCount: number
+}
+
+export function shuttleRoadRoute(route: ShuttleRoute, phase: ShuttleMapPhase): ShuttleRoadRoute | undefined {
+  const direction = phase === 'entry' ? 'inbound' : 'outbound'
+  return route.roadRoutes?.find(road => road.direction === direction && road.enabled && !road.lastError && road.path.length >= 2)
 }
 
 export function shuttleRouteColor(route: Pick<ShuttleRoute, 'code'>): string {
@@ -46,7 +51,9 @@ export function createShuttleMapItems(records: readonly ShuttleRoute[], selected
         selected: route.id === selectedId,
       })
     }
-    if (points.length >= 2) routes.push({ id: route.id, label: `${route.name} · ${phaseLabel}`, points, color, selected: route.id === selectedId })
+    // 后端折线已经按行驶方向排序，离场路径不可再次反转。
+    const path = shuttleRoadRoute(route, phase)?.path ?? points
+    if (path.length >= 2) routes.push({ id: route.id, label: `${route.name} · ${phaseLabel}`, points: path.map(point => ({ ...point })), color, selected: route.id === selectedId })
   }
 
   return { markers, routes, missingCount, mappedCount: markers.length }

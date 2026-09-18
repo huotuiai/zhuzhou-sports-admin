@@ -4,6 +4,20 @@ import type { BackendCsvExportFile } from '@/lib/http'
 export type ShuttleDirection = 'inbound' | 'outbound'
 export type ShuttleOperatingStatus = 'operating' | 'suspended' | 'partial'
 
+export interface ShuttleRoadRoute {
+  direction: ShuttleDirection
+  path: GeoPoint[]
+  distance: number
+  duration: number
+  enabled: boolean
+  lastError: string
+}
+
+export interface ShuttleRoadRoutesResult {
+  lineId: string
+  routes: ShuttleRoadRoute[]
+}
+
 export interface ShuttleStation {
   id: string
   name: string
@@ -30,6 +44,8 @@ export interface ShuttleRoute {
   sortOrder: number
   enabled: boolean
   stations: ShuttleStation[]
+  // 列表可能省略；详情缺省或空数组均表示尚无道路路径。
+  roadRoutes?: ShuttleRoadRoute[]
   pairLineId?: string | null
   stationsInherited?: boolean
   coordinateSystem: 'GCJ-02'
@@ -71,6 +87,7 @@ export interface ShuttleRouteService {
   create(input: ShuttleRouteCreateInput): Promise<ShuttleRoute>
   update(id: string, input: ShuttleRouteUpdateInput): Promise<ShuttleRoute>
   replaceStations(id: string, stations: readonly ShuttleStation[]): Promise<ShuttleRoute>
+  saveRoadRoutes(id: string): Promise<ShuttleRoadRoutesResult>
   remove(id: string): Promise<void>
 }
 
@@ -78,6 +95,7 @@ export interface ShuttleRouteQuery {
   keyword: string
   direction: ShuttleDirection | 'all'
   operatingStatus: ShuttleOperatingStatus | 'all'
+  status: 'all' | 'enabled' | 'disabled'
 }
 
 export type ShuttleRouteValidationField = keyof ShuttleRouteBaseInput | 'code' | 'schedule'

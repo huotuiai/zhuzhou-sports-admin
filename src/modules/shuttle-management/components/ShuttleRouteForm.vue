@@ -4,7 +4,6 @@ import { computed, nextTick, reactive, ref, useId, watch } from 'vue'
 import { AlertTriangle, Clock3, Info, Route } from '@lucide/vue'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { validateShuttleRouteCreateInput, validateShuttleRouteUpdateInput } from '../services/shuttle-route-service'
@@ -21,7 +20,7 @@ const container = ref<HTMLDivElement | null>(null)
 const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
 const fields: ShuttleRouteValidationField[] = [
   'code', 'name', 'description', 'firstDeparture', 'lastDeparture', 'schedule',
-  'departureIntervalMinutes', 'durationMinutes', 'operatingStatus', 'sortOrder', 'enabled',
+  'departureIntervalMinutes', 'durationMinutes', 'sortOrder', 'enabled',
 ]
 const touched = reactive(Object.fromEntries(fields.map((field) => [field, false])) as Record<ShuttleRouteValidationField, boolean>)
 const allIssues = computed(() => {
@@ -132,13 +131,6 @@ watch(() => props.mode, () => { for (const field of fields) touched[field] = fal
     <section class="space-y-4" aria-labelledby="shuttle-route-status-heading">
       <h3 id="shuttle-route-status-heading" class="border-b pb-2 font-semibold">状态与排序</h3>
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div class="space-y-2">
-          <Label :for="inputId('operatingStatus')">运营状态</Label>
-          <Select :model-value="value.operatingStatus" :disabled="saving" @update:model-value="patch({ operatingStatus: $event as ShuttleRouteCreateInput['operatingStatus'] }); touched.operatingStatus = true">
-            <SelectTrigger :id="inputId('operatingStatus')" data-field="operatingStatus" class="h-11 w-full"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="operating">运营中</SelectItem><SelectItem value="suspended">停运</SelectItem><SelectItem value="partial">部分运营</SelectItem></SelectContent>
-          </Select>
-        </div>
         <div class="space-y-2">
           <Label :for="inputId('sortOrder')">排序号</Label>
           <Input :id="inputId('sortOrder')" data-field="sortOrder" type="number" min="0" step="1" :model-value="Number.isFinite(value.sortOrder) ? value.sortOrder : ''" class="h-11 tabular-nums" :disabled="saving" :aria-invalid="Boolean(issueFor('sortOrder'))" @update:model-value="numberValue('sortOrder', $event)" @blur="touched.sortOrder = true" />

@@ -281,7 +281,11 @@ describe('shuttle route API service', () => {
     expect(validateShuttleRouteUpdateInput(saved).valid).toBe(true)
   })
 
-  it('downloads the backend CSV with the active route filters', async () => {
+  it.each([
+    { status: 'all', statusParams: {} },
+    { status: 'enabled', statusParams: { status: 1 } },
+    { status: 'disabled', statusParams: { status: 0 } },
+  ] as const)('downloads the backend CSV with the active route filters and $status status', async ({ status, statusParams }) => {
     const configs: SignedRequestConfig[] = []
     const blob = new Blob(['csv'], { type: 'text/csv' })
     const requestFile: ShuttleRouteFileRequester = async (config): Promise<AxiosResponse<Blob>> => {
@@ -298,7 +302,7 @@ describe('shuttle route API service', () => {
     }
     const service = createShuttleRouteService(async () => { throw new Error('unexpected data request') }, requestFile)
 
-    await expect(service.exportCsv({ keyword: ' 高铁 ', direction: 'outbound', operatingStatus: 'partial' })).resolves.toEqual({
+    await expect(service.exportCsv({ keyword: ' 高铁 ', direction: 'outbound', operatingStatus: 'partial', status })).resolves.toEqual({
       content: blob,
       filename: 'shuttle.csv',
       truncated: true,
@@ -308,7 +312,7 @@ describe('shuttle route API service', () => {
     expect(configs).toEqual([{
       method: 'GET',
       url: 'api/v1/admin/shuttle/lines/export',
-      params: { keyword: '高铁', direction: 2, operate_status: 2 },
+      params: { keyword: '高铁', direction: 2, operate_status: 2, ...statusParams },
       responseType: 'blob',
       headers: { Accept: 'text/csv' },
     }])
@@ -319,18 +323,22 @@ describe('shuttle route API service', () => {
       { list: [apiLine({ id: 2, code: 'L2', sort_order: 2, stops: [apiStop({ id: 21, exit_lng: 113.2, exit_lat: 27.9, exit_nav_address: '离场导航' })] })], total: 101, page: 1, page_size: 100 },
       { list: [apiLine({ id: 3, code: 'L3', sort_order: 1, stops: [apiStop({ id: 31 })] })], total: 101, page: 2, page_size: 100 },
     ])
-    const records = await createShuttleRouteService(request).list()
+    const records = await createShuttleRouteService(request).list({ keyword: '', direction: 'all', operatingStatus: 'all', status: 'disabled' })
 
     expect(records.map(record => record.code)).toEqual(['L3', 'L2'])
     expect(records.every(record => record.stations.length === 1)).toBe(true)
     expect(records[1]?.stations[0]).toMatchObject({ outboundPoint: { lng: 113.2, lat: 27.9 }, outboundNavigationAddress: '离场导航' })
     expect(configs).toMatchObject([
-      { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 1, page_size: 100 } },
-      { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 2, page_size: 100 } },
+      { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 1, page_size: 100, status: 0 } },
+      { method: 'GET', url: 'api/v1/admin/shuttle/lines', params: { page: 2, page_size: 100, status: 0 } },
     ])
   })
 
-  it('forwards list filters to the shuttle page query', async () => {
+  it.each([
+    { status: 'all', statusParams: {} },
+    { status: 'enabled', statusParams: { status: 1 } },
+    { status: 'disabled', statusParams: { status: 0 } },
+  ] as const)('forwards list filters with $status status to the shuttle page query', async ({ status, statusParams }) => {
     const { configs, request } = queuedRequester([
       { list: [apiLine({ id: 3, code: 'L3' })], total: 1, page: 1, page_size: 20 },
     ])
@@ -338,13 +346,14 @@ describe('shuttle route API service', () => {
       keyword: ' 高铁 ',
       direction: 'outbound',
       operatingStatus: 'partial',
+      status,
     })
 
     expect(page.records.map(record => record.code)).toEqual(['L3'])
-    expect(configs).toMatchObject([{
+    expect(configs).toEqual([{
       method: 'GET',
       url: 'api/v1/admin/shuttle/lines',
-      params: { page: 1, page_size: 20, keyword: '高铁', direction: 2, operate_status: 2 },
+      params: { page: 1, page_size: 20, keyword: '高铁', direction: 2, operate_status: 2, ...statusParams },
     }])
   })
 
@@ -444,5 +453,44 @@ describe('shuttle route API service', () => {
       station('client-new', { arrivalGateIds: ['9007199254740993'] }),
     ])).resolves.toMatchObject({ id: '21' })
     expect(configs[0]?.data).toMatchObject({ stops: [{ arrival_gate_ids: ['9007199254740993'] }] })
+  })
+})
+
+describe('shuttle road route API', () => {
+  const roads = [
+    { direction: 1, path: [{ lng: 113.1, lat: 27.8 }, { lng: 113.15, lat: 27.85 }, { lng: 113.2, lat: 27.9 }], distance: 3395, duration: 552, status: 1, last_error: null },
+    { direction: 2, path: [{ lng: 113.4, lat: 28.1 }, { lng: 113.35, lat: 28.05 }, { lng: 113.3, lat: 28 }], distance: 3600, duration: 600, status: 1, last_error: null },
+  ]
+
+  it('posts without a body and respects the actual line ID returned by the backend', async () => {
+    const { configs, request } = queuedRequester([{ line_id: '9007199254740993', routes: roads }])
+    const result = await createShuttleRouteService(request).saveRoadRoutes('22')
+    expect(configs).toEqual([{ method: 'POST', url: 'api/v1/admin/shuttle/lines/22/routes', timeout: 60_000 }])
+    expect(result.lineId).toBe('9007199254740993')
+    expect(result.routes.map(road => road.direction)).toEqual(['inbound', 'outbound'])
+    expect(result.routes[1]).toMatchObject({ path: roads[1]!.path, distance: 3600, duration: 600, enabled: true, lastError: '' })
+  })
+
+  it('maps detail paths without converting them into stations or reversing exit points', async () => {
+    const { request } = queuedRequester([apiLine({ routes: roads })])
+    const result = await createShuttleRouteService(request).get('21')
+    expect(result.stations).toHaveLength(1)
+    expect(result.roadRoutes?.[1]?.path).toEqual(roads[1]!.path)
+  })
+
+  it.each([undefined, null, []])('accepts omitted or empty detail paths (%s)', (routes) => {
+    const result = mapApiShuttleRoute(apiLine({ routes }))
+    expect(result.roadRoutes ?? []).toEqual([])
+  })
+
+  it('rejects malformed road coordinates instead of drawing them', () => {
+    expect(() => mapApiShuttleRoute(apiLine({ routes: [{ ...roads[0]!, path: [{ lng: 181, lat: 27.8 }] }] })))
+      .toThrow('定位无效')
+  })
+
+  it('preserves route planning errors for the caller to report separately from station saves', async () => {
+    const failure = new Error('高德规划失败')
+    const service = createShuttleRouteService(async () => { throw failure })
+    await expect(service.saveRoadRoutes('21')).rejects.toBe(failure)
   })
 })

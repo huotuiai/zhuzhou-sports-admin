@@ -3,6 +3,7 @@ import type { SignedRequestConfig } from '@/lib/http'
 import type {
   ShuttleDirection,
   ShuttleOperatingStatus,
+  ShuttleRoadRoute,
   ShuttleRoute,
   ShuttleRouteCreateInput,
   ShuttleRoutePage,
@@ -20,6 +21,20 @@ import { validateOptionalVrUrl } from '@/lib/vr-url'
 
 type ApiShuttleDirection = 1 | 2
 type ApiShuttleOperatingStatus = 0 | 1 | 2
+
+export interface ApiShuttleRoadRouteVO {
+  direction: number | string
+  path: Array<{ lng: number | string, lat: number | string }>
+  distance: number | string
+  duration: number | string
+  status: number | boolean
+  last_error: string | null
+}
+
+interface ApiShuttleRoadRoutesVO {
+  line_id: number | string
+  routes: ApiShuttleRoadRouteVO[]
+}
 
 export interface ApiShuttleStopVO {
   id: number | string
@@ -68,6 +83,7 @@ export interface ApiShuttleLineVO {
   status: number | boolean
   stop_count: number | string
   stops?: ApiShuttleStopVO[] | null
+  routes?: ApiShuttleRoadRouteVO[] | null
   pair_line_id?: number | string | null
   stops_inherited?: boolean
 }
@@ -213,7 +229,11 @@ function cloneStation(station: ShuttleStation): ShuttleStation {
 }
 
 function cloneRoute(route: ShuttleRoute): ShuttleRoute {
-  return { ...route, stations: route.stations.map(cloneStation) }
+  return {
+    ...route,
+    stations: route.stations.map(cloneStation),
+    ...(route.roadRoutes ? { roadRoutes: route.roadRoutes.map(road => ({ ...road, path: road.path.map(point => ({ ...point })) })) } : {}),
+  }
 }
 
 function endpoint(id: string, suffix = ''): string {
@@ -356,6 +376,26 @@ function mapApiStops(value: unknown): ShuttleStation[] {
     .map(item => mapApiShuttleStop(item as ApiShuttleStopVO))
 }
 
+function mapApiRoadRoutes(value: ApiShuttleRoadRouteVO[] | null): ShuttleRoadRoute[] {
+  if (value === null) return []
+  if (!Array.isArray(value)) throw responseError('服务器返回的道路路径无效')
+  return value.map((road) => {
+    if (!road || !Array.isArray(road.path)) throw responseError('服务器返回的道路路径点列无效')
+    return {
+      direction: mapDirection(road.direction),
+      path: road.path.map((point) => {
+        const mapped = point && mapStopPoint(point.lng, point.lat, '道路路径')
+        if (!mapped) throw responseError('服务器返回的道路路径坐标无效')
+        return mapped
+      }),
+      distance: nonNegativeInteger(road.distance, '道路路径距离'),
+      duration: nonNegativeInteger(road.duration, '道路路径耗时'),
+      enabled: flag(road.status),
+      lastError: optionalText(road.last_error),
+    }
+  })
+}
+
 export function mapApiShuttleRoute(value: ApiShuttleLineVO, stops: unknown = value.stops): ShuttleRoute {
   if (value.id === null || value.id === undefined) throw responseError('服务器返回的线路 ID 不完整')
   return {
@@ -372,6 +412,7 @@ export function mapApiShuttleRoute(value: ApiShuttleLineVO, stops: unknown = val
     sortOrder: nonNegativeInteger(value.sort_order, '线路排序'),
     enabled: flag(value.status),
     stations: mapApiStops(stops),
+    ...(value.routes !== undefined ? { roadRoutes: mapApiRoadRoutes(value.routes) } : {}),
     pairLineId: value.pair_line_id === null || value.pair_line_id === undefined ? null : String(value.pair_line_id),
     stationsInherited: value.stops_inherited === true,
     coordinateSystem: 'GCJ-02',
@@ -413,12 +454,13 @@ function stopBody(station: ShuttleStation, sequence: number): ApiShuttleStopWrit
   }
 }
 
-function exportParameters(query: ShuttleRouteQuery): Record<string, string | number> {
+function filterParameters(query: ShuttleRouteQuery): Record<string, string | number> {
   const params: Record<string, string | number> = {}
   const keyword = normalizeText(query.keyword)
   if (keyword) params.keyword = keyword
   if (query.direction !== 'all') params.direction = apiDirection(query.direction)
   if (query.operatingStatus !== 'all') params.operate_status = apiOperatingStatus(query.operatingStatus)
+  if (query.status !== 'all') params.status = query.status === 'enabled' ? 1 : 0
   return params
 }
 
@@ -430,11 +472,12 @@ const DEFAULT_QUERY: ShuttleRouteQuery = {
   keyword: '',
   direction: 'all',
   operatingStatus: 'all',
+  status: 'all',
 }
 const MAX_PAGE_SIZE = 100
 
 function queryParameters(page: number, pageSize: number, query: ShuttleRouteQuery): Record<string, string | number> {
-  return { page, page_size: pageSize, ...exportParameters(query) }
+  return { page, page_size: pageSize, ...filterParameters(query) }
 }
 
 function mapApiShuttlePage(value: ApiShuttleLinePage): ShuttleRoutePage {
@@ -482,7 +525,7 @@ export function createShuttleRouteService(
       const response = await requestFile({
         method: 'GET',
         url: 'api/v1/admin/shuttle/lines/export',
-        params: exportParameters(query),
+        params: filterParameters(query),
         responseType: 'blob',
         headers: { Accept: 'text/csv' },
       })
@@ -526,6 +569,19 @@ export function createShuttleRouteService(
         url: endpoint(id, '/stops'),
         data,
       }))
+    },
+
+    async saveRoadRoutes(id) {
+      const result = await request<ApiShuttleRoadRoutesVO>({
+        method: 'POST',
+        url: endpoint(id, '/routes'),
+        // 后端同步规划两个方向，长线路还会分段请求高德。
+        timeout: 60_000,
+      })
+      if (result.line_id === null || result.line_id === undefined || !String(result.line_id).trim()) {
+        throw responseError('服务器返回的道路路径所属线路 ID 不完整')
+      }
+      return { lineId: String(result.line_id), routes: mapApiRoadRoutes(result.routes) }
     },
 
     async remove(id) {

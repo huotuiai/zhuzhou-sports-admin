@@ -7,7 +7,7 @@ import { BusFront, Clock3, MapPinOff, MapPinned } from '@lucide/vue'
 import { AMapCanvas, AMapMarkerLayer, AMapRouteLayer } from '@/components/map'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { createShuttleMapItems, shuttleRouteColor } from '../lib/map-items'
+import { createShuttleMapItems, shuttleRoadRoute, shuttleRouteColor } from '../lib/map-items'
 import { shuttleOperatingStatusLabel } from '../types'
 
 const props = withDefaults(defineProps<{
@@ -21,6 +21,11 @@ const phase = ref<ShuttleMapPhase>('entry')
 const selected = computed(() => props.records.find((item) => item.id === selectedId.value) ?? null)
 const phaseLabel = computed(() => phase.value === 'entry' ? '入场' : '离场')
 const mapItems = computed(() => createShuttleMapItems(props.records, selectedId.value, phase.value))
+const fallbackCount = computed(() => mapItems.value.routes.filter(item => {
+  const record = props.records.find(route => route.id === item.id)
+  return record && !shuttleRoadRoute(record, phase.value)
+}).length)
+const selectedRoad = computed(() => selected.value ? shuttleRoadRoute(selected.value, phase.value) : undefined)
 
 function selectMarker(id: string): void {
   selectedId.value = id.split('::', 1)[0] ?? null
@@ -44,7 +49,7 @@ watch(() => props.records, (records) => {
         <Button size="sm" :variant="phase === 'entry' ? 'secondary' : 'ghost'" :aria-pressed="phase === 'entry'" @click="phase = 'entry'">入场定位</Button>
         <Button size="sm" :variant="phase === 'exit' ? 'secondary' : 'ghost'" :aria-pressed="phase === 'exit'" @click="phase = 'exit'">离场定位</Button>
       </div>
-      <p class="text-xs text-muted-foreground">当前显示各站点的{{ phaseLabel }}定位</p>
+      <p class="text-xs text-muted-foreground">当前显示{{ phaseLabel }}道路路径与站点<span v-if="fallbackCount">；{{ fallbackCount }} 条线路暂无有效道路路径，暂用站点连线</span></p>
     </div>
     <div class="relative min-h-0 flex-1">
       <AMapCanvas :theme="theme" :controls="true" min-height="100%" :aria-label="`接驳线路${phaseLabel}站点地图总览`">
@@ -63,7 +68,7 @@ watch(() => props.records, (records) => {
         <Badge v-if="mapItems.missingCount" variant="outline" class="pointer-events-auto h-9 bg-background/92 px-3 shadow-sm backdrop-blur"><MapPinOff class="size-3.5" aria-hidden="true" />{{ mapItems.missingCount }} 个站点未配置{{ phaseLabel }}坐标</Badge>
       </div>
 
-      <div v-if="records.length === 0 || mapItems.mappedCount === 0" class="pointer-events-none absolute inset-0 z-10 grid place-items-center">
+      <div v-if="records.length === 0 || (mapItems.mappedCount === 0 && !mapItems.routes.length)" class="pointer-events-none absolute inset-0 z-10 grid place-items-center">
         <div class="rounded-xl border bg-background/92 px-6 py-5 text-center shadow-sm backdrop-blur">
           <MapPinned class="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
           <p class="mt-3 font-medium">{{ records.length ? `暂无可展示的${phaseLabel}站点坐标` : '暂无接驳线路' }}</p>
@@ -79,6 +84,7 @@ watch(() => props.records, (records) => {
         <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           <span class="flex items-center gap-1.5"><Clock3 class="size-3.5" aria-hidden="true" />{{ selected.firstDeparture }}–{{ selected.lastDeparture }} · 每 {{ selected.departureIntervalMinutes }} 分钟</span>
           <span class="flex items-center gap-1.5"><BusFront class="size-3.5" aria-hidden="true" />全程约 {{ selected.durationMinutes }} 分钟</span>
+          <span v-if="selectedRoad">道路里程 {{ (selectedRoad.distance / 1000).toFixed(1) }} 公里 · 规划约 {{ Math.ceil(selectedRoad.duration / 60) }} 分钟</span>
         </div>
       </div>
     </div>

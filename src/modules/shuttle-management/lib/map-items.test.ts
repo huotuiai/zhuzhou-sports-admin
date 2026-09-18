@@ -86,3 +86,42 @@ describe('shuttle route map items', () => {
     expect(exit.markers[0]).toMatchObject({ point: { lng: 113.4, lat: 28.1 }, label: '2. 站点 S2' })
   })
 })
+
+describe('shuttle road polylines', () => {
+  const record = route([
+    { ...station('S1', { lng: 113.1, lat: 27.8 }), outboundPoint: { lng: 113.3, lat: 28 } },
+    { ...station('S2', { lng: 113.2, lat: 27.9 }), outboundPoint: { lng: 113.4, lat: 28.1 } },
+  ])
+  const entryPath = [{ lng: 113.1, lat: 27.8 }, { lng: 113.16, lat: 27.83 }, { lng: 113.2, lat: 27.9 }]
+  const exitPath = [{ lng: 113.4, lat: 28.1 }, { lng: 113.38, lat: 28.06 }, { lng: 113.3, lat: 28 }]
+  const roads: NonNullable<ShuttleRoute['roadRoutes']> = [
+    { direction: 'inbound', path: entryPath, distance: 3000, duration: 500, enabled: true, lastError: '' },
+    { direction: 'outbound', path: exitPath, distance: 3500, duration: 550, enabled: true, lastError: '' },
+  ]
+
+  it('uses each backend path in its original order while keeping markers sourced from stations', () => {
+    const withRoads = { ...record, roadRoutes: roads }
+    const entry = createShuttleMapItems([withRoads], record.id, 'entry')
+    const exit = createShuttleMapItems([withRoads], record.id, 'exit')
+    expect(entry.routes[0]?.points).toEqual(entryPath)
+    expect(exit.routes[0]?.points).toEqual(exitPath)
+    expect(entry.markers).toHaveLength(2)
+    expect(exit.markers.map(marker => marker.point)).toEqual([{ lng: 113.4, lat: 28.1 }, { lng: 113.3, lat: 28 }])
+    expect(exit.routes[0]?.selected).toBe(true)
+    exit.routes[0]!.points[0]!.lng = 1
+    expect(roads[1]!.path[0]!.lng).toBe(113.4)
+  })
+
+  it.each([
+    undefined,
+    [],
+    [{ ...roads[1]!, path: [] }],
+    [{ ...roads[1]!, path: [exitPath[0]!] }],
+    [{ ...roads[1]!, enabled: false }],
+    [{ ...roads[1]!, lastError: '规划失败' }],
+    [roads[0]!],
+  ])('falls back only to the selected direction station coordinates when its road is unavailable (%j)', roadRoutes => {
+    const result = createShuttleMapItems([{ ...record, roadRoutes }], null, 'exit')
+    expect(result.routes[0]?.points).toEqual([{ lng: 113.4, lat: 28.1 }, { lng: 113.3, lat: 28 }])
+  })
+})

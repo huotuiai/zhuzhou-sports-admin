@@ -25,6 +25,7 @@ vi.mock('@/components/map', () => ({
     emits: ['select'],
     setup: (props, { emit }) => () => h('div', props.routes.map(item => h('button', {
       'data-route': item.id,
+      'data-path': JSON.stringify(item.points),
       onClick: () => emit('select', item.id),
     }, item.label))),
   }),
@@ -68,6 +69,28 @@ afterEach(() => {
 })
 
 describe('shuttle map station locations', () => {
+  it('renders backend road paths, switches directions and explains a missing path', async () => {
+    const fixture = mountMap()
+    const entry = [{ lng: 113.1, lat: 27.8 }, { lng: 113.12, lat: 27.86 }, { lng: 113.2, lat: 27.9 }]
+    const exit = [{ lng: 113.4, lat: 28.1 }, { lng: 113.34, lat: 28.07 }, { lng: 113.3, lat: 28 }]
+    fixture.records.value = fixture.records.value.map(record => ({ ...record, roadRoutes: [
+      { direction: 'inbound', path: entry, distance: 3395, duration: 552, enabled: true, lastError: '' },
+      { direction: 'outbound', path: exit, distance: 4100, duration: 660, enabled: true, lastError: '' },
+    ] }))
+    await nextTick()
+    expect(fixture.host.querySelector('[data-route]')?.getAttribute('data-path')).toBe(JSON.stringify(entry))
+    expect(fixture.host.textContent).not.toContain('暂用站点连线')
+    await fixture.click('测试线路 · 入场')
+    expect(fixture.host.textContent).toContain('道路里程 3.4 公里 · 规划约 10 分钟')
+    await fixture.click('离场定位')
+    expect(fixture.host.querySelector('[data-route]')?.getAttribute('data-path')).toBe(JSON.stringify(exit))
+    expect(fixture.coordinates()).toEqual(['113.4,28.1', '113.3,28'])
+    fixture.records.value = fixture.records.value.map(record => ({ ...record, roadRoutes: record.roadRoutes?.slice(0, 1) }))
+    await nextTick()
+    expect(fixture.host.textContent).toContain('1 条线路暂无有效道路路径，暂用站点连线')
+    expect(fixture.host.textContent).not.toContain('道路里程')
+  })
+
   it.each(['inbound', 'outbound'] as const)('switches map coordinates and selected details independently of legacy %s direction', async (direction) => {
     const fixture = mountMap(direction)
     expect(fixture.coordinates()).toEqual(['113.1,27.8', '113.2,27.9'])

@@ -41,8 +41,9 @@ const baseColumns: readonly DataTableColumn<ShuttleRoute>[] = [
   { key: 'interval', label: '发车间隔', width: '110px', align: 'center' },
   { key: 'duration', label: '全程时长', width: '110px', align: 'center' },
   { key: 'operatingStatus', label: '运营状态', width: '112px', align: 'center' },
+  { key: 'enabled', label: '状态', width: '104px', align: 'center' },
   { key: 'sortOrder', label: '排序', width: '82px', align: 'center' },
-  { key: 'actions', label: '操作', width: '244px', align: 'right' },
+  { key: 'actions', label: '操作', width: '400px', align: 'right' },
 ]
 
 const store = useShuttleRouteStore()
@@ -77,7 +78,7 @@ const loadError = ref('')
 const routeDirty = computed(() => JSON.stringify(routeValue.value) !== JSON.stringify(routeInitial.value))
 const stationDirty = computed(() => stationEditorDirty.value || JSON.stringify(stationValue.value) !== JSON.stringify(stationInitial.value))
 const stationRouteId = computed(() => stationRoute.value?.id ?? null)
-const hasQuery = computed(() => Boolean(store.query.keyword || store.query.operatingStatus !== 'all'))
+const hasQuery = computed(() => Boolean(store.query.keyword || store.query.operatingStatus !== 'all' || store.query.status !== 'all'))
 
 function emptyRoute(): ShuttleRouteCreateInput {
   return {
@@ -264,7 +265,15 @@ async function saveStations(): Promise<void> {
     return
   }
   closeStations()
-  toast.success('站点配置已保存。')
+  const warning = store.roadRouteWarnings[saved.id]
+  if (warning) toast.warning(`站点配置已保存。${warning}`)
+  else toast.success('站点配置已保存，道路路径已更新。')
+}
+
+async function updateRoadRoutes(id: string): Promise<void> {
+  if (!canOperate.value || store.isMutating) return
+  if (await store.saveRoadRoutes(id)) toast.success('道路路径已更新。')
+  else toast.warning(store.roadRouteWarnings[id] ?? '道路路径未更新，请重试。')
 }
 
 function requestDelete(route: ShuttleRoute): void {
@@ -396,16 +405,23 @@ useEventListener(window, 'beforeunload', beforeUnload)
             <Button :variant="viewMode === 'list' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'list'"><List aria-hidden="true" />列表</Button>
             <Button :variant="viewMode === 'map' ? 'secondary' : 'ghost'" size="sm" class="h-9" @click="viewMode = 'map'"><MapIcon aria-hidden="true" />地图</Button>
           </div>
-          <Button v-if="canOperate" size="lg" class="h-11 px-4" @click="openCreate"><Plus aria-hidden="true" />新增线路</Button>
+          <Button v-if="canOperate" size="lg" class="h-11 px-4" :disabled="store.isMutating" @click="openCreate"><Plus aria-hidden="true" />新增线路</Button>
         </div>
       </header>
 
       <QueryPanel :loading="store.isLoading" @query="applyQuery" @reset="resetQuery">
         <div class="space-y-2"><Label for="shuttle-keyword">关键字</Label><Input id="shuttle-keyword" v-model="queryDraft.keyword" class="h-11" placeholder="线路编号或名称" autocomplete="off" @keydown.enter.prevent="applyQuery" /></div>
-        <div class="space-y-2"><Label for="shuttle-operating-status">运营状态</Label><Select v-model="queryDraft.operatingStatus"><SelectTrigger id="shuttle-operating-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部运营状态</SelectItem><SelectItem value="operating">运营中</SelectItem><SelectItem value="suspended">停运</SelectItem><SelectItem value="partial">部分运营</SelectItem></SelectContent></Select></div>
+        <div class="space-y-2"><Label for="shuttle-operating-status">运营状态</Label><Select v-model="queryDraft.operatingStatus"><SelectTrigger id="shuttle-operating-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部运营状态</SelectItem><SelectItem value="operating">运营中</SelectItem><SelectItem value="suspended">停运</SelectItem></SelectContent></Select></div>
+        <div class="space-y-2"><Label for="shuttle-status">状态</Label><Select v-model="queryDraft.status"><SelectTrigger id="shuttle-status" class="h-11 w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="enabled">启用</SelectItem><SelectItem value="disabled">停用</SelectItem></SelectContent></Select></div>
       </QueryPanel>
 
       <div v-if="loadError && !store.isLoading" class="flex items-center gap-3 rounded-xl border border-destructive/35 bg-destructive/8 p-4" role="alert"><AlertTriangle class="size-5 shrink-0 text-destructive" aria-hidden="true" /><p class="flex-1 text-sm text-destructive">{{ loadError }}</p><Button variant="outline" class="h-11" @click="load"><RotateCcw aria-hidden="true" />重新加载</Button></div>
+
+      <div v-for="(warning, id) in store.roadRouteWarnings" :key="id" class="flex flex-wrap items-center gap-3 rounded-xl border border-warning/35 bg-warning/8 p-4" role="alert">
+        <AlertTriangle class="size-5 shrink-0 text-warning" aria-hidden="true" />
+        <p class="min-w-0 flex-1 text-sm">{{ store.records.find(route => route.id === id)?.name ?? `线路 ${id}` }}：{{ warning }}</p>
+        <Button v-if="canOperate" variant="outline" class="h-11" :disabled="store.isMutating" @click="updateRoadRoutes(id)"><LoaderCircle v-if="store.savingRoadRoutesId === id" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><RotateCcw v-else aria-hidden="true" />重试道路路径</Button>
+      </div>
 
       <template v-if="viewMode === 'list'">
         <DataTable :columns="columns" :rows="store.paginatedRecords" row-key="id" :loading="store.isLoading" :empty-text="hasQuery ? '当前查询条件下暂无接驳线路' : '暂无接驳线路，请新增'" caption="接驳线路列表">
@@ -416,8 +432,9 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <template #cell-interval="{ row }"><span class="tabular-nums">{{ row.departureIntervalMinutes }} 分钟</span></template>
           <template #cell-duration="{ row }"><span class="tabular-nums">{{ row.durationMinutes }} 分钟</span></template>
           <template #cell-operatingStatus="{ row }"><Badge variant="outline" :class="operatingClass(row)">{{ shuttleOperatingStatusLabel(row.operatingStatus) }}</Badge></template>
+          <template #cell-enabled="{ row }"><Badge variant="outline" :class="row.enabled ? 'border-success/30 bg-success/10 text-success' : 'border-border bg-muted text-muted-foreground'">{{ row.enabled ? '启用' : '停用' }}</Badge></template>
           <template #cell-sortOrder="{ row }"><span class="tabular-nums text-muted-foreground">{{ row.sortOrder }}</span></template>
-          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" :disabled="Boolean(stationLoadingId)" @click="openStations(row)"><LoaderCircle v-if="stationLoadingId === row.id" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><MapPin v-else aria-hidden="true" />站点配置</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="Boolean(store.deletingId)" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button></div></template>
+          <template #cell-actions="{ row }"><div class="flex justify-end gap-1"><Button variant="ghost" class="h-11 px-3" :disabled="store.isMutating" @click="openEdit(row)"><PencilLine aria-hidden="true" />编辑</Button><Button variant="ghost" class="h-11 px-3" :disabled="Boolean(stationLoadingId) || store.isMutating" @click="openStations(row)"><LoaderCircle v-if="stationLoadingId === row.id" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><MapPin v-else aria-hidden="true" />站点配置</Button><Button variant="ghost" class="h-11 px-3" :disabled="store.isMutating" :aria-label="`更新${row.name}道路路径`" @click="updateRoadRoutes(row.id)"><LoaderCircle v-if="store.savingRoadRoutesId === row.id" class="animate-spin motion-reduce:animate-none" aria-hidden="true" /><RotateCcw v-else aria-hidden="true" />更新道路路径</Button><Button variant="ghost" size="icon-lg" class="h-11 w-11 text-destructive hover:text-destructive" :disabled="store.isMutating" :aria-label="`删除${row.name}`" @click="requestDelete(row)"><Trash2 aria-hidden="true" /></Button></div></template>
         </DataTable>
         <PaginationBar :page="store.currentPage" :page-size="store.pageSize" :total="store.total" :disabled="store.isLoading" :page-sizes="[20, 50, 100]" @update:page="changePage" @update:page-size="changePageSize" />
       </template>
@@ -425,11 +442,12 @@ useEventListener(window, 'beforeunload', beforeUnload)
       <ShuttleRouteMapView v-else :records="store.mapRecords" :theme="themeStore.mode" />
     </div>
 
-    <CrudSheet :open="routeOpen" :mode="routeMode" size="wide" :title="routeMode === 'create' ? '新增接驳线路' : `编辑接驳线路 · ${routeValue.code}`" description="维护线路信息、班次、运营状态和排序；站点保存后单独配置。" :saving="store.isSaving" :dirty="routeDirty" @submit="saveRoute" @request-close="requestRouteClose">
+    <CrudSheet :open="routeOpen" :mode="routeMode" size="wide" :title="routeMode === 'create' ? '新增接驳线路' : `编辑接驳线路 · ${routeValue.code}`" description="维护线路信息、班次和排序；站点保存后单独配置。" :saving="store.isSaving" :dirty="routeDirty" @submit="saveRoute" @request-close="requestRouteClose">
       <ShuttleRouteForm :key="`${routeMode}-${editingId ?? 'new'}`" ref="routeFormRef" :mode="routeMode" :value="routeValue" :issues="routeIssues" :saving="store.isSaving" @update:value="updateRoute" />
     </CrudSheet>
 
     <CrudSheet :open="stationOpen" mode="edit" size="wide" :title="`站点配置 · ${stationRoute?.code ?? ''}`" :description="stationRoute ? `${stationRoute.name}，入场、离场定位均为必填项，请按入场方向配置站点顺序。` : '维护线路站点'" submit-label="保存站点" :saving="store.isSaving" :dirty="stationDirty" @submit="saveStations" @request-close="requestStationClose">
+      <p v-if="store.savingRoadRoutesId" class="flex items-center gap-2 text-sm text-muted-foreground" role="status"><LoaderCircle class="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />站点已保存，正在更新入场和离场道路路径…</p>
       <ShuttleStationConfig v-if="stationRouteId" :key="stationRouteId" ref="stationFormRef" :route-id="stationRouteId" :value="stationValue" :ticket-gates="ticketGates" :ticket-gates-loading="ticketGatesLoading" :ticket-gates-error="ticketGatesError" :saving="store.isSaving" @update:value="stationValue = $event; store.resetError()" @editor-dirty="stationEditorDirty = $event" />
     </CrudSheet>
 
