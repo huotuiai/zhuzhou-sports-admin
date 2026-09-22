@@ -16,6 +16,8 @@ export interface SeatFloor {
 
 export interface SeatZone {
   vrUrl?: string
+  exitVrUrl?: string
+  coverageArea?: string
   id: string
   code: string
   name: string
@@ -53,6 +55,9 @@ export interface SeatFloorCreateInput extends SeatFloorWriteInput {
 
 export interface SeatZoneWriteInput {
   vrUrl?: string
+  // 新增/编辑表单必填；快捷启停时省略，避免覆盖存量值。
+  exitVrUrl?: string
+  coverageArea?: string
   code: string
   name: string
   floorId: string

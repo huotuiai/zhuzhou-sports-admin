@@ -10,12 +10,15 @@ import ParkingLotForm from '@/modules/parking-management/components/ParkingLotFo
 import TicketGateForm from '@/modules/ticket-gate-management/components/TicketGateForm.vue'
 
 const mounted: Array<{ app: App, host: HTMLDivElement }> = []
-const cases: Array<{ name: string, component: Component, value: object, props?: object }> = [
+const cases: Array<{ name: string, component: Component, value: object, vrLabel: string, props?: object }> = [
   {
     name: 'seat zone', component: VenueSeatForm,
+    vrLabel: '分区VR视角链接（选填）',
     value: {
       code: 'A-01', name: 'A 区', floorId: '11', rowStart: 1, rowEnd: 30,
       gateIds: ['21'], sortOrder: 1, status: 'enabled', remark: '',
+      exitVrUrl: 'https://example.com/exit',
+      coverageArea: '[{"lng":113.096571,"lat":27.841963},{"lng":113.099628,"lat":27.841963},{"lng":113.099628,"lat":27.843168}]',
     } satisfies SeatZoneWriteInput,
     props: {
       floors: [{ id: '11', name: '一层', sortOrder: 1, status: 'enabled', zoneCount: 1, createdAt: '', updatedAt: '' }],
@@ -24,6 +27,7 @@ const cases: Array<{ name: string, component: Component, value: object, props?: 
   },
   {
     name: 'parking lot', component: ParkingLotForm,
+    vrLabel: 'VR 链接（选填）',
     value: {
       code: 'P-01', name: '东停车场', locationDescription: '', coordinateInput: '113.1,27.8', navigationAddress: '',
       totalSpaces: 100, availabilityUpdateMethod: 'manual', feeType: 'free', feeStandard: '', openStatus: 'open',
@@ -32,6 +36,7 @@ const cases: Array<{ name: string, component: Component, value: object, props?: 
   },
   {
     name: 'ticket gate', component: TicketGateForm,
+    vrLabel: 'VR 链接（选填）',
     value: {
       code: 'G-01', name: '东门', floorId: '11', locationDescription: '', mapCoordinates: '113.1,27.8',
       navigationAddress: '', sortOrder: 1, status: 'open', statusRemark: '',
@@ -66,7 +71,7 @@ describe.each(cases)('$name optional VR field', (testCase) => {
     expect(input).not.toBeNull()
     expect(input.value).toBe(model.value.vrUrl)
     expect(input.required).toBe(false)
-    expect(host.textContent).toContain('VR 链接（选填）')
+    expect(host.querySelector(`label[for="${input.id}"]`)?.textContent).toBe(testCase.vrLabel)
     const fill = async (value: string) => {
       input.value = value
       input.dispatchEvent(new Event('input', { bubbles: true }))

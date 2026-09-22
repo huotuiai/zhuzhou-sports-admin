@@ -209,7 +209,10 @@ function query(overrides: Partial<SeatPlanningQuery> = {}): SeatPlanningQuery {
 function zoneInput(overrides: Partial<SeatZoneWriteInput> = {}): SeatZoneWriteInput {
   return {
     code: ' b-01 ', name: ' 新增区域 ', floorId: 'floor-1', rowStart: 1, rowEnd: 25,
-    gateIds: ['gate-1'], sortOrder: 130, status: 'enabled', remark: '', ...overrides,
+    gateIds: ['gate-1'], sortOrder: 130, status: 'enabled', remark: '',
+    exitVrUrl: 'https://example.com/exit',
+    coverageArea: '[{"lng":113.096571,"lat":27.841963},{"lng":113.099628,"lat":27.841963},{"lng":113.099628,"lat":27.843168}]',
+    ...overrides,
   }
 }
 
@@ -321,13 +324,28 @@ describe('seat planning store', () => {
     expect(updated).toMatchObject({ code: 'B-01', name: '调整后' })
     expect(await store.removeZone(created!.id)).toBe(false)
     expect(store.error).toContain('先停用')
-    expect((await store.updateStatus(created!.id, 'disabled'))?.status).toBe('disabled')
+    expect(await store.updateStatus(created!.id, 'disabled')).toMatchObject({
+      status: 'disabled', exitVrUrl: updated!.exitVrUrl, coverageArea: updated!.coverageArea,
+    })
+    expect(service.updateZoneInputs.at(-1)?.input).not.toHaveProperty('exitVrUrl')
+    expect(service.updateZoneInputs.at(-1)?.input).not.toHaveProperty('coverageArea')
     expect(await store.removeZone(created!.id)).toBe(true)
     expect(store.totalZoneCount('floor-1')).toBe(4)
 
     const floor = await store.createFloor({ name: ' 三层 ' })
     expect(floor).toMatchObject({ name: '三层', sortOrder: 3, status: 'enabled' })
     expect(await store.removeFloor(floor!.id)).toBe(true)
+  })
+
+  it('blocks create and edit requests when the departure configuration is incomplete', async () => {
+    const service = new FakeService(2)
+    const store = createSeatPlanningStore(service, 'seat-departure-required')()
+    await store.initialize()
+
+    expect(await store.createZone(zoneInput({ exitVrUrl: ' ', coverageArea: '' }))).toBeNull()
+    expect(await store.updateZone('zone-1', zoneInput({ coverageArea: '[]' }))).toBeNull()
+    expect(service.createZoneInputs).toEqual([])
+    expect(service.updateZoneInputs).toEqual([])
   })
 
   it('submits existing floor names and zone codes and surfaces backend conflicts', async () => {

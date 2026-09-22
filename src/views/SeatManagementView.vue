@@ -31,6 +31,7 @@ import { useAuthStore } from '@/stores/auth'
 const EMPTY_ZONE: SeatZoneWriteInput = {
   code: '', name: '', floorId: '', rowStart: 1, rowEnd: 30,
   gateIds: [], sortOrder: 1, status: 'enabled', remark: '', vrUrl: '',
+  exitVrUrl: '', coverageArea: '',
 }
 
 const baseColumns: readonly DataTableColumn<SeatZone>[] = [
@@ -89,6 +90,7 @@ function toWriteInput(zone: SeatZone): SeatZoneWriteInput {
     rowStart: zone.rowStart, rowEnd: zone.rowEnd, gateIds: [...zone.gateIds],
     sortOrder: zone.sortOrder, status: zone.status, remark: zone.remark,
     vrUrl: zone.vrUrl ?? '',
+    exitVrUrl: zone.exitVrUrl ?? '', coverageArea: zone.coverageArea ?? '',
   }
 }
 
