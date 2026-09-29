@@ -97,6 +97,50 @@ describe('role management API service', () => {
     })
   })
 
+  it('keeps role menus and submitted grants limited to real API records during the navigation transition', async () => {
+    const menuRecords = [
+      apiMenu({ id: 1, name: '运营管理', menu_type: 1, path: null, perms: null, sort_order: 10 }),
+      apiMenu({ id: 10, parent_id: 1, name: '数据展示', path: '/', perms: 'dashboard:view', sort_order: 10 }),
+      apiMenu({ id: 11, parent_id: 10, name: '导出', menu_type: 3, path: null, perms: 'dashboard:export', visible: 0 }),
+      apiMenu({ id: 13, parent_id: 1, name: '数据大屏', path: '/operations/data-screen', perms: 'dashboard:view' }),
+    ]
+    const { configs, request } = queuedRequester([
+      menuRecords,
+      apiRole({ menu_ids: [1, 10, 11, 13] }),
+      apiRole({ menu_ids: [1, 10, 11, 13] }),
+    ])
+    const service = createRoleManagementService(request)
+
+    const permissions = await service.listMenus()
+    const permissionIds = permissions.map(permission => permission.id)
+    await service.createRole({ name: '运营管理', description: '', permissionIds })
+    await service.replaceRoleMenus('11', { permissionIds })
+
+    expect(permissions).toEqual([
+      { id: '1', parentId: null, name: '运营管理', code: 'menu:1', type: 'group', sort: 10 },
+      { id: '10', parentId: '1', name: '运营数据', code: 'dashboard:view', type: 'page', sort: 10 },
+      { id: '11', parentId: '10', name: '导出', code: 'dashboard:export', type: 'action', sort: 20 },
+      { id: '13', parentId: '1', name: '数据大屏', code: 'dashboard:view', type: 'page', sort: 20 },
+    ])
+    expect(configs[1]?.data).toEqual({ name: '运营管理', remark: '', menu_ids: [1, 10, 11, 13] })
+    expect(configs[2]?.data).toEqual({ menu_ids: [1, 10, 11, 13] })
+    expect(menuRecords[1]?.name).toBe('数据展示')
+  })
+
+  it('preserves a future server-provided directory and independent security permission', async () => {
+    const { request } = queuedRequester([[
+      apiMenu({ id: 200, parent_id: 1, name: '数据展示', menu_type: 1, path: null, perms: null }),
+      apiMenu({ id: 10, parent_id: 200, name: '运营数据', path: '/', perms: 'dashboard:view' }),
+      apiMenu({ id: 201, parent_id: 200, name: '安保数据', path: '/operations/security-data', perms: 'security:view' }),
+    ]])
+
+    expect(await createRoleManagementService(request).listMenus()).toEqual([
+      { id: '200', parentId: '1', name: '数据展示', code: 'menu:200', type: 'group', sort: 20 },
+      { id: '10', parentId: '200', name: '运营数据', code: 'dashboard:view', type: 'page', sort: 20 },
+      { id: '201', parentId: '200', name: '安保数据', code: 'security:view', type: 'page', sort: 20 },
+    ])
+  })
+
   it('uses server-side role keyword pagination and maps API counts', async () => {
     const { configs, request } = queuedRequester([{ list: [apiRole()], total: '41', page: 2, page_size: 20 }])
     const query: RoleQuery = { keyword: ' 场馆 ' }

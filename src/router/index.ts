@@ -21,7 +21,13 @@ export const router = createRouter({
           path: '',
           name: 'data-dashboard',
           component: () => import('@/views/DataDashboardView.vue'),
-          meta: { title: '数据看板', sectionTitle: '运营管理', menuPath: '/', requiredPermission: 'dashboard:view' },
+          meta: { title: '运营数据', sectionTitle: '运营管理', menuPath: '/', requiredPermission: 'dashboard:view' },
+        },
+        {
+          path: 'operations/security-data',
+          name: 'security-data',
+          component: () => import('@/views/SecurityDataView.vue'),
+          meta: { title: '安保数据', sectionTitle: '运营管理', menuPath: '/operations/security-data', requiredPermission: 'dashboard:view' },
         },
         {
           path: 'operations/data-screen',

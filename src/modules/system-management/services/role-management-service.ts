@@ -1,4 +1,5 @@
 import type { AxiosResponse } from 'axios'
+import { menuDisplayName } from '@/config/data-display'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   RoleManagementService,
@@ -104,7 +105,11 @@ export function mapApiMenu(value: ApiMenuVO): SystemPermission {
   return {
     id,
     parentId,
-    name: requiredText(value.name, '菜单名称'),
+    name: menuDisplayName({
+      name: requiredText(value.name, '菜单名称'),
+      menuType: integer(value.menu_type),
+      path: path || null,
+    }),
     code: perms || path || `menu:${id}`,
     type: menuType(value.menu_type),
     sort: integer(value.sort_order),

@@ -196,7 +196,7 @@ onMounted(async () => {
           </span>
           <div>
             <div class="flex flex-wrap items-center gap-2">
-              <h1 id="data-dashboard-title" class="text-2xl font-semibold tracking-tight">数据看板</h1>
+              <h1 id="data-dashboard-title" class="text-2xl font-semibold tracking-tight">运营数据</h1>
             </div>
             <p class="mt-1 text-sm text-muted-foreground">运营复盘与决策入口</p>
           </div>
@@ -206,7 +206,7 @@ onMounted(async () => {
       <div v-if="store.error && !store.snapshot && !store.isLoading" class="grid min-h-80 place-items-center rounded-xl border border-danger/25 bg-danger/5 p-8 text-center">
         <div>
           <Database class="mx-auto size-9 text-danger" aria-hidden="true" />
-          <h2 class="mt-4 font-semibold">数据看板加载失败</h2>
+          <h2 class="mt-4 font-semibold">运营数据加载失败</h2>
           <p class="mt-2 text-sm text-muted-foreground">{{ store.error }}</p>
           <Button class="mt-5" @click="store.load(initialQuery)">
             <RefreshCw aria-hidden="true" />重新加载

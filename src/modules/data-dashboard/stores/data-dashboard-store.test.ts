@@ -202,8 +202,10 @@ describe('data dashboard store', () => {
     const store = createDataDashboardStore(new StubDashboardService(), 'dashboard-load-test')()
 
     expect(await store.load(QUERY)).toBe(true)
-    expect(store.metricGroupCounts).toEqual({ entry: 1, page: 1 })
-    expect(store.visibleMetrics.map(metric => metric.id)).toEqual(['IND-1'])
+    expect(store.metricGroupCounts).toEqual({ entry: 5, page: 1 })
+    expect(store.visibleMetrics.map(metric => metric.id)).toEqual([
+      'IND-1', 'pending:entry-guide', 'pending:exit-guide', 'pending:map-navigation', 'pending:vr-navigation',
+    ])
     expect(store.snapshot?.vrWorks[0]?.externalId).toBe('720-1')
   })
 

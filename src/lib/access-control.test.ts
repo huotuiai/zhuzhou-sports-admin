@@ -6,6 +6,7 @@ import {
   effectivePermissionCodes,
   firstAccessibleRoute,
   hasPermission,
+  navigationBreadcrumbs,
   normalizeMenuPath,
 } from './access-control'
 
@@ -88,5 +89,146 @@ describe('access control', () => {
 
     const disabled = mismatched.map(item => item.id === '2' ? { ...item, enabled: false } : item)
     expect(canAccessPath({ menus: disabled, isSuper: true }, '/ticket-gates')).toBe(false)
+  })
+
+  it('groups the legacy dashboard for display without adding permissions or changing API menus', () => {
+    const menus = [
+      ...baseMenus,
+      menu({ id: '11', name: '导出', menuType: 3, parentId: '10', permission: 'dashboard:export', visible: false }),
+      menu({ id: '13', name: '数据大屏', menuType: 2, parentId: '1', path: '/operations/data-screen', permission: 'dashboard:view', sortOrder: 20 }),
+    ]
+    const before = structuredClone(menus)
+    const context = { menus, isSuper: false }
+    const navigation = buildAuthorizedNavigation(context)
+    expect(navigation[1]?.items).toMatchObject([
+      { kind: 'directory', label: '数据展示', children: [
+        { kind: 'page', label: '运营数据', path: '/', permission: 'dashboard:view' },
+        { kind: 'page', label: '安保数据', path: '/operations/security-data', authorizationPath: '/' },
+      ] },
+      { kind: 'page', label: '数据大屏', path: '/operations/data-screen' },
+    ])
+    expect(navigationBreadcrumbs(navigation, 'data-dashboard')).toEqual(['运营管理', '数据展示', '运营数据'])
+    expect(navigationBreadcrumbs(navigation, 'data-screen')).toEqual(['运营管理', '数据大屏'])
+    expect(navigationBreadcrumbs(navigation, 'security-data')).toEqual(['运营管理', '数据展示', '安保数据'])
+    expect(menus).toEqual(before)
+    expect(canAccessPath(context, '/')).toBe(true)
+    expect(hasPermission(context, 'dashboard:export')).toBe(true)
+    expect(hasPermission(context, 'security:view')).toBe(false)
+    expect(canAccessPath(context, '/operations/security-data')).toBe(true)
+    expect(canAccessPath({ ...context, isSuper: true }, '/operations/security-data')).toBe(true)
+    expect(effectivePermissionCodes(context)).toEqual(['dashboard:export', 'dashboard:view', 'gate:export', 'gate:operate', 'gate:view'])
+  })
+
+  it('does not infer dashboard access from the data screen shared permission', () => {
+    const context = { isSuper: false, menus: [
+      baseMenus[0]!,
+      menu({ id: '13', name: '数据大屏', menuType: 2, parentId: '1', path: '/operations/data-screen', permission: 'dashboard:view' }),
+    ] }
+    expect(buildAuthorizedNavigation(context)[0]?.items).toMatchObject([{ kind: 'page', label: '数据大屏' }])
+    expect(buildAuthorizedNavigation(context)[0]?.items).toHaveLength(1)
+    expect(canAccessPath(context, '/')).toBe(false)
+    expect(canAccessPath(context, '/operations/security-data')).toBe(false)
+    expect(canAccessPath({ ...context, isSuper: true }, '/operations/security-data')).toBe(false)
+    expect(firstAccessibleRoute(context)).toEqual({ name: 'data-screen' })
+  })
+
+  it.each(['missing', 'disabled', 'hidden', 'mismatched'] as const)('does not show a derived security entry for a %s dashboard', (state) => {
+    let menus = baseMenus
+    if (state === 'missing') menus = menus.filter(item => item.id !== '10')
+    else menus = menus.map(item => item.id === '10' ? {
+      ...item,
+      enabled: state !== 'disabled',
+      visible: state !== 'hidden',
+      permission: state === 'mismatched' ? 'different:view' : item.permission,
+    } : item)
+    expect(buildAuthorizedNavigation({ menus, isSuper: false }).map(group => group.id)).toEqual(['2'])
+    expect(canAccessPath({ menus, isSuper: false }, '/operations/security-data')).toBe(state === 'hidden')
+    if (state === 'missing' || state === 'disabled') {
+      expect(canAccessPath({ menus, isSuper: true }, '/operations/security-data')).toBe(false)
+    }
+  })
+
+  it('accepts real nested directories without adding a duplicate display group', () => {
+    const context = { isSuper: false, menus: [
+      menu({ id: '1', name: '运营管理', menuType: 1, parentId: '0' }),
+      menu({ id: '150', name: '数据展示', menuType: 1, parentId: '1', sortOrder: 10 }),
+      menu({ id: '10', name: '运营数据', menuType: 2, parentId: '150', path: '/', permission: 'dashboard:view' }),
+      menu({ id: '11', name: '导出', menuType: 3, parentId: '10', permission: 'dashboard:export', visible: false }),
+      menu({ id: '13', name: '数据大屏', menuType: 2, parentId: '1', path: '/operations/data-screen', permission: 'dashboard:view', sortOrder: 20 }),
+    ] }
+    const navigation = buildAuthorizedNavigation(context)
+    expect(navigation).toHaveLength(1)
+    expect(navigation[0]?.items).toMatchObject([
+      { kind: 'directory', id: '150', label: '数据展示', children: [{ kind: 'page', label: '运营数据' }] },
+      { kind: 'page', label: '数据大屏' },
+    ])
+    const directory = navigation[0]?.items[0]
+    expect(directory?.kind === 'directory' && directory.children).toHaveLength(1)
+    expect(canAccessPath(context, '/')).toBe(true)
+    expect(canAccessPath(context, '/operations/security-data')).toBe(true)
+    expect(hasPermission(context, 'dashboard:export')).toBe(true)
+    expect(firstAccessibleRoute(context)).toEqual({ name: 'data-dashboard' })
+    expect(navigationBreadcrumbs(navigation, 'data-dashboard')).toEqual(['运营管理', '数据展示', '运营数据'])
+  })
+
+  it('fails closed for disabled, missing or cyclic directory ancestors', () => {
+    const root = menu({ id: '1', name: '运营管理', menuType: 1, parentId: '0' })
+    const directory = menu({ id: '150', name: '数据展示', menuType: 1, parentId: '1' })
+    const page = menu({ id: '10', name: '运营数据', menuType: 2, parentId: '150', path: '/', permission: 'dashboard:view' })
+    const action = menu({ id: '11', name: '导出', menuType: 3, parentId: '10', permission: 'dashboard:export', visible: false })
+    for (const menus of [
+      [root, { ...directory, enabled: false }, page, action],
+      [root, page, action],
+      [{ ...root, parentId: '150' }, directory, page, action],
+    ]) {
+      const context = { menus, isSuper: false }
+      expect(canAccessPath(context, '/')).toBe(false)
+      expect(canAccessPath(context, '/operations/security-data')).toBe(false)
+      expect(canAccessPath({ ...context, isSuper: true }, '/operations/security-data')).toBe(false)
+      expect(hasPermission(context, 'dashboard:export')).toBe(false)
+      expect(buildAuthorizedNavigation(context)).toEqual([])
+      expect(firstAccessibleRoute(context)).toBeNull()
+    }
+  })
+
+  it('keeps an early backend security menu behind the temporary source authorization', () => {
+    const root = menu({ id: '1', name: '运营管理', menuType: 1, parentId: '0' })
+    const security = menu({ id: '160', name: '安保数据', menuType: 2, parentId: '1', path: '/operations/security-data', permission: 'security:view', sortOrder: 1 })
+    const screen = menu({ id: '13', name: '数据大屏', menuType: 2, parentId: '1', path: '/operations/data-screen', permission: 'dashboard:view', sortOrder: 20 })
+    for (const isSuper of [false, true]) {
+      const context = { menus: [root, security, screen], isSuper }
+      expect(canAccessPath(context, '/operations/security-data')).toBe(false)
+      expect(buildAuthorizedNavigation(context)[0]?.items).toMatchObject([{ kind: 'page', label: '数据大屏' }])
+      expect(buildAuthorizedNavigation(context)[0]?.items).toHaveLength(1)
+      expect(firstAccessibleRoute(context)).toEqual({ name: 'data-screen' })
+    }
+
+    const context = { menus: [root, security, baseMenus[2]!], isSuper: false }
+    const navigation = buildAuthorizedNavigation(context)
+    expect(canAccessPath(context, '/operations/security-data')).toBe(true)
+    expect(navigation[0]?.items[0]).toMatchObject({ kind: 'page', label: '安保数据' })
+    const displayDirectory = navigation[0]?.items[1]
+    expect(displayDirectory?.kind === 'directory' && displayDirectory.children).toHaveLength(1)
+  })
+
+  it('shows one backend security entry in a real nested directory without mutating its menus', () => {
+    const menus = [
+      menu({ id: '1', name: '运营管理', menuType: 1, parentId: '0' }),
+      menu({ id: '150', name: '数据展示', menuType: 1, parentId: '1' }),
+      menu({ id: '10', name: '运营数据', menuType: 2, parentId: '150', path: '/', permission: 'dashboard:view', sortOrder: 1 }),
+      menu({ id: '160', name: '安保数据', menuType: 2, parentId: '150', path: '/operations/security-data', permission: 'security:view', sortOrder: 2 }),
+    ]
+    const before = structuredClone(menus)
+    const context = { menus, isSuper: false }
+    const navigation = buildAuthorizedNavigation(context)
+    expect(navigation[0]?.items).toHaveLength(1)
+    expect(navigation[0]?.items[0]).toMatchObject({
+      kind: 'directory', id: '150', children: [
+        { kind: 'page', routeName: 'data-dashboard' },
+        { kind: 'page', routeName: 'security-data' },
+      ],
+    })
+    expect(navigationBreadcrumbs(navigation, 'security-data')).toEqual(['运营管理', '数据展示', '安保数据'])
+    expect(menus).toEqual(before)
   })
 })

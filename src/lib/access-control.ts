@@ -2,11 +2,15 @@ import type { RouteLocationRaw } from 'vue-router'
 import type {
   AuthorizedNavigationGroup,
   AuthorizedNavigationItem,
+  AuthorizedNavigationNode,
   NavigationRegistration,
   PermissionCode,
 } from '@/config/navigation'
 import type { AuthMenu } from '@/types/auth'
+import { FolderIcon } from '@lucide/vue'
+import { menuDisplayName } from '@/config/data-display'
 import { navigationRegistrationForPath, navigationRegistry } from '@/config/navigation'
+import { adaptLegacyDataDisplayNavigation } from '@/lib/data-display-navigation'
 
 export interface AccessContext {
   menus: readonly AuthMenu[]
@@ -55,7 +59,8 @@ function indexMenus(menus: readonly AuthMenu[]): MenuIndex {
       checked.set(menu.id, false)
       return false
     }
-    const validParentType = (menu.menuType === 2 && parent.menuType === 1) || (menu.menuType === 3 && parent.menuType === 2)
+    const validParentType = ((menu.menuType === 1 || menu.menuType === 2) && parent.menuType === 1) ||
+      (menu.menuType === 3 && parent.menuType === 2)
     if (!validParentType) {
       checked.set(menu.id, false)
       return false
@@ -95,56 +100,83 @@ export function canAccessPath(context: AccessContext, path: string): boolean {
   const normalizedPath = normalizeMenuPath(path)
   const registration = navigationRegistrationForPath(normalizedPath)
   if (!registration) return false
+  const authorizationPath = normalizeMenuPath(registration.authorizationPath ?? normalizedPath)
   const index = indexMenus(context.menus)
-  const page = activePageForPath(context, normalizedPath, index)
+  const page = activePageForPath(context, authorizationPath, index)
   if (!page) return false
   if (context.isSuper || page.permission === registration.permission) return true
   return context.menus.some(menu => menu !== page && menu.menuType === 2 && index.effectiveIds.has(menu.id) &&
-    normalizeMenuPath(menu.path ?? '') === normalizedPath && menu.permission === registration.permission)
+    normalizeMenuPath(menu.path ?? '') === authorizationPath && menu.permission === registration.permission)
 }
 
 function registeredItem(page: AuthMenu, registration: NavigationRegistration): AuthorizedNavigationItem {
-  return { ...registration, label: page.name || registration.id }
+  return { ...registration, kind: 'page', label: menuDisplayName(page) || registration.id }
 }
 
 export function buildAuthorizedNavigation(context: AccessContext): AuthorizedNavigationGroup[] {
   const index = indexMenus(context.menus)
   const groups = context.menus
-    .filter(menu => menu.menuType === 1 && menu.visible && index.effectiveIds.has(menu.id))
+    .filter(menu => menu.menuType === 1 && rootParent(menu.parentId) && menu.visible && index.effectiveIds.has(menu.id))
     .sort(compareMenus)
 
-  return groups.flatMap((group) => {
-    const items = context.menus
-      .filter(menu => menu.menuType === 2 && menu.parentId === group.id && menu.visible && index.effectiveIds.has(menu.id))
+  function childrenFor(parentId: string): AuthorizedNavigationNode[] {
+    return context.menus
+      .filter(menu => menu.parentId === parentId && menu.visible && index.effectiveIds.has(menu.id))
       .sort(compareMenus)
-      .flatMap((page) => {
-        const registration = navigationRegistrationForPath(normalizeMenuPath(page.path ?? ''))
-        if (!registration || (!context.isSuper && page.permission !== registration.permission)) return []
-        return [registeredItem(page, registration)]
+      .flatMap<AuthorizedNavigationNode>((menu) => {
+        if (menu.menuType === 1) {
+          const children = childrenFor(menu.id)
+          return children.length ? [{ kind: 'directory', id: menu.id, label: menu.name, icon: FolderIcon, children }] : []
+        }
+        if (menu.menuType !== 2) return []
+        const registration = navigationRegistrationForPath(normalizeMenuPath(menu.path ?? ''))
+        if (!registration || !canAccessPath(context, registration.path) ||
+          (!registration.authorizationPath && !context.isSuper && menu.permission !== registration.permission)) return []
+        return [registeredItem(menu, registration)]
       })
+  }
+
+  const navigation = groups.flatMap((group) => {
+    const items = childrenFor(group.id)
     return items.length ? [{ id: group.id, label: group.name, items }] : []
   })
+  return adaptLegacyDataDisplayNavigation(navigation, context.menus, path => canAccessPath(context, path))
 }
 
 function accessibleRegistrations(context: AccessContext): NavigationRegistration[] {
   const index = indexMenus(context.menus)
-  const groupOrder = new Map(context.menus
-    .filter(menu => menu.menuType === 1 && index.effectiveIds.has(menu.id))
-    .sort(compareMenus)
-    .map((menu, position) => [menu.id, position]))
-
-  return context.menus
-    .filter(menu => menu.menuType === 2 && index.effectiveIds.has(menu.id))
-    .sort((left, right) => {
-      const leftGroup = groupOrder.get(left.parentId ?? '') ?? Number.MAX_SAFE_INTEGER
-      const rightGroup = groupOrder.get(right.parentId ?? '') ?? Number.MAX_SAFE_INTEGER
-      return leftGroup - rightGroup || compareMenus(left, right)
-    })
-    .flatMap((page) => {
-      const registration = navigationRegistrationForPath(normalizeMenuPath(page.path ?? ''))
-      if (!registration || (!context.isSuper && page.permission !== registration.permission)) return []
+  function visit(menus: readonly AuthMenu[]): NavigationRegistration[] {
+    return [...menus].sort(compareMenus).flatMap((menu) => {
+      if (!index.effectiveIds.has(menu.id)) return []
+      if (menu.menuType === 1) return visit(context.menus.filter(child => child.parentId === menu.id))
+      if (menu.menuType !== 2) return []
+      const registration = navigationRegistrationForPath(normalizeMenuPath(menu.path ?? ''))
+      if (!registration || !canAccessPath(context, registration.path) ||
+        (!registration.authorizationPath && !context.isSuper && menu.permission !== registration.permission)) return []
       return [registration]
     })
+  }
+
+  return visit(context.menus.filter(menu => rootParent(menu.parentId)))
+}
+
+export function navigationBreadcrumbs(groups: readonly AuthorizedNavigationGroup[], routeName: string): string[] {
+  function find(nodes: readonly AuthorizedNavigationNode[]): string[] | null {
+    for (const node of nodes) {
+      if (node.kind === 'page' && node.routeName === routeName) return [node.label]
+      if (node.kind === 'directory') {
+        const path = find(node.children)
+        if (path) return [node.label, ...path]
+      }
+    }
+    return null
+  }
+
+  for (const group of groups) {
+    const path = find(group.items)
+    if (path) return [group.label, ...path]
+  }
+  return []
 }
 
 export function firstAccessibleRoute(context: AccessContext): RouteLocationRaw | null {

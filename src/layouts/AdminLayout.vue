@@ -28,6 +28,7 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar'
 import { useAuthStore } from '@/stores/auth'
+import { navigationBreadcrumbs } from '@/lib/access-control'
 import { todoRoute, todoSuffix } from '@/modules/todo/lib/navigation'
 import { useTodoStore } from '@/modules/todo/stores/todo-store'
 
@@ -41,6 +42,10 @@ const currentPageTitle = computed(() => String(route.meta.title ?? '未命名页
 const currentSectionTitle = computed(() => route.meta.sectionTitle
   ? String(route.meta.sectionTitle)
   : '')
+const breadcrumbs = computed(() => {
+  const items = navigationBreadcrumbs(authStore.authorizedNavigation, String(route.name ?? ''))
+  return items.length ? items : [currentSectionTitle.value, currentPageTitle.value].filter(Boolean)
+})
 const pageAuthorized = computed(() => {
   const menuPath = typeof route.meta.menuPath === 'string' ? route.meta.menuPath : ''
   const permission = typeof route.meta.requiredPermission === 'string' ? route.meta.requiredPermission : ''
@@ -82,13 +87,16 @@ watch(
         <span class="h-5 w-px bg-border/75" aria-hidden="true" />
         <nav class="min-w-0" aria-label="面包屑导航">
           <ol class="flex items-center gap-2 text-sm">
-            <li v-if="currentSectionTitle" class="truncate text-muted-foreground">
-              {{ currentSectionTitle }}
-            </li>
-            <li v-if="currentSectionTitle" aria-hidden="true">
-              <ChevronRightIcon class="size-3.5 text-muted-foreground/70" />
-            </li>
-            <li class="truncate font-medium text-foreground" aria-current="page">{{ currentPageTitle }}</li>
+            <template v-for="(item, index) in breadcrumbs" :key="index">
+              <li v-if="index" aria-hidden="true">
+                <ChevronRightIcon class="size-3.5 text-muted-foreground/70" />
+              </li>
+              <li
+                class="truncate"
+                :class="index === breadcrumbs.length - 1 ? 'font-medium text-foreground' : 'text-muted-foreground'"
+                :aria-current="index === breadcrumbs.length - 1 ? 'page' : undefined"
+              >{{ item }}</li>
+            </template>
           </ol>
         </nav>
 

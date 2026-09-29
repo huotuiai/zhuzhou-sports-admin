@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { AuthorizedNavigationItem } from '@/config/navigation'
 import { computed } from 'vue'
 import { PanelLeftClose } from '@lucide/vue'
 import { useRoute } from 'vue-router'
@@ -13,20 +12,15 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { useAuthStore } from '@/stores/auth'
+import AppSidebarNode from './AppSidebarNode.vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
 const navigation = computed(() => authStore.authorizedNavigation)
 const homeTarget = computed(() => authStore.firstAccessibleRoute ?? route.fullPath)
-
-function isItemActive(item: AuthorizedNavigationItem) {
-  return route.matched.some(record => record.name === item.routeName)
-}
 
 </script>
 
@@ -63,29 +57,7 @@ function isItemActive(item: AuthorizedNavigationItem) {
               :aria-labelledby="`sidebar-group-${group.id}`"
               class="gap-1 group-data-[collapsible=icon]:items-center"
             >
-              <SidebarMenuItem v-for="item in group.items" :key="item.id">
-                <SidebarMenuButton
-                  as-child
-                  :is-active="isItemActive(item)"
-                  :tooltip="item.label"
-                  class="h-12 rounded-xl px-3 text-sidebar-foreground/78 transition-colors duration-200 hover:bg-sidebar-accent/75 hover:text-sidebar-accent-foreground motion-reduce:transition-none data-[active=true]:bg-primary/18 data-[active=true]:font-semibold data-[active=true]:text-sidebar-accent-foreground data-[active=true]:ring-1 data-[active=true]:ring-primary/25 data-[active=true]:[&>svg]:text-primary group-data-[collapsible=icon]:size-11! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-xl group-data-[collapsible=icon]:p-0!"
-                >
-                  <RouterLink
-                    :to="{ name: item.routeName }"
-                    :aria-label="item.label"
-                    :aria-current="isItemActive(item) ? 'page' : undefined"
-                  >
-                    <component :is="item.icon" aria-hidden="true" />
-                    <span class="group-data-[collapsible=icon]:hidden">{{ item.label }}</span>
-                    <component
-                      :is="item.trailingIcon"
-                      v-if="item.trailingIcon"
-                      class="ml-auto size-4 text-sidebar-foreground/45 group-data-[collapsible=icon]:hidden"
-                      aria-hidden="true"
-                    />
-                  </RouterLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              <AppSidebarNode v-for="item in group.items" :key="item.id" :item="item" />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

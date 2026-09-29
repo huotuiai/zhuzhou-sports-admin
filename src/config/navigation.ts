@@ -1,4 +1,5 @@
 import type { Component } from 'vue'
+import { SECURITY_DATA_AUTHORIZATION_PATH, SECURITY_DATA_PATH } from './data-display'
 import {
   ArmchairIcon,
   BookOpenTextIcon,
@@ -58,18 +59,39 @@ export interface NavigationRegistration {
   path: string
   routeName: string
   permission: PermissionCode
+  /** Temporary route authorization inherited from an actual API page at this path. */
+  authorizationPath?: string
   icon: Component
   trailingIcon?: Component
 }
 
 export interface AuthorizedNavigationItem extends NavigationRegistration {
+  kind: 'page'
   label: string
 }
+
+export interface AuthorizedNavigationDirectory {
+  kind: 'directory'
+  id: string
+  label: string
+  icon: Component
+  children: AuthorizedNavigationNode[]
+}
+
+export interface AuthorizedNavigationPlaceholder {
+  kind: 'placeholder'
+  id: string
+  label: string
+  icon: Component
+  description: string
+}
+
+export type AuthorizedNavigationNode = AuthorizedNavigationItem | AuthorizedNavigationDirectory | AuthorizedNavigationPlaceholder
 
 export interface AuthorizedNavigationGroup {
   id: string
   label: string
-  items: AuthorizedNavigationItem[]
+  items: AuthorizedNavigationNode[]
 }
 
 const managementArrow = ChevronRightIcon
@@ -80,6 +102,7 @@ const managementArrow = ChevronRightIcon
  */
 export const navigationRegistry: readonly NavigationRegistration[] = [
   { id: 'data-dashboard', path: '/', routeName: 'data-dashboard', permission: 'dashboard:view', icon: ChartNoAxesCombinedIcon },
+  { id: 'security-data', path: SECURITY_DATA_PATH, routeName: 'security-data', permission: 'dashboard:view', authorizationPath: SECURITY_DATA_AUTHORIZATION_PATH, icon: ShieldIcon },
   { id: 'data-screen', path: '/operations/data-screen', routeName: 'data-screen', permission: 'dashboard:view', icon: LayoutDashboardIcon },
   { id: 'content-management', path: '/operations/content', routeName: 'content-management', permission: 'content:view', icon: BookOpenTextIcon, trailingIcon: managementArrow },
   { id: 'traffic-control', path: '/area-control', routeName: 'area-control', permission: 'control:view', icon: TrafficConeIcon, trailingIcon: managementArrow },
