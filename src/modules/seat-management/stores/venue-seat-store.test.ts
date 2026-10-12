@@ -210,8 +210,8 @@ function zoneInput(overrides: Partial<SeatZoneWriteInput> = {}): SeatZoneWriteIn
   return {
     code: ' b-01 ', name: ' 新增区域 ', floorId: 'floor-1', rowStart: 1, rowEnd: 25,
     gateIds: ['gate-1'], sortOrder: 130, status: 'enabled', remark: '',
-    exitVrUrl: 'https://example.com/exit',
-    coverageArea: '[{"lng":113.096571,"lat":27.841963},{"lng":113.099628,"lat":27.841963},{"lng":113.099628,"lat":27.843168}]',
+    viewVrUrl: 'https://example.com/view', exitVrUrl: 'https://example.com/exit',
+    coverageGeometry: '[{"lng":113.096571,"lat":27.841963},{"lng":113.099628,"lat":27.841963},{"lng":113.099628,"lat":27.843168},{"lng":113.096571,"lat":27.841963}]',
     ...overrides,
   }
 }
@@ -325,10 +325,12 @@ describe('seat planning store', () => {
     expect(await store.removeZone(created!.id)).toBe(false)
     expect(store.error).toContain('先停用')
     expect(await store.updateStatus(created!.id, 'disabled')).toMatchObject({
-      status: 'disabled', exitVrUrl: updated!.exitVrUrl, coverageArea: updated!.coverageArea,
+      status: 'disabled', viewVrUrl: updated!.viewVrUrl,
+      exitVrUrl: updated!.exitVrUrl, coverageGeometry: updated!.coverageGeometry,
     })
+    expect(service.updateZoneInputs.at(-1)?.input).not.toHaveProperty('viewVrUrl')
     expect(service.updateZoneInputs.at(-1)?.input).not.toHaveProperty('exitVrUrl')
-    expect(service.updateZoneInputs.at(-1)?.input).not.toHaveProperty('coverageArea')
+    expect(service.updateZoneInputs.at(-1)?.input).not.toHaveProperty('coverageGeometry')
     expect(await store.removeZone(created!.id)).toBe(true)
     expect(store.totalZoneCount('floor-1')).toBe(4)
 
@@ -337,14 +339,14 @@ describe('seat planning store', () => {
     expect(await store.removeFloor(floor!.id)).toBe(true)
   })
 
-  it('blocks create and edit requests when the departure configuration is incomplete', async () => {
+  it('accepts empty optional fields and blocks malformed Polygon input', async () => {
     const service = new FakeService(2)
     const store = createSeatPlanningStore(service, 'seat-departure-required')()
     await store.initialize()
 
-    expect(await store.createZone(zoneInput({ exitVrUrl: ' ', coverageArea: '' }))).toBeNull()
-    expect(await store.updateZone('zone-1', zoneInput({ coverageArea: '[]' }))).toBeNull()
-    expect(service.createZoneInputs).toEqual([])
+    expect(await store.createZone(zoneInput({ exitVrUrl: ' ', coverageGeometry: '' }))).not.toBeNull()
+    expect(await store.updateZone('zone-1', zoneInput({ coverageGeometry: '[]' }))).toBeNull()
+    expect(service.createZoneInputs[0]).toMatchObject({ exitVrUrl: '', coverageGeometry: '' })
     expect(service.updateZoneInputs).toEqual([])
   })
 

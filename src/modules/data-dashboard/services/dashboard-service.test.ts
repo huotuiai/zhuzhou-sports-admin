@@ -109,6 +109,19 @@ describe('dashboard API service', () => {
     expect(result.activities[0]).toEqual({ id: '1', name: '时间待定活动', start: null, end: null })
   })
 
+  it('maps navigation KPI cards directly from the backend, including zero counts', () => {
+    const codes = ['IND-8', 'IND-43', 'IND-44', 'IND-45']
+    const entry = codes.map((code, index) => ({
+      ...overview().entry[0]!, code, name: `后端名称 ${code}`, hint: `后端口径 ${code}`,
+      value: index, uv: index, prev: 0, change: null, change_text: index === 0 ? '持平' : '新增',
+    }))
+    const result = mapApiOverview(overview({ entry }), query())
+    expect(result.operations.metrics.map(metric => metric.id)).toEqual([...codes, 'IND-2'])
+    expect(result.operations.metrics.slice(0, 4).map(metric => [metric.name, metric.definition, metric.primaryValue, metric.secondaryValue]))
+      .toEqual(codes.map((code, index) => [`后端名称 ${code}`, `后端口径 ${code}`, index, index]))
+    expect(result.operations.metrics[0]).toMatchObject({ primaryLabel: 'PV', secondaryLabel: 'UV', primaryValue: 0, secondaryValue: 0 })
+  })
+
   it('maps raw analytics events, int64 IDs, distributions and parking usage', () => {
     expect(mapApiAnalyticsEvent(event())).toMatchObject({
       id: '9007199254740999', eventName: 'seat_search', referenceId: '9007199254741001', extraJson: '{"source":"home"}', ip: '127.0.0.1',

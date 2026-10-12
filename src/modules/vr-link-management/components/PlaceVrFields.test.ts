@@ -10,15 +10,15 @@ import ParkingLotForm from '@/modules/parking-management/components/ParkingLotFo
 import TicketGateForm from '@/modules/ticket-gate-management/components/TicketGateForm.vue'
 
 const mounted: Array<{ app: App, host: HTMLDivElement }> = []
-const cases: Array<{ name: string, component: Component, value: object, vrLabel: string, props?: object }> = [
+const cases: Array<{ name: string, component: Component, value: object, vrLabel: string, vrField: string, props?: object }> = [
   {
     name: 'seat zone', component: VenueSeatForm,
-    vrLabel: '分区VR视角链接（选填）',
+    vrLabel: '分区 VR 视角链接（选填）', vrField: 'viewVrUrl',
     value: {
       code: 'A-01', name: 'A 区', floorId: '11', rowStart: 1, rowEnd: 30,
       gateIds: ['21'], sortOrder: 1, status: 'enabled', remark: '',
       exitVrUrl: 'https://example.com/exit',
-      coverageArea: '[{"lng":113.096571,"lat":27.841963},{"lng":113.099628,"lat":27.841963},{"lng":113.099628,"lat":27.843168}]',
+      coverageGeometry: '[{"lng":113.096571,"lat":27.841963},{"lng":113.099628,"lat":27.841963},{"lng":113.099628,"lat":27.843168},{"lng":113.096571,"lat":27.841963}]',
     } satisfies SeatZoneWriteInput,
     props: {
       floors: [{ id: '11', name: '一层', sortOrder: 1, status: 'enabled', zoneCount: 1, createdAt: '', updatedAt: '' }],
@@ -27,7 +27,7 @@ const cases: Array<{ name: string, component: Component, value: object, vrLabel:
   },
   {
     name: 'parking lot', component: ParkingLotForm,
-    vrLabel: 'VR 链接（选填）',
+    vrLabel: 'VR 链接（选填）', vrField: 'vrUrl',
     value: {
       code: 'P-01', name: '东停车场', locationDescription: '', coordinateInput: '113.1,27.8', navigationAddress: '',
       totalSpaces: 100, availabilityUpdateMethod: 'manual', feeType: 'free', feeStandard: '', openStatus: 'open',
@@ -36,7 +36,7 @@ const cases: Array<{ name: string, component: Component, value: object, vrLabel:
   },
   {
     name: 'ticket gate', component: TicketGateForm,
-    vrLabel: 'VR 链接（选填）',
+    vrLabel: 'VR 链接（选填）', vrField: 'vrUrl',
     value: {
       code: 'G-01', name: '东门', floorId: '11', locationDescription: '', mapCoordinates: '113.1,27.8',
       navigationAddress: '', sortOrder: 1, status: 'open', statusRemark: '',
@@ -54,7 +54,7 @@ afterEach(() => {
 
 describe.each(cases)('$name optional VR field', (testCase) => {
   it.each(['create', 'edit'])('supports display, validation, editing and clearing in %s mode', async (mode) => {
-    const model = shallowRef({ ...testCase.value, vrUrl: mode === 'edit' ? 'https://example.com/existing' : '' })
+    const model = shallowRef({ ...testCase.value, [testCase.vrField]: mode === 'edit' ? 'https://example.com/existing' : '' })
     const form = ref<{ validateAndFocus(): boolean } | null>(null)
     const saving = ref(false)
     const host = document.createElement('div')
@@ -67,9 +67,9 @@ describe.each(cases)('$name optional VR field', (testCase) => {
     })
     app.mount(host)
     mounted.push({ app, host })
-    const input = host.querySelector<HTMLInputElement>('input[data-field="vrUrl"]')!
+    const input = host.querySelector<HTMLInputElement>(`input[data-field="${testCase.vrField}"]`)!
     expect(input).not.toBeNull()
-    expect(input.value).toBe(model.value.vrUrl)
+    expect(input.value).toBe(model.value[testCase.vrField])
     expect(input.required).toBe(false)
     expect(host.querySelector(`label[for="${input.id}"]`)?.textContent).toBe(testCase.vrLabel)
     const fill = async (value: string) => {
@@ -85,10 +85,10 @@ describe.each(cases)('$name optional VR field', (testCase) => {
     expect(host.textContent).toContain('请输入以 http:// 或 https:// 开头的有效 VR 链接')
 
     await fill('https://example.com/vr?token=A%2Fb#view')
-    expect(model.value.vrUrl).toBe('https://example.com/vr?token=A%2Fb#view')
+    expect(model.value[testCase.vrField]).toBe('https://example.com/vr?token=A%2Fb#view')
     expect(form.value?.validateAndFocus()).toBe(true)
     await fill('')
-    expect(model.value.vrUrl).toBe('')
+    expect(model.value[testCase.vrField]).toBe('')
     expect(form.value?.validateAndFocus()).toBe(true)
     saving.value = true
     await nextTick()

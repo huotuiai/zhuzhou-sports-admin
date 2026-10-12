@@ -49,9 +49,6 @@ export interface DashboardMetric {
   trend: DashboardTrendPoint[]
 }
 
-export type DashboardPendingMetric = Pick<DashboardMetric, 'id' | 'group' | 'name' | 'definition'>
-export type DashboardMetricCardItem = DashboardMetric | DashboardPendingMetric
-
 export interface DashboardOperationsSnapshot {
   query: DashboardStatsQuery
   range: DashboardDateRange

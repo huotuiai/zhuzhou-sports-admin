@@ -13,7 +13,6 @@ import type {
   MetricDetailPage,
 } from '../types'
 import { dashboardService } from '../services/dashboard-service'
-import { buildEntryMetricCards } from '../lib/entry-metrics'
 
 export const DASHBOARD_DETAIL_PAGE_SIZE = 20
 export const DISTRIBUTION_DETAIL_PAGE_SIZE = 20
@@ -61,9 +60,7 @@ export function createDataDashboardStore(service: DashboardService, storeId = 'd
 
     const selectedMetric = computed(() => snapshot.value?.operations.metrics
       .find(metric => metric.id === selectedMetricId.value) ?? null)
-    const entryMetricCards = computed(() => snapshot.value
-      ? buildEntryMetricCards(snapshot.value.operations.metrics.filter(metric => metric.group === 'entry'))
-      : [])
+    const entryMetricCards = computed(() => snapshot.value?.operations.metrics.filter(metric => metric.group === 'entry') ?? [])
     const visibleMetrics = computed(() => activeGroup.value === 'entry'
       ? entryMetricCards.value
       : snapshot.value?.operations.metrics.filter(metric => metric.group === 'page') ?? [])

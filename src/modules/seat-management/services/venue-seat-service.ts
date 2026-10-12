@@ -1,5 +1,4 @@
 import type { AxiosResponse } from 'axios'
-import type { GeoPoint } from '@/components/map/types'
 import type { SignedRequestConfig } from '@/lib/http'
 import type {
   SeatFloor,
@@ -14,6 +13,7 @@ import type {
   SeatZone,
   SeatZoneImportResult,
   SeatZonePage,
+  SeatZonePolygon,
   SeatZoneStatus,
   SeatZoneValidationIssue,
   SeatZoneValidationResult,
@@ -21,7 +21,7 @@ import type {
 } from '../types'
 import { ApiError, mapCsvExportResponse, rawHttpClient, requestData } from '@/lib/http'
 import { validateOptionalVrUrl } from '@/lib/vr-url'
-import { isValidGeoPoint } from '@/components/map/geometry'
+import { validateGeometry } from '@/components/map/geometry'
 
 export interface ApiFloorVO {
   id: number | string
@@ -35,8 +35,9 @@ export interface ApiFloorVO {
 
 export interface ApiZoneVO {
   vr_url?: string | null
+  view_vr_url?: string | null
   exit_vr_url?: string | null
-  coverage_area?: GeoPoint[] | null
+  coverage_geometry?: SeatZonePolygon | null
   id: number | string
   create_at: string
   update_at: string
@@ -78,9 +79,9 @@ interface ApiFloorCreateRequest {
 }
 
 interface ApiZoneCreateRequest {
-  vr_url?: string
+  view_vr_url?: string
   exit_vr_url?: string
-  coverage_area?: GeoPoint[]
+  coverage_geometry?: SeatZonePolygon
   code: string
   name: string
   floor_id: number
@@ -100,7 +101,9 @@ interface ApiZoneImportResponse {
   imported: number | string
 }
 
-type ApiZoneUpdateRequest = Omit<ApiZoneCreateRequest, 'code'>
+type ApiZoneUpdateRequest = Omit<ApiZoneCreateRequest, 'code' | 'coverage_geometry'> & {
+  coverage_geometry?: SeatZonePolygon | null
+}
 
 export interface SeatPlanningDataRequester {
   <T, D = unknown>(config: SignedRequestConfig<D>): Promise<T>
@@ -190,6 +193,7 @@ export function mapApiFloor(value: ApiFloorVO): SeatFloor {
 export function mapApiZone(value: ApiZoneVO): SeatZone {
   if (value.id === undefined || value.id === null) throw responseError('服务器返回的分区 ID 不完整')
   if (value.floor_id === undefined || value.floor_id === null) throw responseError('服务器返回的分区楼层 ID 不完整')
+  const viewVrUrl = value.view_vr_url === undefined ? value.vr_url : value.view_vr_url
   return {
     id: String(value.id),
     code: requiredText(value.code, '分区编号'),
@@ -200,9 +204,11 @@ export function mapApiZone(value: ApiZoneVO): SeatZone {
     sortOrder: integer(value.sort_order),
     status: mapStatus(value.status),
     remark: typeof value.remark === 'string' ? value.remark : '',
-    vrUrl: typeof value.vr_url === 'string' ? value.vr_url : '',
+    viewVrUrl: typeof viewVrUrl === 'string' ? viewVrUrl : '',
     exitVrUrl: typeof value.exit_vr_url === 'string' ? value.exit_vr_url : '',
-    coverageArea: Array.isArray(value.coverage_area) ? JSON.stringify(value.coverage_area) : '',
+    coverageGeometry: value.coverage_geometry
+      ? JSON.stringify(value.coverage_geometry.coordinates[0].map(([lng, lat]) => ({ lng, lat })))
+      : '',
     gateIds: stringIds(value.gate_ids),
     gateNames: stringList(value.gate_names),
     openGateIds: stringIds(value.open_gate_ids),
@@ -245,9 +251,9 @@ export function sanitizeSeatFloorInput(input: SeatFloorWriteInput): SeatFloorWri
 
 export function sanitizeSeatZoneInput(input: SeatZoneWriteInput): SeatZoneWriteInput {
   return {
-    ...(input.vrUrl !== undefined ? { vrUrl: input.vrUrl.trim() } : {}),
+    ...(input.viewVrUrl !== undefined ? { viewVrUrl: input.viewVrUrl.trim() } : {}),
     ...(input.exitVrUrl !== undefined ? { exitVrUrl: input.exitVrUrl.trim() } : {}),
-    ...(input.coverageArea !== undefined ? { coverageArea: input.coverageArea.trim() } : {}),
+    ...(input.coverageGeometry !== undefined ? { coverageGeometry: input.coverageGeometry.trim() } : {}),
     code: normalizeText(input.code).toUpperCase(),
     name: normalizeText(input.name),
     floorId: normalizeText(input.floorId),
@@ -270,29 +276,40 @@ export function validateSeatFloorInput(
   return { valid: issues.length === 0, issues }
 }
 
-function parseCoverageArea(value: string): GeoPoint[] {
+function parseCoverageGeometry(value: string): SeatZonePolygon {
   let parsed: unknown
   try {
     parsed = JSON.parse(value)
   }
   catch {
-    throw new Error('分区覆盖范围须为有效的 JSON 数组')
+    throw new Error('分区覆盖范围须为有效的坐标数组')
   }
-  if (!Array.isArray(parsed)) throw new Error('分区覆盖范围须为经纬度对象数组')
-  const points = parsed.map((item: unknown) => {
+  if (!Array.isArray(parsed)) {
+    throw new Error('分区覆盖范围须为坐标数组')
+  }
+  const path = parsed.map((item: unknown) => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new Error('每个坐标须为包含 lng 和 lat 的对象')
     }
     const point = item as Record<string, unknown>
-    if (typeof point.lng !== 'number' || typeof point.lat !== 'number' || !isValidGeoPoint({ lng: point.lng, lat: point.lat })) {
-      throw new Error('经度 lng 须为 -180 至 180 的数值，纬度 lat 须为 -90 至 90 的数值')
+    if (typeof point.lng !== 'number' || typeof point.lat !== 'number') {
+      throw new Error('坐标的 lng 和 lat 须为数值')
     }
     return { lng: point.lng, lat: point.lat }
   })
-  if (new Set(points.map(point => `${point.lng},${point.lat}`)).size < 3) {
-    throw new Error('分区覆盖范围至少需要 3 个不同的经纬度点')
+  const firstPoint = path[0]
+  const lastPoint = path[path.length - 1]
+  const openPath = firstPoint && lastPoint && firstPoint.lng === lastPoint.lng && firstPoint.lat === lastPoint.lat
+    ? path.slice(0, -1) : path
+  if (new Set(openPath.map(point => `${point.lng},${point.lat}`)).size !== openPath.length) {
+    throw new Error('分区覆盖范围不能包含重复顶点')
   }
-  return points
+  const validation = validateGeometry({ type: 'polygon', path: openPath })
+  if (!validation.valid) throw new Error(validation.reason ?? '分区覆盖范围不合法')
+  const coordinates = openPath.map(point => [point.lng, point.lat] as [number, number])
+  const first = coordinates[0]!
+  coordinates.push([...first])
+  return { type: 'Polygon', coordinates: [coordinates] }
 }
 
 export function validateSeatZoneInput(
@@ -337,20 +354,16 @@ export function validateSeatZoneInput(
   }
 
   if (Array.from(value.remark).length > 300) issues.push({ field: 'remark', code: 'too_long', message: '备注不能超过 300 个字符' })
-  const vrUrlError = validateOptionalVrUrl(value.vrUrl)
-  if (vrUrlError) issues.push({ field: 'vrUrl', code: 'invalid', message: vrUrlError })
-  if (!value.exitVrUrl) issues.push({ field: 'exitVrUrl', code: 'required', message: '请输入分区离场 VR 链接' })
-  else {
-    const exitVrUrlError = validateOptionalVrUrl(value.exitVrUrl)
-    if (exitVrUrlError) issues.push({ field: 'exitVrUrl', code: 'invalid', message: exitVrUrlError })
-  }
-  if (!value.coverageArea) issues.push({ field: 'coverageArea', code: 'required', message: '请输入分区覆盖范围' })
-  else {
+  const viewVrUrlError = validateOptionalVrUrl(value.viewVrUrl)
+  if (viewVrUrlError) issues.push({ field: 'viewVrUrl', code: 'invalid', message: viewVrUrlError })
+  const exitVrUrlError = validateOptionalVrUrl(value.exitVrUrl)
+  if (exitVrUrlError) issues.push({ field: 'exitVrUrl', code: 'invalid', message: exitVrUrlError })
+  if (value.coverageGeometry) {
     try {
-      parseCoverageArea(value.coverageArea)
+      parseCoverageGeometry(value.coverageGeometry)
     }
     catch (error) {
-      issues.push({ field: 'coverageArea', code: 'invalid', message: error instanceof Error ? error.message : '分区覆盖范围格式无效' })
+      issues.push({ field: 'coverageGeometry', code: 'invalid', message: error instanceof Error ? error.message : '分区覆盖范围格式无效' })
     }
   }
   return { valid: issues.length === 0, issues }
@@ -365,9 +378,9 @@ export function sortSeatFloors(floors: readonly SeatFloor[]): SeatFloor[] {
 function zoneCreateBody(input: SeatZoneWriteInput): ApiZoneCreateRequest {
   const value = sanitizeSeatZoneInput(input)
   return {
-    ...(value.vrUrl !== undefined ? { vr_url: value.vrUrl } : {}),
-    ...(value.exitVrUrl !== undefined ? { exit_vr_url: value.exitVrUrl } : {}),
-    ...(value.coverageArea !== undefined ? { coverage_area: parseCoverageArea(value.coverageArea) } : {}),
+    ...(value.viewVrUrl !== undefined ? { view_vr_url: value.viewVrUrl } : {}),
+    ...(value.exitVrUrl ? { exit_vr_url: value.exitVrUrl } : {}),
+    ...(value.coverageGeometry ? { coverage_geometry: parseCoverageGeometry(value.coverageGeometry) } : {}),
     code: value.code,
     name: value.name,
     floor_id: bodyId(value.floorId),
@@ -381,11 +394,12 @@ function zoneCreateBody(input: SeatZoneWriteInput): ApiZoneCreateRequest {
 }
 
 function zoneUpdateBody(input: SeatZoneWriteInput): ApiZoneUpdateRequest {
-  const body = zoneCreateBody(input)
+  const value = sanitizeSeatZoneInput(input)
+  const body = zoneCreateBody(value)
   return {
-    ...(body.vr_url !== undefined ? { vr_url: body.vr_url } : {}),
-    ...(body.exit_vr_url !== undefined ? { exit_vr_url: body.exit_vr_url } : {}),
-    ...(body.coverage_area !== undefined ? { coverage_area: body.coverage_area } : {}),
+    ...(value.viewVrUrl !== undefined ? { view_vr_url: value.viewVrUrl } : {}),
+    ...(value.exitVrUrl !== undefined ? { exit_vr_url: value.exitVrUrl } : {}),
+    ...(value.coverageGeometry !== undefined ? { coverage_geometry: value.coverageGeometry ? parseCoverageGeometry(value.coverageGeometry) : null } : {}),
     name: body.name,
     floor_id: body.floor_id,
     row_start: body.row_start,

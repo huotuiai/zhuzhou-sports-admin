@@ -27,11 +27,11 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{ 'update:value': [value: SeatZoneWriteInput] }>()
 const container = ref<HTMLDivElement | null>(null)
 const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
-const coverageAreaPlaceholder = '例如：[{"lng":113.096571,"lat":27.841963},{"lng":113.099628,"lat":27.841963},{"lng":113.099628,"lat":27.843168},{"lng":113.096571,"lat":27.843168}]'
+const coverageGeometryPlaceholder = '[{"lng":113.1,"lat":27.8},{"lng":113.2,"lat":27.8},{"lng":113.2,"lat":27.9}]'
 const touched = reactive<Record<Field, boolean>>({
   code: false, name: false, floorId: false, rowStart: false, rowEnd: false,
-  gateIds: false, sortOrder: false, status: false, remark: false, vrUrl: false,
-  exitVrUrl: false, coverageArea: false,
+  gateIds: false, sortOrder: false, status: false, remark: false, viewVrUrl: false,
+  exitVrUrl: false, coverageGeometry: false,
 })
 
 const allIssues = computed(() => {
@@ -203,39 +203,39 @@ watch(() => [props.mode, props.editingId], () => {
     </div>
 
     <div class="col-span-2 space-y-2">
-      <Label :for="inputId('vrUrl')">分区VR视角链接（选填）</Label>
+      <Label :for="inputId('viewVrUrl')">分区 VR 视角链接（选填）</Label>
       <Input
-        :id="inputId('vrUrl')" data-field="vrUrl" :model-value="value.vrUrl ?? ''" type="url" class="h-11"
-        placeholder="https://" :disabled="saving" :aria-invalid="Boolean(issueFor('vrUrl'))"
-        :aria-describedby="errorId('vrUrl')" @update:model-value="patch({ vrUrl: String($event) })" @blur="touched.vrUrl = true"
+        :id="inputId('viewVrUrl')" data-field="viewVrUrl" :model-value="value.viewVrUrl ?? ''" type="url" class="h-11"
+        placeholder="https://" :disabled="saving" :aria-invalid="Boolean(issueFor('viewVrUrl'))"
+        :aria-describedby="errorId('viewVrUrl')" @update:model-value="patch({ viewVrUrl: String($event) })" @blur="touched.viewVrUrl = true"
       />
-      <p v-if="issueFor('vrUrl')" :id="errorId('vrUrl')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('vrUrl')?.message }}</p>
+      <p v-if="issueFor('viewVrUrl')" :id="errorId('viewVrUrl')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('viewVrUrl')?.message }}</p>
       <p v-else class="text-xs leading-5 text-muted-foreground">填写此位置的 HTTP 或 HTTPS 链接；留空不配置，清空后保存可移除已有链接。</p>
     </div>
 
     <div class="col-span-2 space-y-2">
-      <Label :for="inputId('exitVrUrl')">分区离场VR链接 <span class="text-destructive">*</span></Label>
+      <Label :for="inputId('exitVrUrl')">分区离场 VR 链接（选填）</Label>
       <Input
-        :id="inputId('exitVrUrl')" data-field="exitVrUrl" :model-value="value.exitVrUrl ?? ''" type="url" required class="h-11"
+        :id="inputId('exitVrUrl')" data-field="exitVrUrl" :model-value="value.exitVrUrl ?? ''" type="url" class="h-11"
         placeholder="https://" :disabled="saving" :aria-invalid="Boolean(issueFor('exitVrUrl'))"
         :aria-describedby="errorId('exitVrUrl') ?? `${inputId('exitVrUrl')}-hint`"
         @update:model-value="patch({ exitVrUrl: String($event) })" @blur="touched.exitVrUrl = true"
       />
       <p v-if="issueFor('exitVrUrl')" :id="errorId('exitVrUrl')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('exitVrUrl')?.message }}</p>
-      <p :id="`${inputId('exitVrUrl')}-hint`" class="text-xs leading-5 text-muted-foreground">填写从当前分区离场时的 VR 导航链接；必填项</p>
+      <p :id="`${inputId('exitVrUrl')}-hint`" class="text-xs leading-5 text-muted-foreground">填写从当前分区离场时的 HTTP(S) VR 导航链接；留空可清除已有链接。</p>
     </div>
 
     <div class="col-span-2 space-y-2">
-      <Label :for="inputId('coverageArea')">分区覆盖范围 <span class="text-destructive">*</span></Label>
+      <Label :for="inputId('coverageGeometry')">分区覆盖范围（选填）</Label>
       <Textarea
-        :id="inputId('coverageArea')" data-field="coverageArea" :model-value="value.coverageArea ?? ''" required class="min-h-32 resize-y"
-        :placeholder="coverageAreaPlaceholder"
-        :disabled="saving" :aria-invalid="Boolean(issueFor('coverageArea'))"
-        :aria-describedby="errorId('coverageArea') ?? `${inputId('coverageArea')}-hint`"
-        @update:model-value="patch({ coverageArea: String($event) })" @blur="touched.coverageArea = true"
+        :id="inputId('coverageGeometry')" data-field="coverageGeometry" :model-value="value.coverageGeometry ?? ''" class="min-h-32 resize-y"
+        :placeholder="coverageGeometryPlaceholder"
+        :disabled="saving" :aria-invalid="Boolean(issueFor('coverageGeometry'))"
+        :aria-describedby="errorId('coverageGeometry') ?? `${inputId('coverageGeometry')}-hint`"
+        @update:model-value="patch({ coverageGeometry: String($event) })" @blur="touched.coverageGeometry = true"
       />
-      <p v-if="issueFor('coverageArea')" :id="errorId('coverageArea')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('coverageArea')?.message }}</p>
-      <p :id="`${inputId('coverageArea')}-hint`" class="text-xs leading-5 text-muted-foreground">填写当前分区的覆盖经纬度范围，用以定位用户离场时所在分区位置；必填项</p>
+      <p v-if="issueFor('coverageGeometry')" :id="errorId('coverageGeometry')" class="field-error" role="alert"><AlertTriangle />{{ issueFor('coverageGeometry')?.message }}</p>
+      <p :id="`${inputId('coverageGeometry')}-hint`" class="text-xs leading-5 text-muted-foreground">填写 GCJ-02 坐标对象数组，每项包含 lng（经度）和 lat（纬度）；至少 3 个不同顶点，留空可清除已有范围。</p>
     </div>
 
     <div class="col-span-2 space-y-2">

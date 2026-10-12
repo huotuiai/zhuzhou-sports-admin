@@ -1,6 +1,6 @@
 import type { AxiosResponse } from 'axios'
 import type { SignedRequestConfig } from '@/lib/http'
-import type { SeatFloor, SeatZoneWriteInput } from '../types'
+import type { SeatFloor, SeatZonePolygon, SeatZoneWriteInput } from '../types'
 import { describe, expect, it } from 'vitest'
 import {
   createSeatPlanningService,
@@ -19,12 +19,15 @@ import type {
 } from './venue-seat-service'
 
 const timestamp = '2026-08-26T08:00:00+08:00'
-const coveragePoints = [
-  { lng: 113.096571, lat: 27.841963 },
-  { lng: 113.099628, lat: 27.841963 },
-  { lng: 113.099628, lat: 27.843168 },
-  { lng: 113.096571, lat: 27.843168 },
-]
+const coveragePolygon: SeatZonePolygon = {
+  type: 'Polygon',
+  coordinates: [[
+    [113.096571, 27.841963], [113.099628, 27.841963],
+    [113.099628, 27.843168], [113.096571, 27.843168],
+    [113.096571, 27.841963],
+  ]],
+}
+const coveragePoints = coveragePolygon.coordinates[0].map(([lng, lat]) => ({ lng, lat }))
 const exitVrUrl = 'https://example.com/exit?token=A%2Fb#view'
 
 function apiFloor(overrides: Partial<ApiFloorVO> = {}): ApiFloorVO {
@@ -55,7 +58,7 @@ function zoneInput(overrides: Partial<SeatZoneWriteInput> = {}): SeatZoneWriteIn
   return {
     code: ' a-01 ', name: ' A 区 ', floorId: '11', rowStart: 1, rowEnd: 30,
     gateIds: ['21', '22'], sortOrder: 2, status: 'enabled', remark: ' 主看台 ',
-    exitVrUrl, coverageArea: JSON.stringify(coveragePoints), ...overrides,
+    exitVrUrl, coverageGeometry: JSON.stringify(coveragePoints), ...overrides,
   }
 }
 
@@ -109,17 +112,14 @@ describe('seat planning API mapping and validation', () => {
   })
 
   it.each([undefined, null])('maps missing departure fields to empty form values: %j', (value) => {
-    expect(mapApiZone(apiZone({ exit_vr_url: value, coverage_area: value }))).toMatchObject({
-      exitVrUrl: '', coverageArea: '',
+    expect(mapApiZone(apiZone({ exit_vr_url: value, coverage_geometry: value }))).toMatchObject({
+      exitVrUrl: '', coverageGeometry: '',
     })
   })
 
-  it.each([undefined, '', '   '])('requires the departure VR link and coverage area: %j', (value) => {
-    const result = validateSeatZoneInput(zoneInput({ exitVrUrl: value, coverageArea: value }), floors, [{ id: '21' }, { id: '22' }])
-    expect(result.issues).toMatchObject([
-      { field: 'exitVrUrl', code: 'required' },
-      { field: 'coverageArea', code: 'required' },
-    ])
+  it.each([undefined, '', '   '])('allows an unconfigured departure VR link and coverage geometry: %j', (value) => {
+    const result = validateSeatZoneInput(zoneInput({ exitVrUrl: value, coverageGeometry: value }), floors, [{ id: '21' }, { id: '22' }])
+    expect(result).toEqual({ valid: true, issues: [] })
   })
 
   it.each(['example.com/exit', 'https//example.com/exit', 'javascript:alert(1)', 'ftp://example.com/exit'])('rejects an invalid departure VR link: %s', (value) => {
@@ -132,72 +132,92 @@ describe('seat planning API mapping and validation', () => {
     '{}',
     'null',
     '[]',
-    JSON.stringify(coveragePoints.slice(0, 2)),
-    JSON.stringify([coveragePoints[0], coveragePoints[1], coveragePoints[0]]),
-    JSON.stringify([[113, 27], [114, 27], [114, 28]]),
-    JSON.stringify([null, ...coveragePoints]),
-    JSON.stringify([{ lng: '113', lat: 27 }, ...coveragePoints]),
-    JSON.stringify([{ lng: 113 }, ...coveragePoints]),
-    JSON.stringify([{ lng: 181, lat: 27 }, ...coveragePoints]),
-    JSON.stringify([{ lng: 113, lat: -91 }, ...coveragePoints]),
-    '[{"lng":1e999,"lat":27},{"lng":114,"lat":27},{"lng":114,"lat":28}]',
-  ])('rejects malformed or invalid coverage coordinates: %s', (coverageArea) => {
-    const result = validateSeatZoneInput(zoneInput({ coverageArea }), floors, [{ id: '21' }, { id: '22' }])
-    expect(result.issues).toMatchObject([{ field: 'coverageArea', code: 'invalid' }])
+    JSON.stringify(coveragePolygon),
+    JSON.stringify(coveragePolygon.coordinates[0]),
+    JSON.stringify(coveragePolygon.coordinates),
+    JSON.stringify([{ lng: 113.09295708380375, lat: 27.84493 }, { lng: 113.09288573323066, lat: 27.84589255587384 }]),
+    JSON.stringify([[113, 27], [114, 27]]),
+    JSON.stringify([{ lng: 113, lat: 27 }, { lng: 114, lat: 27 }, { lng: 115, lat: 27 }]),
+    JSON.stringify([{ lng: 113, lat: 27 }, { lng: 114, lat: 27 }, { lng: 114, lat: 28 }, { lng: 114, lat: 27 }, { lng: 113, lat: 28 }]),
+    JSON.stringify([{ lng: 113, lat: 27 }, { lng: 114, lat: 28 }, { lng: 114, lat: 27 }, { lng: 113, lat: 28 }, { lng: 113, lat: 27 }]),
+    JSON.stringify([{ lng: 181, lat: 27 }, { lng: 114, lat: 27 }, { lng: 114, lat: 28 }]),
+    JSON.stringify([{ lng: '113', lat: 27 }, { lng: 114, lat: 27 }, { lng: 114, lat: 28 }]),
+  ])('rejects malformed or invalid coverage coordinates: %s', (coverageGeometry) => {
+    const result = validateSeatZoneInput(zoneInput({ coverageGeometry }), floors, [{ id: '21' }, { id: '22' }])
+    expect(result.issues).toMatchObject([{ field: 'coverageGeometry', code: 'invalid' }])
   })
 
   it('accepts HTTP(S) departure links, a closed coverage ring and an empty optional viewpoint link', () => {
     const result = validateSeatZoneInput(zoneInput({
-      vrUrl: '', exitVrUrl: ' http://example.com/exit ',
-      coverageArea: JSON.stringify([...coveragePoints, coveragePoints[0]]),
+      viewVrUrl: '', exitVrUrl: ' http://example.com/exit ',
+      coverageGeometry: JSON.stringify(coveragePoints),
     }), floors, [{ id: '21' }, { id: '22' }])
     expect(result).toEqual({ valid: true, issues: [] })
   })
+
 })
 
 describe('seat planning API service', () => {
-  it('round-trips departure links and coordinate arrays through create, update, list and detail', async () => {
-    const points = [...coveragePoints, coveragePoints[0]!]
-    const response = apiZone({ exit_vr_url: exitVrUrl, coverage_area: points })
+  it('round-trips departure links and Polygon geometry through create, update, list and detail', async () => {
+    const response = apiZone({ exit_vr_url: exitVrUrl, coverage_geometry: coveragePolygon })
     const { configs, request } = queuedRequester([
       response, response, { list: [response], total: 1, page: 1, page_size: 20 }, response,
     ])
     const service = createSeatPlanningService(request)
-    const input = zoneInput({ exitVrUrl: ` ${exitVrUrl} `, coverageArea: ` ${JSON.stringify(points, null, 2)} ` })
+    const openRing = coveragePoints.slice(0, -1)
+    const input = zoneInput({ exitVrUrl: ` ${exitVrUrl} `, coverageGeometry: ` ${JSON.stringify(openRing, null, 2)} ` })
     const created = await service.createZone(input)
-    const updated = await service.updateZone('31', input)
+    const updated = await service.updateZone('31', { ...input, coverageGeometry: JSON.stringify(coveragePoints) })
     const page = await service.listZones(1, 20)
     const detail = await service.getZone('31')
     for (const zone of [created, updated, page.zones[0], detail]) {
-      expect(zone).toMatchObject({ exitVrUrl, coverageArea: JSON.stringify(points) })
+      expect(zone).toMatchObject({ exitVrUrl, coverageGeometry: JSON.stringify(coveragePoints) })
     }
     for (const config of configs.slice(0, 2)) {
-      expect(config.data).toMatchObject({ exit_vr_url: exitVrUrl, coverage_area: points })
+      expect(config.data).toMatchObject({ exit_vr_url: exitVrUrl, coverage_geometry: coveragePolygon })
     }
   })
 
   it('omits unspecified departure fields when updating a legacy record status', async () => {
     const { configs, request } = queuedRequester([apiZone()])
     await createSeatPlanningService(request).updateZone('31', zoneInput({
-      exitVrUrl: undefined, coverageArea: undefined, status: 'disabled',
+      exitVrUrl: undefined, coverageGeometry: undefined, status: 'disabled',
     }))
     expect(configs[0]?.data).not.toHaveProperty('exit_vr_url')
-    expect(configs[0]?.data).not.toHaveProperty('coverage_area')
+    expect(configs[0]?.data).not.toHaveProperty('coverage_geometry')
   })
 
-  it.each([undefined, '', '   ', ' https://example.com/vr?token=A%2Fb#view '])('writes an optional VR link without losing clear or omit semantics: %j', async (vrUrl) => {
-    const expected = vrUrl?.trim() ?? ''
+  it.each([undefined, '', '   ', ' https://example.com/vr?token=A%2Fb#view '])('writes an optional VR link without losing clear or omit semantics: %j', async (viewVrUrl) => {
+    const expected = viewVrUrl?.trim() ?? ''
     const { configs, request } = queuedRequester([
-      apiZone({ vr_url: expected }), apiZone({ vr_url: expected }), apiZone({ vr_url: expected }),
+      apiZone({ view_vr_url: expected }), apiZone({ view_vr_url: expected }), apiZone({ view_vr_url: expected }),
     ])
     const service = createSeatPlanningService(request)
-    expect((await service.createZone(zoneInput({ vrUrl }))).vrUrl).toBe(expected)
-    expect((await service.updateZone('31', zoneInput({ vrUrl }))).vrUrl).toBe(expected)
-    expect((await service.getZone('31')).vrUrl).toBe(expected)
+    expect((await service.createZone(zoneInput({ viewVrUrl }))).viewVrUrl).toBe(expected)
+    expect((await service.updateZone('31', zoneInput({ viewVrUrl }))).viewVrUrl).toBe(expected)
+    expect((await service.getZone('31')).viewVrUrl).toBe(expected)
     for (const config of configs.slice(0, 2)) {
-      if (vrUrl === undefined) expect(config.data).not.toHaveProperty('vr_url')
-      else expect(config.data).toHaveProperty('vr_url', expected)
+      if (viewVrUrl === undefined) expect(config.data).not.toHaveProperty('view_vr_url')
+      else expect(config.data).toHaveProperty('view_vr_url', expected)
     }
+  })
+
+  it('prefers view_vr_url over vr_url and falls back only when the new field is absent', () => {
+    expect(mapApiZone(apiZone({ vr_url: 'https://example.com/old' })).viewVrUrl).toBe('https://example.com/old')
+    expect(mapApiZone(apiZone({ view_vr_url: 'https://example.com/new', vr_url: 'https://example.com/old' })).viewVrUrl).toBe('https://example.com/new')
+    expect(mapApiZone(apiZone({ view_vr_url: '', vr_url: 'https://example.com/old' })).viewVrUrl).toBe('')
+  })
+
+  it('omits blank optional fields on create and clears them with PATCH', async () => {
+    const { configs, request } = queuedRequester([apiZone(), apiZone()])
+    const service = createSeatPlanningService(request)
+    const input = zoneInput({ viewVrUrl: '', exitVrUrl: ' ', coverageGeometry: ' ' })
+    await service.createZone(input)
+    await service.updateZone('31', input)
+    expect(configs[0]?.data).toHaveProperty('view_vr_url', '')
+    expect(configs[0]?.data).not.toHaveProperty('exit_vr_url')
+    expect(configs[0]?.data).not.toHaveProperty('coverage_geometry')
+    expect(configs[1]?.data).toMatchObject({ view_vr_url: '', exit_vr_url: '', coverage_geometry: null })
   })
 
   it('loads floors, paged zones, detail and gate options from their API endpoints', async () => {
@@ -257,6 +277,7 @@ describe('seat planning API service', () => {
 
   it('exports the backend CSV and imports CSV text with the documented JSON body', async () => {
     const blob = new Blob(['\uFEFF编号,名称'], { type: 'text/csv;charset=utf-8' })
+    const csv = '\uFEFF编号,名称,分区覆盖范围 GeoJSON\nA-01,A 区,"{""type"":""Polygon"",""coordinates"":[[[113.1,27.8],[113.2,27.8],[113.1,27.9],[113.1,27.8]]]}"'
     let fileConfig: SignedRequestConfig | null = null
     const requestFile: SeatPlanningFileRequester = async (config) => {
       fileConfig = config
@@ -274,7 +295,7 @@ describe('seat planning API service', () => {
       content: blob,
       filename: 'seat zones.csv',
     })
-    await expect(service.importCsv('\uFEFF编号,名称\nA-01,A 区')).resolves.toEqual({ imported: 3 })
+    await expect(service.importCsv(csv)).resolves.toEqual({ imported: 3 })
     expect(fileConfig).toEqual({
       method: 'GET',
       url: 'api/v1/admin/zones/export',
@@ -286,7 +307,7 @@ describe('seat planning API service', () => {
     expect(configs[1]).toMatchObject({
       method: 'POST',
       url: 'api/v1/admin/zones/import',
-      data: { csv: '\uFEFF编号,名称\nA-01,A 区' },
+      data: { csv },
     })
   })
 

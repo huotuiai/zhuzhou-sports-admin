@@ -4,6 +4,11 @@ export type SeatZoneStatus = 'enabled' | 'disabled'
 export type SeatZoneStatusFilter = 'all' | SeatZoneStatus
 export type SeatGateOpenStatus = 'open' | 'closed' | 'restricted'
 
+export interface SeatZonePolygon {
+  type: 'Polygon'
+  coordinates: [Array<[number, number]>]
+}
+
 export interface SeatFloor {
   id: string
   name: string
@@ -15,9 +20,9 @@ export interface SeatFloor {
 }
 
 export interface SeatZone {
-  vrUrl?: string
+  viewVrUrl?: string
   exitVrUrl?: string
-  coverageArea?: string
+  coverageGeometry?: string
   id: string
   code: string
   name: string
@@ -54,10 +59,10 @@ export interface SeatFloorCreateInput extends SeatFloorWriteInput {
 }
 
 export interface SeatZoneWriteInput {
-  vrUrl?: string
-  // 新增/编辑表单必填；快捷启停时省略，避免覆盖存量值。
+  viewVrUrl?: string
+  // 快捷启停时省略这些字段，避免覆盖存量值。
   exitVrUrl?: string
-  coverageArea?: string
+  coverageGeometry?: string
   code: string
   name: string
   floorId: string

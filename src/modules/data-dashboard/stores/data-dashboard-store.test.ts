@@ -202,11 +202,37 @@ describe('data dashboard store', () => {
     const store = createDataDashboardStore(new StubDashboardService(), 'dashboard-load-test')()
 
     expect(await store.load(QUERY)).toBe(true)
-    expect(store.metricGroupCounts).toEqual({ entry: 5, page: 1 })
-    expect(store.visibleMetrics.map(metric => metric.id)).toEqual([
-      'IND-1', 'pending:entry-guide', 'pending:exit-guide', 'pending:map-navigation', 'pending:vr-navigation',
-    ])
+    expect(store.metricGroupCounts).toEqual({ entry: 1, page: 1 })
+    expect(store.visibleMetrics.map(metric => metric.id)).toEqual(['IND-1'])
     expect(store.snapshot?.vrWorks[0]?.externalId).toBe('720-1')
+  })
+
+  it('uses backend metric order, values and codes for the four navigation cards', async () => {
+    const service = new StubDashboardService()
+    const activityQuery: DashboardStatsQuery = { ...QUERY, activityId: '9223372036854775807' }
+    const codes = ['IND-8', 'IND-43', 'IND-44', 'IND-45']
+    service.loadDashboard = async () => {
+      const data = snapshot(activityQuery)
+      data.operations.metrics.splice(1, 0, ...codes.map((id, index) => ({
+        ...METRICS[0]!, id, name: `后端指标 ${id}`, definition: `后端口径 ${id}`,
+        primaryValue: index + 10, secondaryValue: index + 5,
+      })))
+      return data
+    }
+    const store = createDataDashboardStore(service, 'dashboard-new-metrics-test')()
+    await store.load(activityQuery)
+
+    expect(store.metricGroupCounts).toEqual({ entry: 5, page: 1 })
+    expect(store.visibleMetrics.map(metric => metric.id)).toEqual(['IND-1', ...codes])
+    expect(store.visibleMetrics[1]).toMatchObject({ name: '后端指标 IND-8', primaryValue: 10, secondaryValue: 5 })
+    for (const code of codes) {
+      await store.selectMetric(code)
+      await store.exportMetricDetails()
+    }
+    expect(service.trendCalls.map(call => call.metricId)).toEqual(codes)
+    expect(service.detailCalls.map(call => call.metricId)).toEqual(codes)
+    expect(service.exportCalls.map(call => call.metricId)).toEqual(codes)
+    expect(service.exportCalls.every(call => call.query.activityId === activityQuery.activityId)).toBe(true)
   })
 
   it('lazily loads trend and raw events while PV/UV switching stays local', async () => {

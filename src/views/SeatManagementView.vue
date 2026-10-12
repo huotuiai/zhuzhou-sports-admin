@@ -30,8 +30,8 @@ import { useAuthStore } from '@/stores/auth'
 
 const EMPTY_ZONE: SeatZoneWriteInput = {
   code: '', name: '', floorId: '', rowStart: 1, rowEnd: 30,
-  gateIds: [], sortOrder: 1, status: 'enabled', remark: '', vrUrl: '',
-  exitVrUrl: '', coverageArea: '',
+  gateIds: [], sortOrder: 1, status: 'enabled', remark: '', viewVrUrl: '',
+  exitVrUrl: '', coverageGeometry: '',
 }
 
 const baseColumns: readonly DataTableColumn<SeatZone>[] = [
@@ -89,8 +89,8 @@ function toWriteInput(zone: SeatZone): SeatZoneWriteInput {
     code: zone.code, name: zone.name, floorId: zone.floorId,
     rowStart: zone.rowStart, rowEnd: zone.rowEnd, gateIds: [...zone.gateIds],
     sortOrder: zone.sortOrder, status: zone.status, remark: zone.remark,
-    vrUrl: zone.vrUrl ?? '',
-    exitVrUrl: zone.exitVrUrl ?? '', coverageArea: zone.coverageArea ?? '',
+    viewVrUrl: zone.viewVrUrl ?? '',
+    exitVrUrl: zone.exitVrUrl ?? '', coverageGeometry: zone.coverageGeometry ?? '',
   }
 }
 
@@ -496,6 +496,8 @@ useEventListener(window, 'beforeunload', beforeUnload)
           <AlertDialogDescription class="space-y-2">
             <span class="block">系统将按分区编号导入数据；已存在的同编号分区会被 CSV 内容覆盖。</span>
             <span class="block">“检票口编号”按业务编号匹配（例如 51、52、61、62），不是数据库 ID。</span>
+            <span class="block">新导出文件包含分区 VR 视角链接、离场 VR 导航链接、分区覆盖范围 GeoJSON 三列；旧 10 列文件仍可导入。</span>
+            <span class="block">新列留空会清除对应配置，缺列则保留原值。GeoJSON 含逗号，请使用标准 CSV 引号格式。</span>
             <span class="block">建议使用本页面导出的 CSV 作为模板。导入完成后无法在此处一键撤销。</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
